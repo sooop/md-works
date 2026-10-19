@@ -20,6 +20,8 @@ export interface BundleSummary {
   snippets: number;
   threads: number;
   bytes: number;
+  /** 가져올 수 없는 이름이라 번들에 넣지 못한 글(이름이 255자 초과이거나 제어 문자를 포함하는 경우 등) */
+  skipped?: string[];
 }
 
 export type DocAction = 'add' | 'update' | 'conflict' | 'same' | 'keep-local';
@@ -32,6 +34,8 @@ export interface MergePreview {
   versions: { add: number; same: number };
   /** 번들에 디자인 설정이 있고 현재와 다른지 */
   designDiffers: boolean;
+  /** 이 보관소에서 대소문자만 다른 같은 이름이 되는 번들 글 쌍('A.md / a.md'). 있으면 적용은 쓰기 전에 오류로 멈춘다 */
+  nameCollisions?: string[];
 }
 
 export interface MergeResult {

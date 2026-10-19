@@ -107,10 +107,41 @@ function jsonOf(data: Uint8Array): unknown {
 }
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
+/**
+ * 중앙 디렉터리가 선언한 압축 해제 크기와 각 항목 앞의 로컬 헤더가 선언한 크기를 대조한다.
+ * 다르면 한쪽이 조작·손상된 것이다(fflate 는 중앙 디렉터리의 크기만큼만 풀어, 작게 선언되면 조용히 잘린 글이 나온다).
+ * 로컬 헤더에 크기가 없는(데이터 설명자, 플래그 bit 3) 항목은 대조할 수 없어 건너뛴다.
+ */
+function checkDeclaredSizes(bytes: Uint8Array): void {
+  if (bytes.length < 22) return;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65_535); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return; // zip 이 아니면 unzipSync 가 오류를 낸다
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  for (let n = 0; n < count; n++) {
+    if (p + 46 > bytes.length || dv.getUint32(p, true) !== 0x02014b50) return;
+    const flags = dv.getUint16(p + 8, true);
+    const usize = dv.getUint32(p + 24, true);
+    const nameLen = dv.getUint16(p + 28, true);
+    const extraLen = dv.getUint16(p + 30, true);
+    const commentLen = dv.getUint16(p + 32, true);
+    const local = dv.getUint32(p + 42, true);
+    if (!(flags & 8) && local + 30 <= bytes.length && dv.getUint32(local, true) === 0x04034b50 && dv.getUint32(local + 22, true) !== usize) {
+      throw new BundleError('번들 항목의 크기 정보가 서로 달라 손상된 것으로 보입니다');
+    }
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+}
+
 /** 번들 zip 을 검증하고 파싱한다. 형식·경로·크기에 문제가 있으면 BundleError 를 던진다. */
 export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } = {}): ParsedBundle {
   const maxEntries = limits.maxEntries ?? MAX_ENTRIES;
   const kinds = new Map<string, Kind>();
+  const declared = new Map<string, number>(); // zip 헤더가 선언한 압축 해제 크기
   let total = 0;
   let count = 0;
   let entries: Record<string, Uint8Array>;
@@ -127,6 +158,7 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
         if (total > MAX_TOTAL_BYTES) throw new BundleError('압축을 풀면 1GB 를 넘어 가져올 수 없습니다');
         if (kind.k !== 'asset' && f.originalSize > MAX_TEXT_ENTRY_BYTES) throw new BundleError(`번들 항목이 너무 큽니다: ${path}`);
         kinds.set(f.name, kind);
+        declared.set(f.name, f.originalSize);
         return true;
       },
     });
@@ -134,12 +166,15 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
     if (e instanceof BundleError) throw e;
     throw new BundleError('번들(zip)을 읽지 못했습니다: 손상되었거나 zip 형식이 아닙니다');
   }
+  checkDeclaredSizes(bytes); // 선언보다 적게 풀려 조용히 잘린 글을 막는다
   // 헤더가 크기를 속여도(선언보다 많이 풀림) 실제 크기로 한 번 더 상한을 검사한다
   let real = 0;
   for (const [name, data] of Object.entries(entries)) {
     real += data.length;
     if (real > MAX_TOTAL_BYTES) throw new BundleError('압축을 풀면 1GB 를 넘어 가져올 수 없습니다');
     const kind = kinds.get(name);
+    // 선언과 실제 크기가 다르면 조용히 잘린(또는 부풀려진) 내용일 수 있으니 가져오지 않는다
+    if (kind && declared.get(name) !== data.length) throw new BundleError(`번들 항목의 크기가 헤더와 달라 손상된 것으로 보입니다: ${name}`);
     if (kind && kind.k !== 'asset' && data.length > MAX_TEXT_ENTRY_BYTES) throw new BundleError(`번들 항목이 너무 큽니다: ${name}`);
   }
 

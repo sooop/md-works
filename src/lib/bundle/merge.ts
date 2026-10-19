@@ -42,7 +42,11 @@ export interface RecordMerge<T> {
   keepLocal: number;
 }
 
-export function mergeRecords<T extends WorksRecord>(local: T[], remote: T[]): RecordMerge<T> {
+/**
+ * skipIds: 이 파티션이 아닌 다른 파티션에 이미 있는 id. 저장소가 id 를 전역 키로 쓰면(스탠드얼론 IndexedDB) 같은 id 를 쓰는 순간
+ * 다른 글의 레코드를 덮어쓰므로(글 이름이 바뀐 뒤 옛 이름 번들을 가져올 때) 건너뛴다.
+ */
+export function mergeRecords<T extends WorksRecord>(local: T[], remote: T[], skipIds?: ReadonlySet<string>): RecordMerge<T> {
   const byId = new Map(local.map((r) => [r.id, r]));
   const out: RecordMerge<T> = { add: [], update: [], same: 0, keepLocal: 0 };
   const seen = new Set<string>();
@@ -50,6 +54,7 @@ export function mergeRecords<T extends WorksRecord>(local: T[], remote: T[]): Re
     if (seen.has(r.id)) continue; // 번들 안의 중복 id 는 첫 것만
     seen.add(r.id);
     const l = byId.get(r.id);
+    if (!l && skipIds?.has(r.id)) { out.same++; continue; }
     if (!l) out.add.push(r);
     else if (remoteWins(l, r)) out.update.push(r);
     else if (remoteWins(r, l)) out.keepLocal++;
@@ -73,7 +78,7 @@ export interface VersionMerge {
  * id 합집합. 같은 id 는 같은 내용이라 이름(고정)이 바뀐 경우처럼 updatedAt 이 더 큰 쪽만 취한다.
  * 합친 뒤 thinVersions 를 다시 돌려, 두 기기의 이력이 쌓여도 솎아내기 정책(이름 붙은 버전은 영구)이 유지된다.
  */
-export function mergeVersions(local: Version[], remote: Version[], now: number): VersionMerge {
+export function mergeVersions(local: Version[], remote: Version[], now: number, skipIds?: ReadonlySet<string>): VersionMerge {
   const byId = new Map(local.map((v) => [v.id, v]));
   const adds: Version[] = [];
   const updates: Version[] = [];
@@ -82,6 +87,7 @@ export function mergeVersions(local: Version[], remote: Version[], now: number):
     if (seen.has(r.id)) continue;
     seen.add(r.id);
     const l = byId.get(r.id);
+    if (!l && skipIds?.has(r.id)) continue;
     if (!l) { adds.push(r); byId.set(r.id, r); }
     else if (r.updatedAt > l.updatedAt) { updates.push(r); byId.set(r.id, r); }
   }
@@ -93,7 +99,7 @@ export function mergeVersions(local: Version[], remote: Version[], now: number):
     put: [...keptAdds, ...updates.filter((v) => !thinned.has(v.id))],
     remove: [...thinned].filter((id) => localIds.has(id)),
     add: keptAdds.length,
-    same: seen.size - adds.length,
+    same: seen.size - adds.length, // 건너뛴 id 도 '이미 있는 것'으로 센다
   };
 }
 

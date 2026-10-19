@@ -2,6 +2,7 @@
 // 순수 함수(변환)와 worksStore() 위의 저장 함수를 한 파일에 둔다. UI 상태(store.svelte.ts)는 이 함수들만 호출한다.
 import { worksStore } from '../works/store';
 import { newId, type Thread, type ThreadMessage } from '../works/types';
+import { ID_RE } from '../bundle/records';
 import { createSnippet } from '../works/snippets';
 import type { Comment } from './anchor';
 
@@ -40,7 +41,13 @@ export async function migrateLegacy(docKey: string, legacy: LegacyBackend): Prom
   if ((await store.list<Thread>('threads', docKey)).length) return 0;
   const old = await legacy.load(docKey);
   if (!old.length) return 0;
-  const threads = old.map((c) => commentToThread(c, docKey));
+  // 저장소 id 규칙(ID_RE) 밖이거나 겹치는 id 는 새 id 를 준다(그대로 두면 일부만 저장되고 나머지는 영영 이관되지 않는다)
+  const used = new Set<string>();
+  const threads = old.map((c) => {
+    const id = ID_RE.test(c.id) && !used.has(c.id) ? c.id : newId();
+    used.add(id);
+    return commentToThread({ ...c, id }, docKey);
+  });
   await store.putMany('threads', threads, docKey);
   const saved = new Set((await store.list<Thread>('threads', docKey)).map((t) => t.id));
   if (!threads.every((t) => saved.has(t.id))) throw new Error('코멘트 이관을 확인하지 못했습니다');

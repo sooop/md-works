@@ -3,6 +3,7 @@
 import { doc, toast, askPrompt, askConfirm, errMsg, withStatus } from './store.svelte';
 import { buildArchive, parseArchive } from './archive';
 import { downloadBlob, downloadText, writeClipboard, fileToDataUrl, replaceImages, sanitizeName, stripExt } from './utils';
+import { updatedAfterEdit } from './docUpdated';
 import { exportDocx, isImportable, readImport } from './docx-flow';
 import { buildMatcher, searchText } from '../../server/searchCore.js';
 import type { SearchResponse } from './search/types';
@@ -93,6 +94,10 @@ export async function init() {
     // 번들을 만들거나 가져오기 전에 대기 중인 편집·코멘트를 저장하고, 가져온 뒤에는 메모리 사본을 다시 읽는다
     prepare: async () => { await flush(); await flushComments(); },
     afterApply: reloadAfterBundle,
+    setImporting: (on) => { // 가져오는 동안 gc 는 메모리 사본(all)에 없는 새 이미지를 미참조로 보고 지울 수 있다(5분 유예를 넘기는 큰 번들)
+      importing = Math.max(0, importing + (on ? 1 : -1));
+      if (!importing) scheduleGc();
+    },
     design: { current: () => serializeDesign(designState), apply: importDesign },
   }));
   void loadTemplateInfo();
@@ -129,6 +134,7 @@ export function onEditorChange(md: string) {
   markChanged(); // 백업 '마지막 변경' 추적
   const rec = all.get(doc.path);
   if (!rec) return;
+  rec.updated = updatedAfterEdit(rec, md, Date.now()); // 실제로 바뀐 경우에만 수정 시각을 갱신(flush 시점엔 이미 같아 보이므로 여기서 판단)
   rec.content = md; // 이미지 정리가 최신 참조를 보도록 즉시 반영
   clearTimeout(timer);
   timer = setTimeout(() => void flush(), 400);
@@ -139,8 +145,8 @@ export async function flush() {
   clearTimeout(timer);
   const rec = all.get(doc.path);
   if (!rec) return;
+  rec.updated = updatedAfterEdit(rec, doc.content, Date.now()); // 내용이 같으면 열기·내보내기 전 저장만으로 시각이 오염되지 않는다
   rec.content = doc.content;
-  rec.updated = Date.now();
   try {
     await putDoc(rec);
     void snapshot(rec.id, rec.content).catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ });
@@ -324,6 +330,7 @@ export function resolveUrl(src: string): string | Promise<string> {
 // 저장마다 전체 이력을 훑지 않도록 정리는 GC_MIN_INTERVAL_MS 에 한 번만 한다 (삭제 때는 바로 실행)
 const GC_MIN_INTERVAL_MS = 30_000;
 let lastGc = 0;
+let importing = 0;
 let gcTimer: ReturnType<typeof setTimeout> | undefined;
 function scheduleGc() {
   if (gcTimer) return;
@@ -333,6 +340,7 @@ function scheduleGc() {
 
 // 어떤 문서와 이력도 참조하지 않는 이미지를 지운다
 async function gcImages() {
+  if (importing) return; // 번들 가져오는 중에는 하지 않는다(끝나면 setImporting 이 다시 예약한다)
   lastGc = Date.now();
   try {
     const used = new Set<string>();

@@ -17,6 +17,8 @@ export interface StandaloneHostOptions {
   /** 가져오기 뒤 메모리 사본과 화면을 다시 읽는다(앱이 넘긴다) */
   afterApply?: () => Promise<void>;
   design?: { current(): string; apply(d: Design): void };
+  /** 가져오기 시작(true)·끝(false) 알림. 앱은 그동안 이미지 정리(gc)를 멈춘다 */
+  setImporting?: (on: boolean) => void;
 }
 
 interface Rec { id: string; name: string; content: string; updated: number }
@@ -78,6 +80,8 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
     mode: 'html',
     get store() { return opts.store(); },
     convertsImages: true,
+    globalIds: true, // idbStore 는 id 가 전역 키다
+    ...(opts.setImporting ? { setImporting: opts.setImporting } : {}),
     ...(opts.design ? { design: opts.design } : {}),
 
     async prepare() {

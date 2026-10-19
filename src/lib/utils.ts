@@ -106,7 +106,7 @@ export async function writeClipboard(text: string) {
 // 파일명으로 쓸 수 없는 문자를 걷어낸다
 export function sanitizeName(s: string): string {
   return s
-    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .replace(/^\.+/, '');
