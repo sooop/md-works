@@ -1,7 +1,7 @@
 <script lang="ts">
   import Editor from './Editor.svelte';
   import { listVersions, setVersionName, type Version } from '../history';
-  import { diffText, applyHunks, blocksOf } from '../history/diff';
+  import { diffText, applyHunks, blocksOf, displayBlock, displaySegs, isEmptyBlock } from '../history/diff';
   import { toast, errMsg } from '../store.svelte';
   import { relTime } from '../utils';
 
@@ -143,14 +143,14 @@
                       </label>
                       {#if h.kind === 'changed'}
                         {#each h.pairs as p, i (i)}
-                          <pre class="block">{#each p.segs as s, j (j)}{#if s.type === 'eq'}{s.text}{:else if s.type === 'del'}<del>{s.text}</del>{:else}<ins>{s.text}</ins>{/if}{/each}</pre>
+                          <pre class="block">{#each displaySegs(p) as s, j (j)}{#if s.type === 'eq'}{s.text}{:else if s.type === 'del'}<del class:dim={isEmptyBlock(p.ver)}>{s.text}</del>{:else}<ins class:dim={isEmptyBlock(p.cur)}>{s.text}</ins>{/if}{/each}</pre>
                         {/each}
-                        {#each h.ver.slice(h.pairs.length) as t, i (i)}<pre class="block"><del>{t}</del></pre>{/each}
-                        {#each h.cur.slice(h.pairs.length) as t, i (i)}<pre class="block"><ins>{t}</ins></pre>{/each}
+                        {#each h.ver.slice(h.pairs.length) as t, i (i)}<pre class="block"><del class:dim={isEmptyBlock(t)}>{displayBlock(t)}</del></pre>{/each}
+                        {#each h.cur.slice(h.pairs.length) as t, i (i)}<pre class="block"><ins class:dim={isEmptyBlock(t)}>{displayBlock(t)}</ins></pre>{/each}
                       {:else if h.kind === 'removed'}
-                        {#each h.ver as t, i (i)}<pre class="block"><del>{t}</del></pre>{/each}
+                        {#each h.ver as t, i (i)}<pre class="block"><del class:dim={isEmptyBlock(t)}>{displayBlock(t)}</del></pre>{/each}
                       {:else}
-                        {#each h.cur as t, i (i)}<pre class="block"><ins>{t}</ins></pre>{/each}
+                        {#each h.cur as t, i (i)}<pre class="block"><ins class:dim={isEmptyBlock(t)}>{displayBlock(t)}</ins></pre>{/each}
                       {/if}
                     </div>
                   {/each}
@@ -194,4 +194,5 @@
   .block { margin: 0; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 13px; border-top: 1px solid var(--border); }
   del { background: rgba(220, 60, 60, 0.18); text-decoration: line-through; }
   ins { background: rgba(60, 170, 90, 0.22); text-decoration: none; }
+  .dim { opacity: 0.55; font-style: italic; }
 </style>
