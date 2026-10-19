@@ -3,6 +3,7 @@
 import { doc, toast, askPrompt, askConfirm, errMsg, withStatus } from './store.svelte';
 import { buildArchive, parseArchive } from './archive';
 import { downloadBlob, downloadText, writeClipboard, fileToDataUrl, replaceImages, sanitizeName, stripExt } from './utils';
+import { updatedAfterEdit } from './docUpdated';
 import { exportDocx, isImportable, readImport } from './docx-flow';
 import { buildMatcher, searchText } from '../../server/searchCore.js';
 import type { SearchResponse } from './search/types';
@@ -129,6 +130,7 @@ export function onEditorChange(md: string) {
   markChanged(); // 백업 '마지막 변경' 추적
   const rec = all.get(doc.path);
   if (!rec) return;
+  rec.updated = updatedAfterEdit(rec, md, Date.now()); // 실제로 바뀐 경우에만 수정 시각을 갱신(flush 시점엔 이미 같아 보이므로 여기서 판단)
   rec.content = md; // 이미지 정리가 최신 참조를 보도록 즉시 반영
   clearTimeout(timer);
   timer = setTimeout(() => void flush(), 400);
@@ -139,8 +141,8 @@ export async function flush() {
   clearTimeout(timer);
   const rec = all.get(doc.path);
   if (!rec) return;
+  rec.updated = updatedAfterEdit(rec, doc.content, Date.now()); // 내용이 같으면 열기·내보내기 전 저장만으로 시각이 오염되지 않는다
   rec.content = doc.content;
-  rec.updated = Date.now();
   try {
     await putDoc(rec);
     void snapshot(rec.id, rec.content).catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ });
