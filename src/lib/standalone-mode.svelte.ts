@@ -9,7 +9,8 @@ import type { SearchResponse } from './search/types';
 import { snapshot, removeHistory, allContents } from './history';
 import { useBackend, flushComments } from './comments/store.svelte';
 import { sanitize, type Comment } from './comments/anchor';
-import { useWorksStore } from './works/store';
+import { useWorksStore, worksStore } from './works/store';
+import { commentToThread, listThreads, threadToComment } from './comments/threads';
 import { createIdbStore } from './works/idbStore';
 
 // ---- IndexedDB ----
@@ -74,13 +75,11 @@ async function loadComments(id: string): Promise<Comment[]> {
   const r = await idb<{ id: string; comments: unknown } | undefined>('comments', 'readonly', (s) => s.get(id));
   return sanitize(r?.comments);
 }
-async function saveComments(id: string, comments: Comment[]) {
-  if (!comments.length) await idb('comments', 'readwrite', (s) => s.delete(id));
-  else await idb('comments', 'readwrite', (s) => s.put({ id, comments }));
-}
+// 코멘트는 이제 worksStore 의 스레드로 저장한다. 'comments' 스토어는 이관(문서를 열 때)과 되돌릴 여지를 위해 남겨 둔다.
+const clearComments = (id: string) => idb('comments', 'readwrite', (s) => s.delete(id)).then(() => {});
 
 export async function init() {
-  useBackend({ load: loadComments, save: saveComments });
+  useBackend({ load: loadComments, clear: clearComments });
   useWorksStore(createIdbStore());
   void loadTemplateInfo();
   try {
@@ -205,6 +204,7 @@ export async function removeDoc(meta: DocMeta) {
     await flushComments(); // 대기 중인 코멘트 저장이 삭제 뒤에 레코드를 되살리지 않도록
     await idb('docs', 'readwrite', (s) => s.delete(meta.id));
     await idb('comments', 'readwrite', (s) => s.delete(meta.id)).catch(() => { /* 무시 */ });
+    await worksStore().removePart('threads', meta.id).catch(() => { /* 무시 */ });
     await removeHistory(meta.id).catch(() => { /* 무시 */ });
   } catch (e) {
     toast(`삭제하지 못했습니다: ${errMsg(e)}`, 'error');
@@ -379,7 +379,7 @@ async function importZip(file: File) {
             return ref;
           });
           const rec = await createRec(toStem(d.stem), await splitImages(linked.text), false);
-          if (d.comments.length) await saveComments(rec.id, d.comments);
+          if (d.comments.length) await worksStore().putMany('threads', d.comments.map((c) => commentToThread(c, rec.id)), rec.id);
           ok++;
         } catch { fail++; }
       }
@@ -439,7 +439,12 @@ export async function exportAll() {
   if (!all.size) { toast('내보낼 문서가 없습니다'); return; }
   try {
     await withStatus('백업 파일을 만드는 중…', async () => {
+      // 스레드를 레거시 코멘트로 바꿔 담는다(번들 백업은 다음 단계). 아직 이관 전인 문서는 옛 코멘트를 그대로 쓴다.
       const byDoc = new Map((await idb<{ id: string; comments: unknown }[]>('comments', 'readonly', (s) => s.getAll())).map((r) => [r.id, sanitize(r.comments)]));
+      for (const id of all.keys()) {
+        const ts = await listThreads(id);
+        if (ts.length) byDoc.set(id, ts.map(threadToComment));
+      }
       const docs = [...all.values()]
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
         .map((r) => ({ name: r.name, content: r.content, comments: byDoc.get(r.id) }));

@@ -55,10 +55,10 @@ export async function refreshTree() {
 
 export async function init() {
   useWorksStore(createSidecarStore());
-  // 코멘트는 노트 폴더의 .comments/<경로>.json 사이드카에 둔다
+  // 스레드는 .works/threads 에 저장된다. 이전 방식 코멘트(.comments/<경로>.json)는 문서를 열 때 이관만 한다.
   useBackend({
     load: async (key) => sanitize((await call<{ comments: unknown }>(`/api/comments?path=${q(key)}`)).comments),
-    save: async (key, comments) => { await call(`/api/comments?path=${q(key)}`, jsonInit('PUT', { comments })); },
+    clear: async (key) => { await call(`/api/comments?path=${q(key)}`, jsonInit('PUT', { comments: [] })); },
   });
   try {
     const info = await call<{ root: string }>('/api/info');
