@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useWorksStore } from '../../src/lib/works/store';
+import { useWorksStore, worksStore } from '../../src/lib/works/store';
+import type { Snippet } from '../../src/lib/works/types';
 import { createIdbStore } from '../../src/lib/works/idbStore';
 import {
   createSnippet, listSnippets, listTrashedSnippets, attachSnippet, detachSnippet, trashSnippet, restoreSnippet,
@@ -51,6 +52,13 @@ describe('글감 도메인', () => {
     await trashSnippet(s.id);
     await purgeSnippet(s.id);
     expect(await listTrashedSnippets()).toEqual([]);
+    expect(await listSnippets()).toEqual([]);
+    // 레코드는 묘비로 남는다 — 다른 기기에서 가져와도 되살아나지 않도록
+    const tomb = await worksStore().get<Snippet>('snippets', s.id);
+    expect(tomb).toMatchObject({ id: s.id, body: '', purged: true });
+    expect(tomb!.deletedAt).toBeGreaterThan(0);
+    await purgeSnippet('없는 id'); // 없는 글감은 무시
+    expect(await worksStore().get('snippets', '없는 id')).toBeUndefined();
   });
 
   it('글 이름 변경·삭제에 따라 연결을 옮기거나 끊는다(휴지통 안의 기억 포함)', async () => {

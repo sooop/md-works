@@ -21,6 +21,8 @@ export interface Snippet extends WorksRecord {
   attachedDocs: string[];
   /** 휴지통으로 가기 직전에 붙어 있던 글. 복구하면 attachedDocs 로 되돌린다. */
   trashedFrom?: string[];
+  /** 휴지통에서 완전히 지운 글감의 묘비. body 는 비어 있고, 번들 병합이 되살림을 막는 데만 쓴다. */
+  purged?: boolean;
 }
 
 export interface ThreadAnchor { quote: string; prefix: string; suffix: string }

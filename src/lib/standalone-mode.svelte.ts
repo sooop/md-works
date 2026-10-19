@@ -14,6 +14,10 @@ import { markChanged } from './bundle/backupState.svelte';
 import { commentToThread, listThreads, threadToComment } from './comments/threads';
 import { reattachDoc } from './works/snippets';
 import { createIdbStore } from './works/idbStore';
+import { useBundleHost } from './bundle/host';
+import { createStandaloneHost } from './bundle/hosts/standalone';
+import { design as designState, importDesign } from './design/state.svelte';
+import { serializeDesign } from './design';
 
 // ---- IndexedDB ----
 // kv: docx 템플릿 / docs: 문서 / images: 문서에서 `idb:<id>` 로 참조하는 이미지 Blob / comments: 문서별 코멘트 목록(키 = 문서 id)
@@ -84,6 +88,13 @@ const clearComments = (id: string) => idb('comments', 'readwrite', (s) => s.dele
 export async function init() {
   useBackend({ load: loadComments, clear: clearComments });
   useWorksStore(createIdbStore());
+  useBundleHost(createStandaloneHost({
+    store: worksStore,
+    // 번들을 만들거나 가져오기 전에 대기 중인 편집·코멘트를 저장하고, 가져온 뒤에는 메모리 사본을 다시 읽는다
+    prepare: async () => { await flush(); await flushComments(); },
+    afterApply: reloadAfterBundle,
+    design: { current: () => serializeDesign(designState), apply: importDesign },
+  }));
   void loadTemplateInfo();
   try {
     await navigator.storage?.persist?.(); // 브라우저가 임의로 비우지 않도록 요청(거절돼도 무시)
@@ -94,6 +105,19 @@ export async function init() {
     if (last && all.has(last)) await openDoc(last);
   } catch (e) {
     toast(`보관소를 열지 못했습니다: ${errMsg(e)}`, 'error');
+  }
+}
+
+// 번들을 가져온 뒤: IndexedDB 의 문서를 메모리 사본으로 다시 읽고, 열린 문서가 바뀌었으면 편집기를 갱신한다
+async function reloadAfterBundle() {
+  const recs = await idb<Rec[]>('docs', 'readonly', (s) => s.getAll());
+  all.clear();
+  for (const r of recs) all.set(r.id, r);
+  refreshList();
+  const cur = all.get(doc.path);
+  if (cur && cur.content !== doc.content) {
+    Object.assign(doc, { name: cur.name, content: cur.content, dirty: false });
+    doc.key++;
   }
 }
 

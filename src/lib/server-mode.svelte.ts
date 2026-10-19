@@ -10,11 +10,15 @@ import { exportDocx, isImportable, readImport } from './docx-flow';
 import { snapshot, moveHistory, removeHistory } from './history';
 import type { SearchResponse, FileHit } from './search/types';
 import { useBackend, flushComments } from './comments/store.svelte';
-import { useWorksStore } from './works/store';
 import { markChanged } from './bundle/backupState.svelte';
+import { useWorksStore, worksStore } from './works/store';
 import { reattachDoc, reattachPrefix } from './works/snippets';
 import { createSidecarStore } from './works/sidecarStore';
 import { sanitize } from './comments/anchor';
+import { useBundleHost } from './bundle/host';
+import { createServerHost } from './bundle/hosts/server';
+import { design as designState, importDesign } from './design/state.svelte';
+import { serializeDesign } from './design';
 
 // 새 문서를 만들 폴더(사이드바에서 선택한 폴더, 열린 문서의 폴더). 빈 문자열이면 루트.
 export const nav = $state({ dir: '', filter: '' }); // filter: 사이드바 파일명 검색어
@@ -57,6 +61,13 @@ export async function refreshTree() {
 
 export async function init() {
   useWorksStore(createSidecarStore());
+  useBundleHost(createServerHost({
+    store: worksStore,
+    // 번들을 만들거나 가져오기 전에 저장하지 않은 편집을 서버에 쓰고, 가져온 뒤에는 트리와 열린 글을 다시 읽는다
+    prepare: async () => { await flushComments(); if (doc.dirty && doc.path) await save(); },
+    afterApply: reloadAfterBundle,
+    design: { current: () => serializeDesign(designState), apply: importDesign },
+  }));
   // 스레드는 .works/threads 에 저장된다. 이전 방식 코멘트(.comments/<경로>.json)는 문서를 열 때 이관만 한다.
   useBackend({
     load: async (key) => sanitize((await call<{ comments: unknown }>(`/api/comments?path=${q(key)}`)).comments),
@@ -72,6 +83,16 @@ export async function init() {
   } catch (e) {
     toast(errMsg(e), 'error');
   }
+}
+
+// 번들을 가져온 뒤: 파일 트리를 다시 읽고, 열려 있는 글이 바뀌었으면 다시 연다
+async function reloadAfterBundle() {
+  await refreshTree();
+  if (!doc.path || doc.dirty) return;
+  try {
+    const f = await call<{ content: string }>(`/api/file?path=${q(doc.path)}`);
+    if (f.content !== doc.content) await loadDoc(doc.path);
+  } catch { /* 글이 없어졌으면 그대로 둔다 */ }
 }
 
 // ---- 문서 열기/저장 ----

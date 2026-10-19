@@ -27,7 +27,7 @@ export async function listSnippets(): Promise<Snippet[]> {
 }
 
 export async function listTrashedSnippets(): Promise<Snippet[]> {
-  return (await worksStore().list<Snippet>('snippets')).filter((s) => s.deletedAt).sort((a, b) => b.deletedAt! - a.deletedAt!);
+  return (await worksStore().list<Snippet>('snippets')).filter((s) => s.deletedAt && !s.purged).sort((a, b) => b.deletedAt! - a.deletedAt!);
 }
 
 async function mutate(id: string, fn: (s: Snippet) => Snippet): Promise<Snippet> {
@@ -55,8 +55,20 @@ export const trashSnippet = (id: string) =>
 export const restoreSnippet = (id: string) =>
   mutate(id, ({ deletedAt: _d, trashedFrom, ...s }) => { void _d; return { ...s, attachedDocs: trashedFrom ?? [] }; });
 
-/** 휴지통에서 완전히 지운다 */
-export const purgeSnippet = (id: string) => worksStore().remove('snippets', id);
+/**
+ * 휴지통에서 완전히 지운다. 레코드를 지우지 않고 묘비({purged:true})로 바꿔 둔다 —
+ * 그래야 다른 기기의 번들을 가져와도 지운 글감이 되살아나지 않는다. 묘비는 목록·휴지통·검색에 나타나지 않는다.
+ */
+export async function purgeSnippet(id: string): Promise<void> {
+  const cur = await worksStore().get<Snippet>('snippets', id);
+  if (!cur) return;
+  const now = Date.now();
+  const tomb: Snippet = {
+    id, body: '', color: cur.color, createdAt: cur.createdAt, attachedDocs: [],
+    updatedAt: now, deletedAt: cur.deletedAt ?? now, purged: true,
+  };
+  await worksStore().put('snippets', tomb);
+}
 
 /**
  * 폴더 이름 변경·삭제 때 접두사(from + '/')로 붙은 글감을 정리한다 (서버 모드: docKey 가 경로).

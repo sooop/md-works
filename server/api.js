@@ -194,6 +194,48 @@ export function createApi(rootInput, opts = {}) {
     createReadStream(abs).pipe(res);
   }
 
+  // ---- 번들(백업·동기화) 일괄 라우트용 ----
+  // 번들 가져오기가 쓰는 경로는 zip 항목과 같이 신뢰하지 않는다: 상대 경로만, `..`·절대경로·드라이브 문자·숨김 구간 거부.
+  // 글은 .md(assets·node_modules 폴더 밖), 이미지는 `…/assets/<폴더>/<파일>` 형태의 허용 확장자만 쓸 수 있다.
+  const MAX_BUNDLE_ENTRIES = 100_000;
+  function bundleRel(p, kind) {
+    const bad = () => new HttpError(400, '허용되지 않는 번들 경로');
+    if (typeof p !== 'string' || !p || p.length > 1024 || p.includes('\0') || p.includes('\\') || p.startsWith('/') || /^[A-Za-z]:/.test(p)) throw bad();
+    const segs = p.split('/');
+    for (const s of segs) {
+      if (!s || s === '.' || s === '..' || s.includes(':') || s.startsWith('.') || /[. ]$/.test(s) || s.length > 255) throw bad();
+    }
+    if (kind === 'doc') {
+      if (!isMd(p) || segs.slice(0, -1).some((s) => SKIP_DIRS.has(s))) throw bad();
+    } else if (segs.length < 3 || segs[segs.length - 3] !== 'assets' || !IMAGE_EXT.has(path.extname(p).toLowerCase())) {
+      throw bad();
+    }
+    return p;
+  }
+  // 모든 글(.md)과 이미지 에셋 목록. 심볼릭 링크는 따라가지 않는다.
+  async function bundleIndex() {
+    const docs = [];
+    const assets = [];
+    // inAssets: 0 = 일반 폴더, 1 = assets 폴더 바로 아래, 2 = assets/<폴더> 안
+    const walk = async (dirAbs, inAssets) => {
+      for (const e of await fs.readdir(dirAbs, { withFileTypes: true })) {
+        if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+        const abs = path.join(dirAbs, e.name);
+        if (docs.length + assets.length > MAX_BUNDLE_ENTRIES) throw new HttpError(413, '파일이 너무 많음');
+        if (e.isDirectory()) {
+          if (inAssets === 0) await walk(abs, e.name === 'assets' ? 1 : 0);
+          else if (inAssets === 1) await walk(abs, 2);
+          continue;
+        }
+        if (!e.isFile()) continue;
+        if (inAssets === 2) { if (IMAGE_EXT.has(path.extname(e.name).toLowerCase())) assets.push(rel(abs)); }
+        else if (inAssets === 0 && isMd(e.name)) docs.push({ path: rel(abs), mtime: Math.round((await fs.stat(abs)).mtimeMs) });
+      }
+    };
+    await walk(root, 0);
+    return { docs, assets };
+  }
+
   const routes = {
     'GET /api/info': async () => ({ root: path.basename(root) || root }),
 
@@ -295,6 +337,31 @@ export function createApi(rootInput, opts = {}) {
     'GET /api/backups': async () => {
       const dir = await safe(BACKUP_DIR, { mustExist: false });
       return { backups: await listBackups(dir) };
+    },
+
+    // 번들: 모든 글·에셋 목록 / 글 쓰기(수정 시각 지정) / 이미지 에셋 쓰기. 읽기는 /api/file, /api/raw 를 쓴다.
+    'GET /api/bundle/index': async () => bundleIndex(),
+
+    'PUT /api/bundle/doc': async (req, q) => {
+      const p = bundleRel(q.get('path'), 'doc');
+      const abs = await safe(p, { mustExist: false });
+      const { content } = await readJson(req);
+      if (typeof content !== 'string') throw new HttpError(400, 'content 필요');
+      const mtime = q.get('mtime');
+      if (mtime !== null && !(Number.isFinite(Number(mtime)) && Number(mtime) > 0)) throw new HttpError(400, '잘못된 mtime');
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.writeFile(abs, content, 'utf8');
+      if (mtime !== null) { const t = new Date(Number(mtime)); await fs.utimes(abs, t, t); }
+      return { mtime: Math.round((await fs.stat(abs)).mtimeMs) };
+    },
+
+    'PUT /api/bundle/asset': async (req, q) => {
+      const p = bundleRel(q.get('path'), 'asset');
+      const abs = await safe(p, { mustExist: false });
+      const body = await readBody(req, MAX_UPLOAD);
+      await fs.mkdir(path.dirname(abs), { recursive: true });
+      await fs.writeFile(abs, body);
+      return { ok: true };
     },
 
     'GET /api/file': async (_req, q) => {
