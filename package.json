@@ -8,17 +8,20 @@
     "build": "vite build",
     "start": "node server.js",
     "build:html": "vite build --mode html",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^26.6.5",
+    "fake-indexeddb": "^6.2.6",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
     "vite": "^8.3.4",
-    "vite-plugin-singlefile": "^2.3.3"
+    "vite-plugin-singlefile": "^2.3.3",
+    "vitest": "^5.0.5"
   },
   "dependencies": {
     "@codemirror/lang-cpp": "^6.0.3",

@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { buildMatcher } from './searchCore.js';
+import { createWorksFs, WorksError } from './worksStore.js';
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp']);
 const MIME = {
@@ -57,6 +58,7 @@ export function createApi(rootInput, opts = {}) {
     return abs;
   }
 
+  const works = createWorksFs(safe); // 이력·글감·스레드 사이드카(.works)
   const rel = (abs) => path.relative(root, abs).split(path.sep).join('/');
   const isMd = (p) => p.toLowerCase().endsWith('.md');
   const docAssetsDir = (docAbs) =>
@@ -207,6 +209,29 @@ export function createApi(rootInput, opts = {}) {
       return { ok: true };
     },
 
+    // 글감·이력·스레드 사이드카. coll=versions|snippets|threads, part=문서 경로(글감은 생략)
+    'GET /api/works': async (_req, q) => ({ records: await works.list(q.get('coll'), q.get('part') ?? undefined) }),
+    'GET /api/works/parts': async (_req, q) => ({ parts: await works.parts(q.get('coll')) }),
+    'PUT /api/works': async (req) => {
+      const { coll, part, recs } = await readJson(req);
+      if (!Array.isArray(recs)) throw new HttpError(400, 'recs 필요');
+      for (const r of recs) await works.put(coll, part, r);
+      return { ok: true };
+    },
+    'DELETE /api/works': async (_req, q) => {
+      await works.remove(q.get('coll'), q.get('part') ?? undefined, q.get('id'));
+      return { ok: true };
+    },
+    'DELETE /api/works/part': async (_req, q) => {
+      await works.removePart(q.get('coll'), q.get('part'));
+      return { ok: true };
+    },
+    'POST /api/works/move-part': async (req) => {
+      const { coll, from, to } = await readJson(req);
+      await works.movePart(coll, from, to);
+      return { ok: true };
+    },
+
     'GET /api/file': async (_req, q) => {
       const abs = await safe(q.get('path'));
       if (!isMd(abs)) throw new HttpError(400, '.md 파일만 허용');
@@ -250,6 +275,7 @@ export function createApi(rootInput, opts = {}) {
       const oldAssets = st.isFile() ? docAssetsDir(src) : null;
       await fs.rename(src, dst);
       await moveComments(rel(src), rel(dst), st.isFile());
+      await works.moveDoc(rel(src), rel(dst), st.isFile()).catch(() => { /* 사이드카는 부가 데이터 */ });
       if (oldAssets && (await exists(oldAssets))) {
         const newAssets = docAssetsDir(dst);
         await fs.mkdir(path.dirname(newAssets), { recursive: true });
@@ -271,11 +297,13 @@ export function createApi(rootInput, opts = {}) {
       if (st.isDirectory()) {
         await fs.rm(abs, { recursive: true });
         await removeComments(rel(abs), false);
+        await works.deleteDoc(rel(abs), false).catch(() => {});
       } else {
         if (!isMd(abs)) throw new HttpError(400, '.md 파일만 허용');
         await fs.rm(abs);
         await fs.rm(docAssetsDir(abs), { recursive: true, force: true });
         await removeComments(rel(abs), true);
+        await works.deleteDoc(rel(abs), true).catch(() => {});
       }
       return { ok: true };
     },
@@ -359,8 +387,8 @@ export function createApi(rootInput, opts = {}) {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(JSON.stringify(data));
     } catch (e) {
-      const status = e instanceof HttpError ? e.status : 500;
-      if (!(e instanceof HttpError)) console.error(e);
+      const status = e instanceof HttpError || e instanceof WorksError ? e.status : 500;
+      if (status === 500) console.error(e);
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify({ error: e.message }));
     }

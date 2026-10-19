@@ -9,6 +9,8 @@ import type { SearchResponse } from './search/types';
 import { snapshot, removeHistory, allContents } from './history';
 import { useBackend, flushComments } from './comments/store.svelte';
 import { sanitize, type Comment } from './comments/anchor';
+import { useWorksStore } from './works/store';
+import { createIdbStore } from './works/idbStore';
 
 // ---- IndexedDB ----
 // kv: docx 템플릿 / docs: 문서 / images: 문서에서 `idb:<id>` 로 참조하는 이미지 Blob / comments: 문서별 코멘트 목록(키 = 문서 id)
@@ -79,6 +81,7 @@ async function saveComments(id: string, comments: Comment[]) {
 
 export async function init() {
   useBackend({ load: loadComments, save: saveComments });
+  useWorksStore(createIdbStore());
   void loadTemplateInfo();
   try {
     await navigator.storage?.persist?.(); // 브라우저가 임의로 비우지 않도록 요청(거절돼도 무시)

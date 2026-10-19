@@ -10,6 +10,8 @@ import { exportDocx, isImportable, readImport } from './docx-flow';
 import { snapshot, moveHistory, removeHistory } from './history';
 import type { SearchResponse, FileHit } from './search/types';
 import { useBackend, flushComments } from './comments/store.svelte';
+import { useWorksStore } from './works/store';
+import { createSidecarStore } from './works/sidecarStore';
 import { sanitize } from './comments/anchor';
 
 // 새 문서를 만들 폴더(사이드바에서 선택한 폴더, 열린 문서의 폴더). 빈 문자열이면 루트.
@@ -52,6 +54,7 @@ export async function refreshTree() {
 }
 
 export async function init() {
+  useWorksStore(createSidecarStore());
   // 코멘트는 노트 폴더의 .comments/<경로>.json 사이드카에 둔다
   useBackend({
     load: async (key) => sanitize((await call<{ comments: unknown }>(`/api/comments?path=${q(key)}`)).comments),
