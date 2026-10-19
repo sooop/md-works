@@ -92,3 +92,23 @@ export function contrastWarnings(p: Palette): ContrastWarning[] {
   ];
   return checks.filter((c) => c.ratio < c.need);
 }
+
+/** 이 값 미만의 대비가 되는 색 편집은 적용하지 않는다(패널 자체가 읽을 수 없게 되는 것을 막는다) */
+export const MIN_APPLY_CONTRAST = 2;
+
+/** 팔레트에서 가장 낮은 글자/바탕 대비: 본문-배경, 본문-표면, 보조-배경 */
+export function minTextContrast(p: Palette): number {
+  return Math.min(contrastRatio(p.text, p.bg), contrastRatio(p.text, p.surface), contrastRatio(p.muted, p.bg));
+}
+
+/**
+ * 색 하나를 바꾸려 할 때 적용을 막아야 하면 그 대비비를, 아니면 null.
+ * 바꾼 뒤 최저 대비가 2.0 미만이고 지금보다 나빠질 때만 막는다
+ * (이미 낮은 팔레트에서 다른 색을 고치거나 대비를 개선하는 편집은 허용).
+ */
+export function contrastBlock(p: Palette, key: keyof Palette, hex: string, min = MIN_APPLY_CONTRAST): number | null {
+  const next = normalizeHex(hex);
+  if (!next) return null;
+  const after = minTextContrast({ ...p, [key]: next });
+  return after < min && after < minTextContrast(p) ? after : null;
+}
