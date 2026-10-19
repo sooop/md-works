@@ -8,7 +8,7 @@
   import { SNIPPET_COLORS, type Snippet } from '../works/types';
   import { COLOR_HEX } from '../snippets/colors';
   import { suggestProvider } from '../works/suggest';
-  import { splitBody, suggestCandidates, snippetText } from '../snippets/filter';
+  import { splitBody, bodyLines, suggestCandidates, snippetText } from '../snippets/filter';
   import { sn, editSnippet, attachHere, detachHere, discardSnippet, recoverSnippet, deleteForever } from '../snippets/state.svelte';
 
   interface Props { s: Snippet }
@@ -83,7 +83,7 @@
   {:else}
     <div class="sn-body">
       {#each parts as p}
-        {#if p.type === 'img'}<img src={p.v} alt={p.alt} loading="lazy" />{:else}<span>{p.v}</span>{/if}
+        {#if p.type === 'img'}<img src={p.v} alt={p.alt} loading="lazy" />{:else}{#each bodyLines(p.v) as l}<div class={`ln ${l.kind}`}>{l.text}</div>{/each}{/if}
       {/each}
     </div>
     {#if s.source}
@@ -94,7 +94,7 @@
       </div>
     {/if}
     <div class="sn-meta">
-      <span class="sn-date">{dateLabel}{#if s.attachedDocs.length} · 붙은 글 {s.attachedDocs.length}{/if}</span>
+      <span class="sn-date">{dateLabel}{#if s.attachedDocs.length}{' · 붙은 글 '}{s.attachedDocs.length}{/if}</span>
       <span class="sn-ops">
         {#if trashed}
           <button title="복구 (원래 붙어 있던 글에 되붙음)" aria-label="복구" onclick={() => recoverSnippet(s.id)}><Undo2 size={14} /></button>
@@ -149,6 +149,10 @@
   .sn-card.open { border-color: var(--sn); }
   .sn-body { white-space: pre-wrap; word-break: break-word; max-height: 9em; overflow: hidden; }
   .open .sn-body { max-height: none; }
+  .sn-body .ln { min-height: 1.2em; }
+  .sn-body .ln.quote { border-left: 3px solid var(--border-strong); padding-left: 8px; color: var(--muted); }
+  .sn-body .ln.li { padding-left: 1.1em; text-indent: -0.8em; }
+  .sn-body .ln.li::before { content: '•'; display: inline-block; width: 0.8em; text-indent: 0; }
   .sn-body img { display: block; max-width: 100%; max-height: 160px; border-radius: 4px; margin: 4px 0; }
   .open .sn-body img { max-height: none; }
   .sn-source { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); word-break: break-all; }
