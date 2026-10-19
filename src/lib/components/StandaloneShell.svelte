@@ -131,7 +131,7 @@
       <span class="spacer"></span>
       {#if doc.path}
         <ModeToggle />
-        <HistoryPanel docKey={doc.path} {resolveUrl} onRestore={restoreVersion} bind:open={historyOpen} />
+        <HistoryPanel docKey={doc.path} {resolveUrl} onRestore={restoreVersion} current={doc.content} bind:open={historyOpen} />
         <MoreMenu
           onHistory={() => (historyOpen = true)}
           onMd={exportMd}
