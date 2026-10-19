@@ -11,6 +11,17 @@
     top: Math.max(8, Math.min(p.y + 8, innerHeight - h - 8)),
   });
 
+  // 터치 폭(≤720px 또는 pointer:coarse)에서는 Ctrl+Enter 안내 대신 '저장' 버튼을 눈에 띄게 한다
+  let touch = $state(false);
+  $effect(() => {
+    if (typeof matchMedia !== 'function') return;
+    const mq = matchMedia('(max-width: 720px), (pointer: coarse)');
+    const upd = () => { touch = mq.matches; };
+    upd();
+    mq.addEventListener('change', upd);
+    return () => mq.removeEventListener('change', upd);
+  });
+
   let area = $state<HTMLTextAreaElement>();
   $effect(() => {
     if (cm.draft && !cm.draft.text) void tick().then(() => area?.focus());
@@ -53,8 +64,8 @@
   {#if cm.draft}
     {@const p = place(cm.draft, 170)}
     <div class="cm-layer cm-pop" style:left="{p.left}px" style:top="{p.top}px" role="dialog" aria-label="새 코멘트">
-      <textarea bind:this={area} bind:value={cm.draft.text} onkeydown={onDraftKey} rows="4" placeholder="코멘트를 입력하세요 (Ctrl+Enter 로 저장)" aria-label="코멘트 내용"></textarea>
-      <div class="cm-actions">
+      <textarea bind:this={area} bind:value={cm.draft.text} onkeydown={onDraftKey} rows="4" placeholder={touch ? '코멘트를 입력하세요' : '코멘트를 입력하세요 (Ctrl+Enter 로 저장)'} aria-label="코멘트 내용"></textarea>
+      <div class="cm-actions" class:touch>
         <button onclick={cancelDraft}>취소</button>
         <button class="primary" disabled={!cm.draft.text.trim()} onclick={commitDraft}>저장</button>
       </div>

@@ -555,6 +555,8 @@ input.invalid { color: #c0392b; }
   background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px;
 }
 .cm-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.cm-actions.touch button { min-height: 36px; padding: 6px 14px; }
+.cm-actions.touch button.primary { flex: 1; font-weight: 600; }
 
 .cm-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .cm-panel .empty { color: var(--muted); padding: 12px; font-size: 13px; }
