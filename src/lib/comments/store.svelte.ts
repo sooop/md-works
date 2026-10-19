@@ -1,16 +1,18 @@
-// 코멘트 상태와 동작 (두 모드 공통). 저장소는 모드가 useBackend 로 주입한다:
-// 서버 모드는 노트 폴더의 `.comments/<경로>.json` 사이드카, 스탠드얼론은 IndexedDB.
+// 코멘트(스레드) 상태와 동작 (두 모드 공통). 스레드는 worksStore() 의 'threads' 컬렉션(파티션 = docKey)에 저장한다.
+// 모드가 useBackend 로 주입하는 것은 이전 방식(스탠드얼론 'comments' 스토어 / 서버 /api/comments)의 읽기·비우기뿐이며, 문서를 열 때 한 번 이관한다.
 import type { EditorView } from '@milkdown/kit/prose/view';
-import { toast, errMsg } from '../store.svelte';
-import { anchorOf, flatten, locate, MAX_QUOTE, type Comment } from './anchor';
+import { toast, errMsg, askConfirm } from '../store.svelte';
+import { anchorOf, flatten, locate, MAX_QUOTE } from './anchor';
 import { attachComments, type CommentCtl, type Entry } from './pmComments';
+import type { Thread } from '../works/types';
+import { newId } from '../works/types';
+import {
+  deleteThread, listThreads, migrateLegacy, saveThread, sendThreadToSnippet,
+  withMessageAdded, withMessageEdited, withMessageRemoved, type LegacyBackend,
+} from './threads';
 
-export interface Backend {
-  load(docKey: string): Promise<Comment[]>;
-  save(docKey: string, comments: Comment[]): Promise<void>;
-}
-let backend: Backend | null = null;
-export function useBackend(b: Backend) { backend = b; }
+let backend: LegacyBackend | null = null;
+export function useBackend(b: LegacyBackend) { backend = b; }
 
 interface Pos { x: number; y: number }
 type Range = { from: number; to: number };
@@ -19,7 +21,7 @@ type Range = { from: number; to: number };
 export const cm = $state({
   key: '',
   loaded: false,
-  items: [] as Comment[],
+  items: [] as Thread[],
   ranges: {} as Record<string, Range>,
   active: '',
   sel: null as null | (Range & Pos), // 떠 있는 '코멘트' 버튼
@@ -37,21 +39,27 @@ export const openCount = () => cm.items.filter((c) => !c.resolved).length;
 let cur: { ctl: CommentCtl; key: string } | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-let dirty = false;
+const dirty = new Set<string>(); // 저장할 스레드 id
+const removed = new Map<string, Thread>(); // 저장소에서 지울 스레드
 let pending: Promise<void> = Promise.resolve(); // 마지막 저장 (같은 문서를 곧바로 다시 열 때 기다린다)
 
 function persistNow() {
   clearTimeout(saveTimer);
-  if (!dirty || !cur || !backend) return;
-  dirty = false;
-  const { key } = cur;
-  const list = $state.snapshot(cm.items) as Comment[];
+  if (!dirty.size && !removed.size) return;
+  const puts = [...dirty].map((id) => cm.items.find((c) => c.id === id)).filter((c): c is Thread => !!c)
+    .map((c) => $state.snapshot(c) as Thread);
+  const dels = [...removed.values()];
+  dirty.clear();
+  removed.clear();
   pending = pending
-    .then(() => backend!.save(key, list))
+    .then(async () => {
+      for (const t of puts) await saveThread(t);
+      for (const t of dels) await deleteThread(t);
+    })
     .catch((e) => { toast(`코멘트를 저장하지 못했습니다: ${errMsg(e)}`, 'error'); });
 }
-function persist() {
-  dirty = true;
+function persist(id: string) {
+  dirty.add(id);
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persistNow, 400);
 }
@@ -62,7 +70,7 @@ export async function flushComments() {
   await pending;
 }
 
-const entryOf = (c: Comment, r: Range): Entry => ({ id: c.id, from: r.from, to: r.to, resolved: c.resolved });
+const entryOf = (c: Thread, r: Range): Entry => ({ id: c.id, from: r.from, to: r.to, resolved: c.resolved });
 
 // 현재 items + ranges 를 플러그인에 반영한다
 function push() {
@@ -75,19 +83,17 @@ function refresh() {
   if (!cur) return;
   const flat = flatten(cur.ctl.doc());
   let moved = false;
-  let changed = false;
   for (const c of cm.items) {
     const r = cm.ranges[c.id];
     if (r && r.from < r.to) {
       const a = anchorOf(flat, r.from, r.to);
-      if (a && (a.quote !== c.quote || a.prefix !== c.prefix || a.suffix !== c.suffix)) { Object.assign(c, a); changed = true; }
+      if (a && (a.quote !== c.anchor.quote || a.prefix !== c.anchor.prefix || a.suffix !== c.anchor.suffix)) { c.anchor = a; persist(c.id); }
     } else {
-      const loc = locate(flat, c, r?.from ?? -1);
+      const loc = locate(flat, c.anchor, r?.from ?? -1);
       if (loc) { cm.ranges[c.id] = loc; moved = true; }
     }
   }
   if (moved) push();
-  if (changed) persist();
 }
 
 /**
@@ -118,13 +124,17 @@ export function bindComments(view: EditorView, docKey: string): () => void {
   document.addEventListener('selectionchange', onSelChange);
 
   pending
-    .then(() => backend?.load(docKey) ?? [])
+    .then(async () => {
+      // 이전 방식의 코멘트가 있으면 스레드로 옮긴다(실패해도 스레드 읽기는 계속한다)
+      if (backend) await migrateLegacy(docKey, backend).catch((e) => { if (alive) toast(`이전 코멘트를 옮기지 못했습니다: ${errMsg(e)}`, 'error'); });
+      return listThreads(docKey);
+    })
     .then((list) => {
       if (!alive) return;
       const flat = flatten(ctl.doc());
       const ranges: Record<string, Range> = {};
       for (const c of list) {
-        const loc = locate(flat, c);
+        const loc = locate(flat, c.anchor);
         if (loc) ranges[c.id] = loc;
       }
       cm.items = list;
@@ -172,11 +182,14 @@ export function commitDraft() {
   const a = anchorFor(d);
   if (!a) return;
   const now = Date.now();
-  const c: Comment = { id: crypto.randomUUID(), ...a, text, created: now, updated: now, resolved: false };
+  const c: Thread = {
+    id: newId(), docKey: cur.key, anchor: a, messages: [{ id: newId(), text, ts: now }],
+    resolved: false, createdAt: now, updatedAt: now,
+  };
   cm.items.push(c);
   cm.ranges[c.id] = { from: d.from, to: d.to };
   push();
-  persist();
+  persist(c.id);
   cm.draft = null;
   cm.sel = null;
   select(c.id);
@@ -185,36 +198,86 @@ export function commitDraft() {
 // ---- 기존 코멘트 ----
 const find = (id: string) => cm.items.find((c) => c.id === id);
 
-export function editComment(id: string, text: string) {
+// 스레드를 새 값으로 바꿔 끼우고 저장을 예약한다
+function replace(next: Thread) {
+  const i = cm.items.findIndex((c) => c.id === next.id);
+  if (i < 0) return;
+  cm.items[i] = next;
+  persist(next.id);
+}
+
+/** 답글을 맨 아래에 쌓는다 */
+export function addReply(id: string, text: string) {
   const c = find(id);
   const t = text.trim();
-  if (!c || !t || t === c.text) return;
-  c.text = t;
-  c.updated = Date.now();
-  persist();
+  if (!c || !t) return;
+  replace(withMessageAdded($state.snapshot(c) as Thread, t));
+}
+
+export function editMessage(id: string, msgId: string, text: string) {
+  const c = find(id);
+  const t = text.trim();
+  const m = c?.messages.find((x) => x.id === msgId);
+  if (!c || !m || !t || t === m.text) return;
+  replace(withMessageEdited($state.snapshot(c) as Thread, msgId, t));
+}
+
+/** 메시지 하나를 지운다. 첫 메시지(또는 마지막 하나)를 지우면 스레드째 지우므로 확인을 받는다 */
+export async function removeMessage(id: string, msgId: string) {
+  const c = find(id);
+  if (!c) return;
+  if (c.messages[0]?.id === msgId || c.messages.length <= 1) { await removeThread(id); return; }
+  replace(withMessageRemoved($state.snapshot(c) as Thread, msgId));
 }
 
 export function toggleResolved(id: string) {
   const c = find(id);
   if (!c) return;
   c.resolved = !c.resolved;
-  c.updated = Date.now();
+  c.updatedAt = Date.now();
   push();
-  persist();
+  persist(id);
 }
 
-export function removeComment(id: string) {
+// 화면 상태에서 스레드를 걷어 낸다
+function dropLocal(id: string) {
   const i = cm.items.findIndex((c) => c.id === id);
   if (i < 0) return;
   cm.items.splice(i, 1);
   delete cm.ranges[id];
+  dirty.delete(id);
   if (cm.pick) {
     cm.pick.ids = cm.pick.ids.filter((x) => x !== id);
     if (!cm.pick.ids.length) cm.pick = null;
   }
   if (cm.active === id) cm.active = '';
   push();
-  persist();
+}
+
+/** 스레드를 삭제한다(확인을 받는다). 지웠으면 true */
+export async function removeThread(id: string): Promise<boolean> {
+  const c = find(id);
+  if (!c) return false;
+  if (!(await askConfirm(c.messages.length > 1 ? `이 코멘트와 답글 ${c.messages.length - 1}개를 삭제할까요?` : '이 코멘트를 삭제할까요?', '삭제'))) return false;
+  const t = $state.snapshot(c) as Thread;
+  dropLocal(id);
+  removed.set(id, t);
+  persistNow();
+  return true;
+}
+
+/** 스레드를 글감으로 바꾼다(확인 없음). 글감 저장에 성공한 뒤에만 스레드가 사라진다 */
+export async function sendToSnippet(id: string) {
+  const c = find(id);
+  if (!c) return;
+  try {
+    await flushComments(); // 대기 중인 저장이 지운 스레드를 되살리지 않도록
+    await sendThreadToSnippet($state.snapshot(c) as Thread);
+    dropLocal(id);
+    toast('코멘트를 글감으로 보냈습니다');
+  } catch (e) {
+    toast(`글감으로 보내지 못했습니다: ${errMsg(e)}`, 'error');
+  }
 }
 
 let activeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -236,11 +299,11 @@ export function reattach(id: string) {
   if (!sel) { toast('다시 붙일 본문을 먼저 선택하세요'); return; }
   const a = anchorFor(sel);
   if (!a) return;
-  Object.assign(c, a);
-  c.updated = Date.now();
+  c.anchor = a;
+  c.updatedAt = Date.now();
   cm.ranges[id] = { from: sel.from, to: sel.to };
   push();
-  persist();
+  persist(id);
   select(id);
 }
 
