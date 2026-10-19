@@ -1,6 +1,6 @@
 // 스탠드얼론 HTML 버전: IndexedDB 에 문서 여러 개와 이미지 Blob, docx 템플릿을 보관하는 라이브러리.
 // 디스크 파일과는 연동하지 않는다(열기/드롭/붙여넣기는 가져오기, .md/.docx 는 내보내기).
-import { doc, toast, askPrompt, askConfirm, errMsg, withStatus } from './store.svelte';
+import { doc, toast, askPrompt, askConfirm, errMsg, withStatus, focusNext, editorBridge } from './store.svelte';
 import { buildArchive, parseArchive } from './archive';
 import { downloadBlob, downloadText, writeClipboard, fileToDataUrl, replaceImages, sanitizeName, stripExt } from './utils';
 import { updatedAfterEdit } from './docUpdated';
@@ -194,7 +194,7 @@ async function createRec(stem: string, content: string, open = true, edit = fals
   await clearDocGone(rec.name).catch(() => { /* 무시 */ }); // 같은 이름으로 다시 만들면 삭제 묘비는 지운다
   all.set(rec.id, rec);
   refreshList();
-  if (open) { await openDoc(rec.id); if (doc.path === rec.id && edit) doc.edit = true; }
+  if (open) { if (edit) focusNext.on = true; await openDoc(rec.id); focusNext.on = false; if (doc.path === rec.id && edit) doc.edit = true; }
   return rec;
 }
 
@@ -238,7 +238,7 @@ async function renameDocTo(id: string, input: string) {
   }
   await recordDocGone(prev).catch(() => { /* 무시 */ }); // 옛 이름은 '지운 글'로 기록한다
   await clearDocGone(name).catch(() => { /* 무시 */ });
-  if (rec.id === doc.path) doc.name = name;
+  if (rec.id === doc.path) { doc.name = name; editorBridge.focus?.(); } // 이름 변경 직후 본문으로 포커스 복귀
   refreshList();
 }
 

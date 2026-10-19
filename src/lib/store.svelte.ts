@@ -64,10 +64,15 @@ export const doc = $state({
 
 // 마지막 에디터 내용을 외부에서 읽기 위한 훅 (Editor 가 등록)
 // preparePrint: 인쇄용 정적 사본(코드 하이라이트 포함)을 만들고 정리 함수를 돌려준다
-export const editorBridge: { getMarkdown: () => string; preparePrint: (() => Promise<() => void>) | null } = {
+export const editorBridge: { getMarkdown: () => string; preparePrint: (() => Promise<() => void>) | null; focus: (() => void) | null } = {
   getMarkdown: () => doc.content,
   preparePrint: null,
+  focus: null,
 };
+
+// '새로 만든 글'·'이름 변경 직후'에만 본문에 포커스를 준다(파일 목록을 키보드로 탐색 중이면 빼앗지 않는다).
+// 문서를 열기 직전에 켜 두면 새로 만들어지는 에디터가 한 번 소비한다.
+export const focusNext = { on: false };
 
 // ---- 진행 상태 (pandoc 엔진 준비/변환 등 시간이 걸리는 작업) ----
 export const status = $state({ text: '' });

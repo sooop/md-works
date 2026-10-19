@@ -1,6 +1,6 @@
 // 웹서버 버전: 파일 API 호출과 폴더 노트 앱 로직
 import {
-  doc, settings, persistSettings, toast, askPrompt, askConfirm, askChoose, errMsg,
+  doc, focusNext, settings, persistSettings, toast, askPrompt, askConfirm, askChoose, errMsg,
 } from './store.svelte';
 import {
   basename, dirname, joinPath, safeDecode, stripExt, fileToDataUrl, imageExt,
@@ -227,7 +227,9 @@ export async function createDoc(dir: string) {
     await call('/api/create', jsonInit('POST', { path, type: 'file' }));
     await clearDocGone(path).catch(() => { /* 무시 */ }); // 같은 이름으로 다시 만들면 삭제 묘비는 지운다
     await refreshTree();
+    focusNext.on = true; // 새 글은 본문에 바로 포커스
     await openDoc(path);
+    focusNext.on = false;
     if (doc.path === path) doc.edit = true; // 새로 만든 문서도 편집 모드 (loadDoc 이 이미 설정)
   } catch (e) {
     toast(errMsg(e), 'error');
@@ -284,7 +286,7 @@ async function renameNodeTo(node: TreeNode, name: string) {
     const reopen = affects(node.path) ? to + doc.path.slice(node.path.length) : '';
     if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = to + nav.dir.slice(node.path.length);
     await refreshTree();
-    if (reopen) await loadDoc(reopen); // 링크가 갱신된 파일을 다시 읽는다
+    if (reopen) { focusNext.on = true; await loadDoc(reopen); focusNext.on = false; } // 링크가 갱신된 파일을 다시 읽는다(이름 변경 직후 포커스)
   } catch (e) {
     toast(errMsg(e), 'error');
   }

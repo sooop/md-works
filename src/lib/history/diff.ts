@@ -109,6 +109,17 @@ export function diffBlocks(versionBlocks: string[], currentBlocks: string[]): Hu
   return hunks;
 }
 
+/** 빈 문단은 마크다운에서 `<br />` 블록으로 저장된다(원문은 그대로 두고 화면 표시만 바꾼다). */
+export const isEmptyBlock = (t: string): boolean => /^\s*<br\s*\/?>\s*$/i.test(t);
+export const EMPTY_LABEL = '(빈 줄)';
+/** 화면 표시용 문자열: 빈 문단 블록은 '(빈 줄)' */
+export const displayBlock = (t: string): string => (isEmptyBlock(t) ? EMPTY_LABEL : t);
+/** 변경 쌍의 화면용 조각. 한쪽이 빈 문단이면 단어 diff 대신 통째로 교체된 것으로 보인다. */
+export function displaySegs(p: Pair): Seg[] {
+  if (!isEmptyBlock(p.ver) && !isEmptyBlock(p.cur)) return p.segs;
+  return [{ type: 'del', text: displayBlock(p.ver) }, { type: 'add', text: displayBlock(p.cur) }];
+}
+
 export const diffText = (version: string, current: string): Hunk[] => diffBlocks(blocksOf(version), blocksOf(current));
 
 /** 선택한 hunk 만 버전 쪽으로 되돌린 새 본문. 선택이 없으면 current 와 정확히 같다. */

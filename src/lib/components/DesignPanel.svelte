@@ -5,7 +5,7 @@
   import { design, setTypo, setColor, selectPreset, resetPalette, resetTypography, importDesign, undoImport, undoState } from '../design/state.svelte';
   import { TYPO_SPEC, PALETTE_KEYS, PALETTE_LABELS, type NumSpec, type TypoKey, type PaletteKey } from '../design/schema';
   import { PRESETS } from '../design/presets';
-  import { contrastWarnings, normalizeHex, onColor } from '../design/colors';
+  import { contrastWarnings, contrastBlock, MIN_APPLY_CONTRAST, normalizeHex, onColor } from '../design/colors';
   import { buildFontFamily, FALLBACK_CODE } from '../design/fontStack';
   import { serializeDesign, parseDesign } from '../design/io';
 
@@ -75,10 +75,19 @@
     const key = k === 'text' ? 'text' : k === 'muted' ? 'muted' : k === 'primary' ? 'primary' : null;
     return key ? warnings.find((w) => w.key === key) : undefined;
   };
+  // 대비가 너무 낮아 적용을 보류한 색(입력칸에는 사용자가 넣은 값이 남고, 실제 적용·저장은 하지 않는다)
+  let blocked = $state<{ key: PaletteKey; ratio: number } | null>(null);
+  function tryColor(k: PaletteKey, hex: string): boolean {
+    const ratio = contrastBlock(palette, k, hex);
+    if (ratio !== null) { blocked = { key: k, ratio }; return false; }
+    blocked = null;
+    setColor(mode, k, hex);
+    return true;
+  }
   function onHex(k: PaletteKey, e: Event) {
     const el = e.currentTarget as HTMLInputElement;
     const hex = normalizeHex(el.value);
-    if (hex) setColor(mode, k, hex);
+    if (hex && !tryColor(k, hex)) return; // 보류: 입력한 값을 그대로 둔다
     el.value = design.palettes[mode][k];
   }
 
@@ -213,8 +222,8 @@
         <div class="row">
           <span class="lbl">편집 대상</span>
           <div class="seg" role="group" aria-label="편집할 팔레트">
-            <button class:active={mode === 'light'} onclick={() => (mode = 'light')}>라이트</button>
-            <button class:active={mode === 'dark'} onclick={() => (mode = 'dark')}>다크</button>
+            <button class:active={mode === 'light'} onclick={() => { mode = 'light'; blocked = null; }}>라이트</button>
+            <button class:active={mode === 'dark'} onclick={() => { mode = 'dark'; blocked = null; }}>다크</button>
           </div>
         </div>
         <p class="hint">테마(시스템/라이트/다크)에 따라 현재 적용 중인 쪽 팔레트가 쓰입니다. 나머지 색(보조 면, 호버, 선택, 진한 테두리 등)은 이 10색에서 계산됩니다.</p>
@@ -223,12 +232,15 @@
             {@const w = warnOf(k)}
             <div class="crow">
               <span class="lbl">{PALETTE_LABELS[k]}</span>
-              <input type="color" value={palette[k]} oninput={(e) => setColor(mode, k, (e.currentTarget as HTMLInputElement).value)} aria-label={`${PALETTE_LABELS[k]} 색 선택`} />
+              <input type="color" value={palette[k]} oninput={(e) => tryColor(k, (e.currentTarget as HTMLInputElement).value)} aria-label={`${PALETTE_LABELS[k]} 색 선택`} />
               <input class="hex" type="text" value={palette[k]} onchange={(e) => onHex(k, e)} maxlength="7" spellcheck="false" aria-label={`${PALETTE_LABELS[k]} 16진수`} />
               {#if w}
                 <span class="warn" role="img" aria-label={`대비 부족: ${w.ratio.toFixed(2)} (기준 ${w.need})`} title={`대비 ${w.ratio.toFixed(2)} — 기준 ${w.need} 미달`}>
                   <AlertTriangle size={14} /> {w.ratio.toFixed(1)}:1
                 </span>
+              {/if}
+              {#if blocked && blocked.key === k}
+                <span class="warn block" role="alert">대비가 너무 낮아 적용하지 않았습니다(최소 {MIN_APPLY_CONTRAST.toFixed(1)}:1, 지금 {blocked.ratio.toFixed(1)}:1)</span>
               {/if}
             </div>
           {/each}
@@ -275,7 +287,8 @@
   .dp-body input[type='text'], .dp-body input[type='number'], .dp-body select {
     padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); width: auto; margin: 0;
   }
-  .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; }
+  .chk input[type="checkbox"] { width: auto; margin: 0; padding: 0; flex: none; }
   .hint { margin: 0; font-size: 12px; color: var(--muted); }
   .hgrid { display: grid; grid-template-columns: 40px repeat(3, minmax(70px, 1fr)); gap: 6px 8px; align-items: center; }
   .hgrid .lbl { width: auto; }
@@ -289,6 +302,7 @@
   .crow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .crow input[type='color'] { width: 36px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: transparent; }
   .crow .hex { width: 88px; font-family: var(--font-code); }
+  .warn.block { flex-basis: 100%; }
   .warn { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--danger); }
   .swatch { border: 1px solid; border-radius: 8px; padding: 10px 14px; display: flex; gap: 12px; align-items: center; }
   .chip { border-radius: 6px; padding: 2px 10px; font-size: 13px; }
