@@ -10,6 +10,7 @@ import { snapshot, removeHistory, allContents } from './history';
 import { useBackend, flushComments } from './comments/store.svelte';
 import { sanitize, type Comment } from './comments/anchor';
 import { useWorksStore, worksStore } from './works/store';
+import { markChanged } from './bundle/backupState.svelte';
 import { commentToThread, listThreads, threadToComment } from './comments/threads';
 import { reattachDoc } from './works/snippets';
 import { createIdbStore } from './works/idbStore';
@@ -63,6 +64,7 @@ let failed = false;
 async function putDoc(rec: Rec) {
   try {
     await idb('docs', 'readwrite', (s) => s.put(rec));
+    markChanged(); // 문서 생성·가져오기·저장 모두 변경으로 기록
     failed = false;
   } catch (e) {
     if (!failed) toast(`저장하지 못했습니다: ${errMsg(e)}`, 'error');
@@ -100,6 +102,7 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 
 export function onEditorChange(md: string) {
   doc.content = md;
+  markChanged(); // 백업 '마지막 변경' 추적
   const rec = all.get(doc.path);
   if (!rec) return;
   rec.content = md; // 이미지 정리가 최신 참조를 보도록 즉시 반영

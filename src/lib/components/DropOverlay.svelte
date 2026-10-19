@@ -54,5 +54,5 @@
 <svelte:window ondragentercapture={enter} ondragleavecapture={leave} ondragovercapture={over} ondropcapture={drop} />
 
 {#if dragging}
-  <div class="drop-overlay">.md · .txt · .docx · .zip 파일을 여기에 놓아 새 문서 만들기</div>
+  <div class="drop-overlay">.md · .txt · .docx · .zip 파일을 (백업 .mwb 는 가져오기로) 여기에 놓아 새 문서 만들기</div>
 {/if}

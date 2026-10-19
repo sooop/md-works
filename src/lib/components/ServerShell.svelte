@@ -8,6 +8,8 @@
   import DropOverlay from './DropOverlay.svelte';
   import PasteModal from './PasteModal.svelte';
   import MoreMenu from './MoreMenu.svelte';
+  import BackupDialog from './BackupDialog.svelte';
+  import { divertBundleDrop } from '../bundle/backupState.svelte';
   import { printDoc } from '../printCode';
   import HistoryPanel from './HistoryPanel.svelte';
   import ModeToggle from './ModeToggle.svelte';
@@ -156,6 +158,7 @@
           <Save size={15} />{doc.saving ? '저장 중…' : '저장'}
         </button>
       {/if}
+      <BackupDialog server />
       <Settings server />
     </header>
 
@@ -175,5 +178,5 @@
   </main>
 </div>
 
-<DropOverlay onDrop={(items) => handleDrop(items.map((d) => d.file))} />
+<DropOverlay onDrop={async (items) => { const rest = await divertBundleDrop(items.map((d) => d.file)); if (rest.length) await handleDrop(rest); }} />
 <PasteModal open={pasteOpen} onClose={() => (pasteOpen = false)} onCreate={createFromText} />

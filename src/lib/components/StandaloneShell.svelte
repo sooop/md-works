@@ -7,6 +7,8 @@
   import DropOverlay from './DropOverlay.svelte';
   import PasteModal from './PasteModal.svelte';
   import MoreMenu from './MoreMenu.svelte';
+  import BackupDialog from './BackupDialog.svelte';
+  import { divertBundleDrop } from '../bundle/backupState.svelte';
   import { printDoc } from '../printCode';
   import HistoryPanel from './HistoryPanel.svelte';
   import ModeToggle from './ModeToggle.svelte';
@@ -153,6 +155,7 @@
           hint="템플릿은 이 브라우저에 보관됩니다. 첫 docx 사용 때 pandoc 엔진(약 16MB)을 내려받습니다."
         />
       {/if}
+      <BackupDialog />
       <Settings />
     </header>
 
@@ -172,5 +175,5 @@
   </main>
 </div>
 
-<DropOverlay onDrop={(items) => importFiles(items.map((d) => d.file))} />
+<DropOverlay onDrop={async (items) => { const rest = await divertBundleDrop(items.map((d) => d.file)); if (rest.length) await importFiles(rest); }} />
 <PasteModal open={pasteOpen} onClose={() => (pasteOpen = false)} onCreate={createFromText} />
