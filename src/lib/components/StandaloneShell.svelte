@@ -13,6 +13,7 @@
   import DocTitle from './DocTitle.svelte';
   import CommentsPanel from './CommentsPanel.svelte';
   import CommentLayer from './CommentLayer.svelte';
+  import SnippetPanel from './SnippetPanel.svelte';
   import { openCount } from '../comments/store.svelte';
   import FindBar from './FindBar.svelte';
   import SearchPanel from './SearchPanel.svelte';
@@ -82,6 +83,7 @@
         <button role="tab" class:on={ui.tab === 'files'} aria-selected={ui.tab === 'files'} onclick={() => (ui.tab = 'files')}>파일</button>
         <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} title="모든 문서에서 검색 (Ctrl+Shift+F)">검색</button>
         <button role="tab" class:on={ui.tab === 'comments'} aria-selected={ui.tab === 'comments'} onclick={() => (ui.tab = 'comments')} title="이 문서의 코멘트">코멘트{#if openCount()} <span class="cm-badge">{openCount()}</span>{/if}</button>
+        <button role="tab" class:on={ui.tab === 'snippets'} aria-selected={ui.tab === 'snippets'} onclick={() => (ui.tab = 'snippets')} title="글감함 (Ctrl+Alt+G 문구로 찾기, Ctrl+Alt+S 선택을 글감으로)">글감</button>
       </div>
       <div class="tabpane" hidden={ui.tab !== 'files'}>
         <div class="filterbox">
@@ -120,6 +122,9 @@
       </div>
       <div class="tabpane" hidden={ui.tab !== 'comments'}>
         <CommentsPanel />
+      </div>
+      <div class="tabpane" hidden={ui.tab !== 'snippets'}>
+        <SnippetPanel />
       </div>
     </aside>
   {/if}

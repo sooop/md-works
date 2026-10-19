@@ -11,6 +11,7 @@ import { useBackend, flushComments } from './comments/store.svelte';
 import { sanitize, type Comment } from './comments/anchor';
 import { useWorksStore, worksStore } from './works/store';
 import { commentToThread, listThreads, threadToComment } from './comments/threads';
+import { reattachDoc } from './works/snippets';
 import { createIdbStore } from './works/idbStore';
 
 // ---- IndexedDB ----
@@ -206,6 +207,7 @@ export async function removeDoc(meta: DocMeta) {
     await idb('comments', 'readwrite', (s) => s.delete(meta.id)).catch(() => { /* 무시 */ });
     await worksStore().removePart('threads', meta.id).catch(() => { /* 무시 */ });
     await removeHistory(meta.id).catch(() => { /* 무시 */ });
+    await reattachDoc(meta.id).catch(() => { /* 무시 */ }); // 글감 연결 끊기 (id 는 이름이 바뀌어도 그대로라 삭제 때만)
   } catch (e) {
     toast(`삭제하지 못했습니다: ${errMsg(e)}`, 'error');
     return;
