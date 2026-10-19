@@ -1,12 +1,19 @@
 <script lang="ts">
   import SettingsIcon from '@lucide/svelte/icons/settings';
   import {
-    settings, persistSettings, applyTheme, applyLayout, FONT_RANGE, WIDTH_RANGE, DEFAULT_FONT_SIZE, DEFAULT_CONTENT_WIDTH,
+    settings, persistSettings, applyTheme,
     type Theme, type ImageMode,
   } from '../store.svelte';
+  import { design, setTypo } from '../design/state.svelte';
+  import { TYPO_SPEC, DEFAULT_TYPOGRAPHY, type NumSpec } from '../design/schema';
+  import DesignPanel from './DesignPanel.svelte';
 
   let { server = false }: { server?: boolean } = $props();
   let open = $state(false);
+  let designOpen = $state(false);
+
+  const FONT = TYPO_SPEC.fontSize as NumSpec;
+  const WIDTH = TYPO_SPEC.contentWidth as NumSpec;
 
   const themes: [Theme, string][] = [['system', '시스템'], ['light', '라이트'], ['dark', '다크']];
   const modes: [ImageMode, string][] = [['file', '파일(assets 폴더)'], ['base64', 'Base64(문서에 포함)']];
@@ -15,24 +22,21 @@
   function setMode(m: ImageMode) { settings.imageMode = m; persistSettings(); }
   function toggleAutosave() { settings.autosave = !settings.autosave; persistSettings(); }
 
-  function layoutChanged() { applyLayout(); persistSettings(); }
+  // 글자 크기·본문 폭은 디자인 설정('works.design')에 저장된다
   function setFont(e: Event) {
-    settings.fontSize = Number((e.currentTarget as HTMLInputElement).value);
-    layoutChanged();
+    setTypo('fontSize', Number((e.currentTarget as HTMLInputElement).value));
   }
   function setWidth(e: Event) {
-    settings.contentWidth = Number((e.currentTarget as HTMLInputElement).value);
-    layoutChanged();
+    setTypo('contentWidth', Number((e.currentTarget as HTMLInputElement).value));
   }
   function toggleFullWidth() {
-    settings.contentWidth = settings.contentWidth > 0 ? 0 : DEFAULT_CONTENT_WIDTH;
-    layoutChanged();
+    setTypo('contentWidth', design.typography.contentWidth > 0 ? 0 : DEFAULT_TYPOGRAPHY.contentWidth);
   }
   function resetLayout() {
-    settings.fontSize = DEFAULT_FONT_SIZE;
-    settings.contentWidth = DEFAULT_CONTENT_WIDTH;
-    layoutChanged();
+    setTypo('fontSize', DEFAULT_TYPOGRAPHY.fontSize);
+    setTypo('contentWidth', DEFAULT_TYPOGRAPHY.contentWidth);
   }
+  function openDesign() { open = false; designOpen = true; }
 </script>
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') open = false; }} />
@@ -53,36 +57,37 @@
       </div>
 
       <div class="field">
-        <span class="label">글자 크기 <b>{settings.fontSize}px</b></span>
+        <span class="label">글자 크기 <b>{design.typography.fontSize}px</b></span>
         <input
           type="range"
-          min={FONT_RANGE.min}
-          max={FONT_RANGE.max}
+          min={FONT.min}
+          max={FONT.max}
           step="1"
-          value={settings.fontSize}
+          value={design.typography.fontSize}
           oninput={setFont}
           aria-label="글자 크기"
         />
       </div>
 
       <div class="field">
-        <span class="label">본문 폭 <b>{settings.contentWidth > 0 ? `${settings.contentWidth}px` : '전체'}</b></span>
+        <span class="label">본문 폭 <b>{design.typography.contentWidth > 0 ? `${design.typography.contentWidth}px` : '전체'}</b></span>
         <input
           type="range"
-          min={WIDTH_RANGE.min}
-          max={WIDTH_RANGE.max}
+          min={WIDTH.min}
+          max={WIDTH.max}
           step="20"
-          value={settings.contentWidth > 0 ? settings.contentWidth : WIDTH_RANGE.max}
-          disabled={settings.contentWidth === 0}
+          value={design.typography.contentWidth > 0 ? design.typography.contentWidth : WIDTH.max}
+          disabled={design.typography.contentWidth === 0}
           oninput={setWidth}
           aria-label="본문 폭"
         />
         <label class="check">
-          <input type="checkbox" checked={settings.contentWidth === 0} onchange={toggleFullWidth} />
+          <input type="checkbox" checked={design.typography.contentWidth === 0} onchange={toggleFullWidth} />
           <span>창 폭에 맞추기</span>
         </label>
       </div>
       <button class="link-btn" onclick={resetLayout}>글자 크기·본문 폭 기본값으로</button>
+      <button onclick={openDesign}>디자인…</button>
 
       {#if server}
         <div class="field">
@@ -101,3 +106,7 @@
     </div>
   {/if}
 </div>
+
+{#if designOpen}
+  <DesignPanel onclose={() => (designOpen = false)} />
+{/if}
