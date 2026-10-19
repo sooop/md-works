@@ -275,7 +275,8 @@
   .dp-body input[type='text'], .dp-body input[type='number'], .dp-body select {
     padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); width: auto; margin: 0;
   }
-  .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; }
+  .chk input[type="checkbox"] { width: auto; margin: 0; padding: 0; flex: none; }
   .hint { margin: 0; font-size: 12px; color: var(--muted); }
   .hgrid { display: grid; grid-template-columns: 40px repeat(3, minmax(70px, 1fr)); gap: 6px 8px; align-items: center; }
   .hgrid .lbl { width: auto; }

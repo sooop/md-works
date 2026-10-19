@@ -189,6 +189,8 @@
   .pad { padding: 8px 16px 0; margin: 0; }
   .hunk { margin: 10px 16px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .hunk-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--hover); cursor: pointer; }
+  .hunk-head input[type="checkbox"] { width: auto; margin: 0; padding: 0; flex: none; }
+  .hunk-head span { white-space: nowrap; }
   .block { margin: 0; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 13px; border-top: 1px solid var(--border); }
   del { background: rgba(220, 60, 60, 0.18); text-decoration: line-through; }
   ins { background: rgba(60, 170, 90, 0.22); text-decoration: none; }
