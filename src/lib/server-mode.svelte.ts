@@ -93,6 +93,7 @@ async function loadDoc(path: string) {
   doc.name = basename(path);
   doc.content = f.content;
   doc.dirty = false;
+  doc.edit = true; // 문서는 항상 편집 모드로 연다
   doc.key++;
   void snapshot(path, f.content).catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ });
   try { localStorage.setItem(LAST_KEY, path); } catch { /* 무시 */ }
@@ -194,7 +195,7 @@ export async function createDoc(dir: string) {
     await call('/api/create', jsonInit('POST', { path, type: 'file' }));
     await refreshTree();
     await openDoc(path);
-    if (doc.path === path) doc.edit = true; // 새로 만든 문서는 편집 모드로 시작
+    if (doc.path === path) doc.edit = true; // 새로 만든 문서도 편집 모드 (loadDoc 이 이미 설정)
   } catch (e) {
     toast(errMsg(e), 'error');
   }
@@ -344,7 +345,7 @@ export async function createFromContent(stem: string, content: string, opts: { s
   await call(`/api/file?path=${q(path)}`, jsonInit('PUT', { content: text }));
   await refreshTree();
   await openDoc(path);
-  if (opts.edit && doc.path === path) doc.edit = true;
+  if (opts.edit && doc.path === path) doc.edit = true; // 기본이 편집 모드라 중복이지만 호출부 의도를 남겨 둔다
 }
 
 export async function createFromText(name: string, text: string) {

@@ -15,6 +15,8 @@
   import CommentLayer from './CommentLayer.svelte';
   import { openCount } from '../comments/store.svelte';
   import FindBar from './FindBar.svelte';
+  import StatusBar from './StatusBar.svelte';
+  import SheetBackdrop from './SheetBackdrop.svelte';
   import SearchPanel from './SearchPanel.svelte';
   import Search from '@lucide/svelte/icons/search';
   import X from '@lucide/svelte/icons/x';
@@ -123,6 +125,7 @@
       </div>
     </aside>
   {/if}
+  <SheetBackdrop open={sidebarOpen} onClose={() => (sidebarOpen = false)} />
 
   <main class="main">
     <header class="topbar">
@@ -159,6 +162,7 @@
         <div class="placeholder">왼쪽 목록에서 문서를 열거나 새로 만드세요.</div>
       {/if}
     </section>
+    <StatusBar />
     <Lightbox root={wrapEl} readMode={!doc.edit} />
   </main>
 </div>
