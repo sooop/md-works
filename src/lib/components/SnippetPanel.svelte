@@ -20,6 +20,8 @@
   let excerpt = $state('');
   let srcOpen = $state(false);
   let busy = $state(false);
+  let foldOpen = $state(false); // 모바일: 문구 찾기·검색·색 필터 접힘 토글(데스크톱에선 항상 펼침)
+  const filtering = $derived(!!(sn.phrase.trim() || sn.query.trim() || sn.color));
 
   const list = $derived(visible());
   const phraseMode = $derived(!!sn.phrase.trim());
@@ -109,7 +111,11 @@
     </div>
   </div>
 
-  <div class="filterbox sn-phrase">
+  <button class="sn-ftoggle" aria-expanded={foldOpen} onclick={() => (foldOpen = !foldOpen)}>
+    <Search size={13} /> 찾기·필터{#if filtering}<span class="on-dot" aria-label="적용 중"></span>{/if}<span class="chev">{foldOpen ? '▴' : '▾'}</span>
+  </button>
+
+  <div class="filterbox sn-phrase" class:fold-m={!foldOpen && !sn.phrase.trim()}>
     <Search size={14} />
     <input
       bind:this={phraseInput}
@@ -127,12 +133,12 @@
         <button role="tab" class:on={sn.view === v} aria-selected={sn.view === v} onclick={() => (sn.view = v)}>{label}</button>
       {/each}
     </div>
-    <div class="filterbox">
+    <div class="filterbox" class:fold-m={!foldOpen && !sn.query.trim()}>
       <Search size={14} />
       <input bind:value={sn.query} placeholder="글감 검색 (본문·원전, 초성 가능)" aria-label="글감 검색" spellcheck="false" />
       {#if sn.query}<button class="icon-btn" title="지우기" aria-label="검색어 지우기" onclick={() => (sn.query = '')}><X size={14} /></button>{/if}
     </div>
-    <div class="sn-colorfilter" role="group" aria-label="색 필터">
+    <div class="sn-colorfilter" class:fold-m={!foldOpen && !sn.color} role="group" aria-label="색 필터">
       <button class="all" class:on={!sn.color} onclick={() => (sn.color = '')}>모든 색</button>
       {#each SNIPPET_COLORS as c}
         <button class="dot" class:on={sn.color === c} style:--c={COLOR_HEX[c]} title={c} aria-label={`색 필터: ${c}`} aria-pressed={sn.color === c} onclick={() => (sn.color = sn.color === c ? '' : c)}></button>
@@ -180,5 +186,19 @@
   .dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid transparent; background: var(--c); cursor: pointer; padding: 0; }
   .dot.on { border-color: var(--text); }
   .sn-note { margin: 0; padding: 0 10px; font-size: 12px; color: var(--muted); }
+  .sn-ftoggle { display: none; }
+  @media (max-width: 720px) {
+    /* 좁은 화면: 시트 높이를 글감 카드에 돌려주도록 입력창을 줄이고 찾기·필터를 한 줄로 접는다 */
+    .sn-quick textarea:first-child { min-height: 0; height: 34px; resize: none; }
+    .sn-quick textarea:first-child:focus { height: 72px; }
+    .hint { display: none; }
+    .fold-m { display: none !important; }
+    .sn-ftoggle {
+      display: flex; align-items: center; gap: 6px; margin: 0 8px; padding: 4px 8px; font-size: 12px; cursor: pointer;
+      background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--muted);
+    }
+    .sn-ftoggle .chev { margin-left: auto; }
+    .on-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  }
   .sn-list { flex: 1; overflow: auto; padding: 0 8px 16px; display: flex; flex-direction: column; gap: 8px; }
 </style>
