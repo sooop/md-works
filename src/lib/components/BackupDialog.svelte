@@ -8,7 +8,7 @@
   import { NOTIFY_DAY_CHOICES } from '../bundle/backupLogic';
   import { MIN_AUTO_MINUTES, getMe, sendMessage } from '../bundle/telegram';
   import {
-    backup, backupUi, ago, lastBackupAt, hasUnbacked, isStale, keyAvailable, exportToFile, readBundleFile,
+    backup, backupUi, ago, lastBackupAt, hasUnbacked, isStale, keyAvailable, exportToFile, readBundleFiles,
     persistTelegram, persistBackupSettings, telegramReady, uploadToTelegram, startBackupScheduler,
     listFolderBackups, backupToFolder, folderBackupUrl, FOLDER_DEFAULT_MINUTES, type FolderBackup,
   } from '../bundle/backupState.svelte';
@@ -48,18 +48,19 @@
     return errMsg(e);
   }
 
-  async function loadFile(file: File) {
+  async function loadFiles(files: File[]) {
     resetImport();
     error = '';
     busy = '번들을 읽는 중…';
+    const label = files.length > 1 ? `조각 ${files.length}개` : (files[0]?.name ?? '');
     try {
-      const b = await readBundleFile(file);
+      const b = await readBundleFiles(files);
       const p = await previewBundle(b);
-      importName = file.name;
+      importName = label;
       bytes = b;
       preview = p;
     } catch (e) {
-      error = `'${file.name}': ${explain(e)}`;
+      error = `'${label}': ${explain(e)}`;
     } finally {
       busy = '';
     }
@@ -68,8 +69,9 @@
   function pickFile() {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.mwb,.zip,application/zip,application/octet-stream';
-    input.onchange = () => { const f = input.files?.[0]; if (f) void loadFile(f); };
+    input.multiple = true;
+    input.accept = '.mwb,.zip,.001,.002,.003,.004,.005,application/zip,application/octet-stream';
+    input.onchange = () => { const fs = [...(input.files ?? [])]; if (fs.length) void loadFiles(fs); };
     input.click();
   }
 
@@ -93,7 +95,7 @@
     if (backupUi.open && backupUi.pending) {
       const f = backupUi.pending;
       backupUi.pending = null;
-      void loadFile(f);
+      void loadFiles(f);
     }
   });
 
@@ -218,7 +220,7 @@
 
       <section aria-label="가져오기">
         <h3>가져오기</h3>
-        <p class="hint">.mwb / 번들 zip 을 선택하거나, 앱 창에 끌어다 놓으세요. 텔레그램에서 받은 파일을 그대로 쓰면 됩니다. 병합 전에 미리보기를 보여 줍니다.</p>
+        <p class="hint">.mwb / 번들 zip 을 선택하거나, 앱 창에 끌어다 놓으세요. 텔레그램에서 받은 파일을 그대로 쓰면 됩니다. 큰 백업은 <code>.mwb.001</code>, <code>.002</code> … 조각으로 나뉘어 있으니 조각 파일을 모두 한꺼번에 끌어다 놓으세요(여러 개 선택도 됩니다). 병합 전에 미리보기를 보여 줍니다.</p>
         <button disabled={!!busy} onclick={pickFile} aria-label="가져올 파일 선택">파일 선택…</button>
 
         {#if preview}
@@ -279,6 +281,7 @@
       <section aria-label="텔레그램">
         <h3>텔레그램으로 올리기</h3>
         <p class="hint">암호화된 번들(.mwb)만 올립니다{hasKey ? '' : ' — 이 빌드에는 키가 없어 쓸 수 없습니다'}. 토큰·chat_id 는 이 브라우저(localStorage)에만 저장되고 백업에는 포함되지 않습니다. 가져오기는 텔레그램에서 받은 파일을 앱에 끌어다 놓으세요.</p>
+        <p class="hint">큰 번들은 45MB 단위로 나눠 올립니다 (최대 20개). 예: 100MB 면 3개 조각(<code>.mwb.001</code>~<code>.003</code>)으로 올라갑니다.</p>
         <label class="row"><span>봇 토큰</span>
           <input type="password" autocomplete="off" spellcheck="false" aria-label="봇 토큰" bind:value={backup.telegram.token} onchange={persistTelegram} placeholder="123456:ABC…" />
         </label>
@@ -330,7 +333,7 @@
         </section>
       {/if}
 
-      {#if busy}<p class="busy" role="status">{busy}</p>{/if}
+      {#if busy}<p class="busy" role="status">{busy}{#if backupUi.tgProgress} (조각 {backupUi.tgProgress}){/if}</p>{/if}
       {#if error}<p class="err" role="alert">{error}</p>{/if}
 
       <div class="actions"><button onclick={close} disabled={!!busy} aria-label="닫기">닫기</button></div>

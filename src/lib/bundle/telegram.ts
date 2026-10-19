@@ -6,6 +6,7 @@
 //
 // 토큰·chat_id·자동 올리기 설정은 localStorage 'works.telegram' 에만 저장하고 번들·내보내기에는 절대 넣지 않는다.
 import { isEncrypted } from './crypto';
+import { CHUNK_LIMIT, partCaption, partFileName, splitBytes } from './backupLogic';
 
 export const TG_UPLOAD_LIMIT = 50 * 1024 * 1024; // Bot API sendDocument 한도
 const API = 'https://api.telegram.org';
@@ -141,4 +142,80 @@ export async function sendDocument(
   form.append('document', new Blob([bytes as BlobPart], { type: 'application/octet-stream' }), filename);
   await call(cfg, 'sendDocument', { method: 'POST', body: form }, fetchFn);
   return { filename, size: bytes.length };
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** 전체 바이트의 SHA-256 앞 12자(hex) — 조각 caption 에 넣어 사람이 대조할 수 있게 한다 */
+export async function sha256Prefix12(bytes: Uint8Array): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource));
+  return [...d.slice(0, 6)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+export interface SendBundleResult {
+  /** 올린 파일명들(단일이면 1개) */
+  filenames: string[];
+  size: number;
+  parts: number;
+}
+
+/**
+ * 암호화된 번들을 올린다. limit(기본 45MB) 이하면 지금처럼 단일 파일, 넘으면 `.mwb.001…` 조각으로 순서대로 올린다.
+ * 조각은 원본 바이트를 헤더 없이 자른 것이라 이어 붙이면(cat) 복원된다. 무결성은 복호화 시 GCM 태그가 보증한다.
+ * 조각 업로드 실패는 1회 재시도 후 중단하며, 어디까지 올라갔는지 오류에 적는다(이어서 올리기는 없다).
+ */
+export async function sendBundle(
+  cfg: Pick<TelegramSettings, 'token' | 'chatId'>,
+  bytes: Uint8Array,
+  opts: { filename?: string; caption?: string; limit?: number; retryDelayMs?: number; onProgress?: (done: number, total: number) => void } = {},
+  fetchFn: FetchFn = fetch,
+): Promise<SendBundleResult> {
+  const limit = opts.limit ?? CHUNK_LIMIT;
+  const filename = opts.filename ?? bundleFileName();
+  checkConfig(cfg, true);
+  if (!isEncrypted(bytes)) throw new TelegramError('plaintext', '암호화되지 않은 번들은 텔레그램에 올리지 않습니다');
+  if (bytes.length <= limit) {
+    opts.onProgress?.(0, 1);
+    const r = await sendDocument(cfg, bytes, { filename, caption: opts.caption }, fetchFn);
+    opts.onProgress?.(1, 1);
+    return { filenames: [r.filename], size: r.size, parts: 1 };
+  }
+  let chunks: Uint8Array[];
+  try {
+    chunks = splitBytes(bytes, limit);
+  } catch (e) {
+    throw new TelegramError('too-large', e instanceof Error ? e.message : String(e));
+  }
+  const total = chunks.length;
+  const sha = await sha256Prefix12(bytes);
+  const filenames: string[] = [];
+  opts.onProgress?.(0, total);
+  for (let i = 0; i < total; i++) {
+    const name = partFileName(filename, i + 1);
+    const caption = partCaption(opts.caption ?? '', i + 1, total, bytes.length, sha);
+    // 조각은 암호화 바이트의 일부라 매직이 없다 — 평문 검사는 위에서 전체에 대해 했으므로 call 을 직접 쓴다
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const form = new FormData();
+        form.append('chat_id', cfg.chatId.trim());
+        form.append('caption', caption);
+        form.append('document', new Blob([chunks[i] as BlobPart], { type: 'application/octet-stream' }), name);
+        await call(cfg, 'sendDocument', { method: 'POST', body: form }, fetchFn);
+        lastErr = undefined;
+        break;
+      } catch (e) {
+        lastErr = e;
+        if (attempt === 0) await sleep(opts.retryDelayMs ?? 1500);
+      }
+    }
+    if (lastErr) {
+      const base = lastErr instanceof TelegramError ? lastErr : new TelegramError('network', String(lastErr));
+      const where = i === 0 ? '첫 조각부터 실패했습니다' : `${i}/${total}개 조각(${filenames[0]} … ${filenames[i - 1]})까지만 올라갔습니다`;
+      throw new TelegramError(base.kind, maskSecrets(`조각 ${i + 1}/${total} 업로드 실패 — ${where}. ${base.message}`, cfg.token), base.status);
+    }
+    filenames.push(name);
+    opts.onProgress?.(i + 1, total);
+  }
+  return { filenames, size: bytes.length, parts: total };
 }
