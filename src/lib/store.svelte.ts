@@ -5,9 +5,7 @@ export type ImageMode = 'file' | 'base64';
 const SETTINGS_KEY = 'notes.settings';
 const SETTINGS_VERSION = 3;
 
-/** 기본값 — 설정 팝오버의 "초기화"와 전체 폭 해제도 이 값을 쓴다 */
-export const DEFAULT_FONT_SIZE = 15; // 에디터 기본 글자 크기(px)
-export const DEFAULT_CONTENT_WIDTH = 980; // 본문 최대 폭(px), 0 이면 전체 폭
+// 글자 크기·본문 폭은 디자인 설정(src/lib/design, 'works.design')으로 옮겨졌다. 옛 값은 design/io.ts 가 이관한다.
 /** 기본값이 바뀌기 전(v2 이하)의 기본값 — 저장돼 있어도 사용자가 고른 값이 아니므로 새 기본값으로 옮긴다 */
 const LEGACY_DEFAULTS = { fontSize: 16, contentWidth: 860 };
 
@@ -16,8 +14,6 @@ function loadSettings() {
     theme: 'system' as Theme,
     autosave: true,
     imageMode: 'file' as ImageMode,
-    fontSize: DEFAULT_FONT_SIZE,
-    contentWidth: DEFAULT_CONTENT_WIDTH,
     template: '', // 서버 버전의 docx 템플릿 파일명, 빈 값이면 기본 템플릿
     version: SETTINGS_VERSION,
   };
@@ -54,18 +50,6 @@ export function applyTheme() {
     settings.theme === 'dark' ||
     (settings.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-}
-
-export const FONT_RANGE = { min: 12, max: 24 };
-export const WIDTH_RANGE = { min: 480, max: 1600 };
-
-// 글자 크기와 본문 폭을 CSS 변수로 반영한다
-export function applyLayout() {
-  const f = Math.min(FONT_RANGE.max, Math.max(FONT_RANGE.min, Number(settings.fontSize) || DEFAULT_FONT_SIZE));
-  const w = Number(settings.contentWidth) || 0;
-  const root = document.documentElement.style;
-  root.setProperty('--editor-font-size', `${f}px`);
-  root.setProperty('--editor-width', w > 0 ? `${Math.min(WIDTH_RANGE.max, Math.max(WIDTH_RANGE.min, w))}px` : 'none');
 }
 
 export const doc = $state({
