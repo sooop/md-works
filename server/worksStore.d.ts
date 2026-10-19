@@ -1,6 +1,8 @@
 export const WORKS_DIR: string;
 export const COLLS: Record<string, boolean>;
 export const GLOBAL_PART: string;
+export function encPart(s: string): string;
+export function decPart(s: string): string;
 export class WorksError extends Error { status: number; constructor(status: number, message: string); }
 export interface WorksFs {
   list(coll: string, part?: string): Promise<unknown[]>;

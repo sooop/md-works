@@ -68,7 +68,16 @@ export const listThreads = async (docKey: string) =>
   (await worksStore().list<Thread>('threads', docKey)).filter((t) => !t.deletedAt).sort((a, b) => a.createdAt - b.createdAt);
 
 export const saveThread = (t: Thread) => worksStore().put('threads', t, t.docKey);
-export const deleteThread = (t: Pick<Thread, 'id' | 'docKey'>) => worksStore().remove('threads', t.id, t.docKey);
+/**
+ * 스레드 삭제는 소프트 삭제다(deletedAt 설정). 번들 병합이 '지워졌다'는 사실을 다른 기기에 전하려면 레코드가 남아 있어야 한다.
+ * 목록(listThreads)과 UI 에서는 제외된다.
+ */
+export async function deleteThread(t: Pick<Thread, 'id' | 'docKey'>): Promise<void> {
+  const cur = await worksStore().get<Thread>('threads', t.id, t.docKey);
+  if (!cur || cur.deletedAt) return;
+  const now = Date.now();
+  await worksStore().put('threads', { ...cur, deletedAt: now, updatedAt: now }, t.docKey);
+}
 
 async function mutate(docKey: string, id: string, fn: (t: Thread) => Thread): Promise<Thread> {
   const cur = await worksStore().get<Thread>('threads', id, docKey);

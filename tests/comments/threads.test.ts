@@ -7,7 +7,7 @@ import type { Thread } from '../../src/lib/works/types';
 import type { Comment } from '../../src/lib/comments/anchor';
 import {
   commentToThread, threadToComment, migrateLegacy, threadToSnippetBody, sendThreadToSnippet, saveThread, listThreads,
-  addMessage, editMessage, removeMessage, type LegacyBackend,
+  addMessage, editMessage, removeMessage, deleteThread, type LegacyBackend,
 } from '../../src/lib/comments/threads';
 
 let n = 0;
@@ -115,6 +115,17 @@ describe('메시지 추가·수정·삭제', () => {
     expect(after?.messages.map((m) => m.text)).toEqual(['첫 메시지']);
     expect(await removeMessage('d1', 't1', 'm1')).toBeNull();
     expect(await listThreads('d1')).toEqual([]);
+  });
+
+  it('스레드 삭제는 소프트 삭제 — 목록에서만 빠지고 묘비가 남는다(번들 병합이 삭제를 전하도록)', async () => {
+    await deleteThread({ id: 't1', docKey: 'd1' });
+    expect(await listThreads('d1')).toEqual([]);
+    const raw = await worksStore().get<Thread>('threads', 't1', 'd1');
+    expect(raw?.deletedAt).toBeGreaterThan(0);
+    expect(raw!.updatedAt).toBe(raw!.deletedAt);
+    await deleteThread({ id: 't1', docKey: 'd1' }); // 두 번째 삭제는 시각을 바꾸지 않는다
+    expect((await worksStore().get<Thread>('threads', 't1', 'd1'))?.deletedAt).toBe(raw!.deletedAt);
+    await deleteThread({ id: 'none', docKey: 'd1' }); // 없는 스레드는 무시
   });
 
   it('없는 스레드는 오류', async () => {

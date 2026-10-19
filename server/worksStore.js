@@ -15,10 +15,10 @@ export class WorksError extends Error {
 }
 
 // 파일 시스템에 쓸 수 없는 글자(윈도 기준)와 맨 앞 '.', 끝의 '.'·공백만 %XX 로 바꾼다 (한글 등은 그대로 둔다)
-const encPart = (s) =>
+export const encPart = (s) =>
   s.replace(/[\/:*?"<>|%\x00-\x1f]/g, (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
     .replace(/^\./, '%2e').replace(/[. ]$/, (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'));
-const decPart = (s) => s.replace(/%([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+export const decPart = (s) => s.replace(/%([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
 export function createWorksFs(safe) {
   const check = (coll, part) => {

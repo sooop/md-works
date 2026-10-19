@@ -20,6 +20,38 @@ const encSeg = (s: string) => s.replace(/[()%#?]/g, (c) => '%' + c.charCodeAt(0)
 export interface ArchiveDoc { name: string; content: string; comments?: Comment[] }
 const COMMENTS_DIR = '.comments/';
 
+export interface RelinkedText { text: string; assets: { path: string; data: Uint8Array }[] }
+
+// 본문의 `idb:` 이미지를 `assets/<문서명>/<파일>` 상대 링크로 바꾸고, 그 이미지 데이터를 함께 돌려준다 (zip 내부 경로 기준).
+// stable 이면 파일 이름을 본문 순번 대신 이미지 id 로 붙인다 — 같은 문서의 여러 본문(이력 버전 등)이 같은 폴더를 공유해도 충돌하지 않는다.
+export async function relinkImages(
+  stem: string,
+  content: string,
+  loadImage: (id: string) => Promise<Blob | null>,
+  stable = false,
+): Promise<RelinkedText> {
+  const assets: RelinkedText['assets'] = [];
+  const seen = new Map<string, Promise<string | null>>(); // replaceImages 는 참조를 동시에 처리하므로 Promise 로 캐시한다
+  let n = 0;
+  const { text } = await replaceImages(content, (src) => {
+    const id = /^idb:([0-9a-f-]{36})$/.exec(src)?.[1];
+    if (!id) return Promise.resolve(null);
+    let link = seen.get(id);
+    if (!link) {
+      const file = stable ? `${id}.` : `${++n}.`;
+      link = loadImage(id).then(async (blob) => {
+        if (!blob) return null;
+        const name = file + imageExt(blob);
+        assets.push({ path: `assets/${stem}/${name}`, data: new Uint8Array(await blob.arrayBuffer()) });
+        return `assets/${encSeg(stem)}/${name}`;
+      });
+      seen.set(id, link);
+    }
+    return link;
+  });
+  return { text, assets };
+}
+
 // 문서와 `idb:` 이미지를 zip 으로 묶는다. 이미지는 문서별 assets 폴더로 복사하고 링크를 상대 경로로 바꾼다.
 export async function buildArchive(
   docs: ArchiveDoc[],
@@ -28,25 +60,8 @@ export async function buildArchive(
   const files: Zippable = {};
   const enc = new TextEncoder();
   for (const d of docs) {
-    const stem = stripExt(d.name);
-    const seen = new Map<string, Promise<string | null>>(); // replaceImages 는 참조를 동시에 처리하므로 Promise 로 캐시한다
-    let n = 0;
-    const { text } = await replaceImages(d.content, (src) => {
-      const id = /^idb:([0-9a-f-]{36})$/.exec(src)?.[1];
-      if (!id) return Promise.resolve(null);
-      let link = seen.get(id);
-      if (!link) {
-        const file = `${++n}.`;
-        link = loadImage(id).then(async (blob) => {
-          if (!blob) return null;
-          const name = file + imageExt(blob);
-          files[`assets/${stem}/${name}`] = [new Uint8Array(await blob.arrayBuffer()), { level: 0 }];
-          return `assets/${encSeg(stem)}/${name}`;
-        });
-        seen.set(id, link);
-      }
-      return link;
-    });
+    const { text, assets } = await relinkImages(stripExt(d.name), d.content, loadImage);
+    for (const a of assets) files[a.path] = [a.data, { level: 0 }];
     files[d.name] = enc.encode(text);
     if (d.comments?.length) files[`${COMMENTS_DIR}${d.name}.json`] = enc.encode(JSON.stringify({ version: 1, comments: d.comments }, null, 2));
   }

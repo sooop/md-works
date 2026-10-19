@@ -10,6 +10,9 @@
 //   .works/design.json                  serializeDesign() 결과
 //   .works/tombstones.json              {docs:{<이름>:deletedAt}}  (글 삭제는 전파하지 않고 기록만 한다)
 
+import { bundleHost } from './host';
+import { applyBundleWith, buildBundleWith, previewBundleWith } from './core';
+
 export interface BundleSummary {
   docs: number;
   images: number;
@@ -44,15 +47,15 @@ export interface MergeResult {
 
 /** 현재 보관소를 번들(zip 바이트)로 만든다. 암호화는 호출자(작업 P2b)가 한다. */
 export async function buildBundle(): Promise<{ bytes: Uint8Array; summary: BundleSummary }> {
-  throw new Error('buildBundle: 구현되지 않았습니다 (작업 P2a)');
+  return buildBundleWith(bundleHost());
 }
 
 /** 번들을 읽어 병합했을 때 무엇이 바뀌는지 미리 계산한다. 아무것도 쓰지 않는다. */
-export async function previewBundle(_bytes: Uint8Array): Promise<MergePreview> {
-  throw new Error('previewBundle: 구현되지 않았습니다 (작업 P2a)');
+export async function previewBundle(bytes: Uint8Array): Promise<MergePreview> {
+  return previewBundleWith(bundleHost(), bytes);
 }
 
 /** 번들을 현재 보관소에 병합한다. options.applyDesign 이 true 면 번들의 디자인도 적용한다. */
-export async function applyBundle(_bytes: Uint8Array, _options?: { applyDesign?: boolean }): Promise<MergeResult> {
-  throw new Error('applyBundle: 구현되지 않았습니다 (작업 P2a)');
+export async function applyBundle(bytes: Uint8Array, options?: { applyDesign?: boolean }): Promise<MergeResult> {
+  return applyBundleWith(bundleHost(), bytes, options);
 }
