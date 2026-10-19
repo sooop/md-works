@@ -56,7 +56,7 @@ node server.js [루트폴더] [--port 5273] [--templates 템플릿폴더]   # �
 - **번들** = 글·이미지·이력·글감·스레드·디자인을 담은 zip. 가져오기는 미리보기(추가/갱신/충돌 건수) 후 '병합 적용'. 같은 id 는 `updatedAt` 최신 우선, 이력·휴지통은 합집합, 글 본문이 양쪽에서 달라졌으면 진 쪽을 '병합 전' 이름의 버전으로 이력에 남긴다.
 - **암호화**: `VITE_BUNDLE_KEY` → SHA-256 → AES-256-GCM. `.mwb` = `MWB1` + iv 12바이트 + 암호문·태그.
 - **알림**: 마지막 백업이 N일(기본 7, 3/7/14/끔) 넘었고 이후 변경이 있으면 버튼 점 배지 + 시작 시 토스트.
-- **텔레그램**: Bot API `getMe`/`sendMessage`/`sendDocument` 로 **올리기만** 자동(기본 30분, 최소 5분, 변경이 있을 때만). 파일명 `md-works-YYYYMMDD-HHmm.mwb`, 50MB 초과는 거부(분할 업로드 없음). 가져오기는 받은 파일을 앱에 끌어다 놓는 수동 방식. 토큰·chat_id 는 localStorage `works.telegram` 에만 있고 번들에 들어가지 않는다. **브라우저에서 api.telegram.org 직접 호출(CORS)은 실서버로 미검증**(코드는 fetch 를 주입한 모의 테스트만).
+- **텔레그램**: Bot API `getMe`/`sendMessage`/`sendDocument` 로 **올리기만** 자동(기본 30분, 최소 5분, 변경이 있을 때만). 파일명 `md-works-YYYYMMDD-HHmm.mwb`. **큰 번들 분할**: 암호화 번들이 45MB 를 넘으면 `….mwb.001`, `.002` … 조각(최대 20개)으로 순서대로 올리고 caption 에 `i/n`·전체 크기·SHA-256 앞 12자를 적는다(헤더 없이 원본 바이트를 자른 것이라 `cat` 으로도 합쳐진다). 중간 조각이 실패하면 1회 재시도 후 중단하고 어디까지 올라갔는지 알린다(이어 올리기 없음). 가져오기는 받은 파일을 앱에 끌어다 놓는 수동 방식이며 조각은 모두 한꺼번에 놓으면 번호순으로 이어 붙인 뒤 복호화한다(빠진 번호·중복·다른 백업의 조각은 오류로 안내). 토큰·chat_id 는 localStorage `works.telegram` 에만 있고 번들에 들어가지 않는다. **브라우저에서 api.telegram.org 직접 호출(CORS)은 실서버로 미검증**(코드는 fetch 를 주입한 모의 테스트만).
 - **서버 폴더 백업**: `POST /api/backup`(200MB 상한)이 `<루트>/.works-backup/md-works-YYYYMMDD-HHmmss[-n].<mwb|zip>` 로 저장, 최근 10개 유지. `GET /api/backups`(목록), `GET /api/backup/file?name=`. 자동 백업 기본 켬·15분, 변경이 있을 때만.
 
 ## 저장 구조

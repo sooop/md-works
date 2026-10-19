@@ -7,10 +7,10 @@ import { onWorksWrite } from '../works/store';
 import { buildBundle, type BundleSummary } from './api';
 import { encryptBundle, decryptBundle, hasBundleKey } from './crypto';
 import {
-  DEFAULT_NOTIFY_DAYS, SERVER_BACKUP_NAME_RE, classifyBytes, splitBundleFiles, clampInterval, formatAgo, isBackupStale, isUploadDue, needsBackup, MIN_MS,
+  DEFAULT_NOTIFY_DAYS, SERVER_BACKUP_NAME_RE, classifyBytes, concatBytes, isPartName, planImport, splitBundleFiles, clampInterval, formatAgo, isBackupStale, isUploadDue, needsBackup, MIN_MS,
 } from './backupLogic';
 import {
-  DEFAULT_AUTO_MINUTES, MIN_AUTO_MINUTES, bundleFileName, loadTelegram, saveTelegram, sendDocument, type TelegramSettings,
+  DEFAULT_AUTO_MINUTES, MIN_AUTO_MINUTES, bundleFileName, loadTelegram, saveTelegram, sendBundle, type TelegramSettings,
 } from './telegram';
 
 const KEY = 'works.backup';
@@ -60,7 +60,7 @@ export const backup = $state<Persisted & { telegram: TelegramSettings; now: numb
 });
 
 /** 가져오기 흐름을 외부(앱 전체 드롭)에서 열기 위한 UI 상태 */
-export const backupUi = $state<{ open: boolean; pending: File | null; busy: string }>({ open: false, pending: null, busy: '' });
+export const backupUi = $state<{ open: boolean; pending: File[] | null; busy: string; tgProgress: string }>({ open: false, pending: null, busy: '', tgProgress: '' });
 
 function persist() {
   const { telegram: _t, now: _n, ...p } = backup;
@@ -111,8 +111,18 @@ export async function exportToFile(encrypted: boolean): Promise<void> {
 
 /** 선택·드롭한 파일을 읽어 번들 zip 바이트로 만든다(.mwb 면 복호화). 번들이 아니면 오류. */
 export async function readBundleFile(file: File): Promise<Uint8Array> {
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const kind = classifyBytes(file.name, bytes);
+  return readBundleFiles([file]);
+}
+
+/** 여러 파일(.mwb.001… 조각 포함)을 받아 단일 파일 또는 번호순으로 이어 붙인 바이트를 번들 zip 으로 만든다. */
+export async function readBundleFiles(files: File[]): Promise<Uint8Array> {
+  const plan = planImport(files);
+  if (!plan.ok) throw new Error(plan.error);
+  const bytes = plan.kind === 'single'
+    ? new Uint8Array(await plan.file.arrayBuffer())
+    : concatBytes(await Promise.all(plan.parts.map(async (p) => new Uint8Array(await p.arrayBuffer()))));
+  const name = plan.kind === 'single' ? plan.file.name : plan.stem;
+  const kind = classifyBytes(name, bytes);
   if (kind === 'bundle-encrypted') return decryptBundle(bytes);
   if (kind === 'bundle-zip') return bytes;
   throw new Error(kind === 'doc-zip' ? '번들이 아닌 일반 문서 zip 입니다 (문서 가져오기를 사용하세요)' : '.mwb 또는 번들 zip 파일이 아닙니다');
@@ -134,11 +144,19 @@ export async function uploadToTelegram(): Promise<string> {
   tgAttempt = startedAt;
   const { bytes, summary } = await makeBundle(true);
   const t = $state.snapshot(backup.telegram);
-  const r = await sendDocument(t, bytes, { caption: `md-works 백업 · 글 ${summary.docs}개` });
-  backup.lastTelegram = startedAt;
-  persist();
-  tgFailToasted = false;
-  return r.filename;
+  backupUi.tgProgress = '';
+  try {
+    const r = await sendBundle(t, bytes, {
+      caption: `md-works 백업 · 글 ${summary.docs}개`,
+      onProgress: (done, total) => { backupUi.tgProgress = total > 1 ? `${Math.min(total, done + 1)}/${total}` : ''; },
+    });
+    backup.lastTelegram = startedAt;
+    persist();
+    tgFailToasted = false;
+    return r.parts > 1 ? `${r.filenames[0]} 외 ${r.parts - 1}개 (총 ${r.parts}개 조각)` : r.filenames[0];
+  } finally {
+    backupUi.tgProgress = '';
+  }
 }
 
 // ---- 서버 노트 폴더 백업(.works-backup/) ----
@@ -213,8 +231,13 @@ async function tick() {
 export async function divertBundleDrop(files: File[]): Promise<File[]> {
   const { bundles, rest } = await splitBundleFiles(files);
   if (bundles.length) {
-    if (bundles.length > 1) toast('번들은 한 번에 하나만 가져옵니다. 첫 파일만 엽니다');
-    backupUi.pending = bundles[0];
+    // 조각(.mwb.001…)은 모두 넘겨 대화상자가 묶는다. 조각이 아닌 번들이 여럿이면 기존처럼 첫 파일만 연다.
+    if (bundles.length > 1 && !bundles.some((f) => isPartName(f.name))) {
+      toast('번들은 한 번에 하나만 가져옵니다. 첫 파일만 엽니다');
+      backupUi.pending = [bundles[0]];
+    } else {
+      backupUi.pending = bundles;
+    }
     backupUi.open = true;
   }
   return rest;

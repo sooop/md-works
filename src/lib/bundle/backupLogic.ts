@@ -95,6 +95,7 @@ export function classifyBytes(name: string, bytes: Uint8Array): FileKind {
 
 /** 앱 전체 드롭에서 이 파일을 번들 가져오기(백업 대화상자)로 보낼지 판정한다 */
 export async function isBundleFile(file: File): Promise<boolean> {
+  if (isPartName(file.name)) return true; // 분할 조각(.mwb.001…)은 이름으로 판정한다(바이트를 읽지 않음)
   const isMwb = /\.mwb$/i.test(file.name);
   const isZip = /\.zip$/i.test(file.name) || file.type === 'application/zip';
   if (!isMwb && !isZip) return false; // .md/.docx 등은 바이트를 읽지 않는다
@@ -112,3 +113,84 @@ export async function splitBundleFiles(files: File[]): Promise<{ bundles: File[]
 
 /** 서버 폴더 백업 파일명 규칙(서버 정규식과 같다) */
 export const SERVER_BACKUP_NAME_RE = /^md-works-\d{8}-\d{6}(-\d+)?\.(mwb|zip)$/;
+
+// ---- 큰 번들 분할 업로드 / 조각 조립 ----
+/** 조각 하나의 안전 한도(텔레그램 sendDocument 50MB 아래로 여유) */
+export const CHUNK_LIMIT = 45 * 1024 * 1024;
+/** 조각 수 상한(= 약 900MB) */
+export const MAX_PARTS = 20;
+
+const fmtMb = (n: number) => `${(n / 1024 / 1024).toFixed(1)}MB`;
+
+/** 바이트를 limit 단위로 단순히 자른다(헤더 없음 — 이어 붙이면 원본). 0바이트·조각 수 초과는 오류. */
+export function splitBytes(bytes: Uint8Array, limit: number = CHUNK_LIMIT, maxParts: number = MAX_PARTS): Uint8Array[] {
+  if (bytes.length === 0) throw new Error('빈 번들은 나눌 수 없습니다');
+  if (!(limit > 0)) throw new Error('조각 한도가 올바르지 않습니다');
+  const n = Math.ceil(bytes.length / limit);
+  if (n > maxParts) {
+    throw new Error(`번들 ${fmtMb(bytes.length)} 은(는) 조각 ${n}개가 필요해 상한 ${maxParts}개(약 ${fmtMb(maxParts * limit)})를 넘습니다`);
+  }
+  const out: Uint8Array[] = [];
+  for (let i = 0; i < n; i++) out.push(bytes.subarray(i * limit, Math.min(bytes.length, (i + 1) * limit)));
+  return out;
+}
+
+/** `md-works-….mwb` + 1 → `md-works-….mwb.001` */
+export const partFileName = (stem: string, index: number) => `${stem}.${String(index).padStart(3, '0')}`;
+
+/** 조각 caption: `이름 · i/n · 전체 12.3MB · SHA-256 abcdef012345` */
+export function partCaption(base: string, index: number, total: number, totalBytes: number, sha12: string): string {
+  return `${base ? `${base} · ` : ''}${index}/${total} · 전체 ${fmtMb(totalBytes)} · SHA-256 ${sha12}`;
+}
+
+const PART_RE = /^(.+\.mwb)\.(\d{3})$/i;
+
+/** `x.mwb.003` → { stem: 'x.mwb', index: 3 }. 조각 이름이 아니면 null */
+export function parsePartName(name: string): { stem: string; index: number } | null {
+  const m = PART_RE.exec(name);
+  if (!m) return null;
+  const index = Number(m[2]);
+  return index >= 1 ? { stem: m[1], index } : null;
+}
+
+export const isPartName = (name: string) => parsePartName(name) !== null;
+
+export type ImportPlan<T> =
+  | { ok: true; kind: 'single'; file: T }
+  | { ok: true; kind: 'parts'; stem: string; parts: T[] }
+  | { ok: false; error: string };
+
+const pad3 = (i: number) => String(i).padStart(3, '0');
+
+/** 가져오기로 들어온 파일들을 단일 파일 또는 번호순 조각 묶음으로 정리한다(이름만 본다). */
+export function planImport<T extends { name: string }>(files: T[]): ImportPlan<T> {
+  if (!files.length) return { ok: false, error: '파일이 없습니다' };
+  const parsed = files.map((f) => ({ f, p: parsePartName(f.name) }));
+  const parts = parsed.filter((x) => x.p);
+  if (!parts.length) {
+    if (files.length > 1) return { ok: false, error: '번들은 한 번에 하나만 가져옵니다 (조각 파일 .mwb.001… 은 함께 놓을 수 있습니다)' };
+    return { ok: true, kind: 'single', file: files[0] };
+  }
+  if (parts.length !== files.length) return { ok: false, error: '조각 파일(.mwb.001…)과 다른 파일을 함께 가져올 수 없습니다. 조각만 놓아 주세요' };
+  const stems = [...new Set(parts.map((x) => x.p!.stem))];
+  if (stems.length > 1) return { ok: false, error: `서로 다른 백업의 조각이 섞여 있습니다: ${stems.join(', ')}` };
+  const seen = new Set<number>();
+  const dup = new Set<number>();
+  for (const x of parts) (seen.has(x.p!.index) ? dup : seen).add(x.p!.index);
+  if (dup.size) return { ok: false, error: `같은 번호의 조각이 중복되었습니다: ${[...dup].sort((a, b) => a - b).map(pad3).join(', ')}` };
+  const max = Math.max(...seen);
+  const missing: string[] = [];
+  for (let i = 1; i <= max; i++) if (!seen.has(i)) missing.push(pad3(i));
+  if (missing.length) return { ok: false, error: `조각이 빠져 있습니다: ${missing.join(', ')} 번이 없습니다. 모두 한꺼번에 놓아 주세요` };
+  if (parts.length === 1) return { ok: false, error: '조각이 하나뿐입니다. .mwb.001, .002 … 조각 파일을 모두 한꺼번에 놓아 주세요' };
+  parts.sort((a, b) => a.p!.index - b.p!.index);
+  return { ok: true, kind: 'parts', stem: stems[0], parts: parts.map((x) => x.f) };
+}
+
+/** 조각 바이트를 순서대로 이어 붙인다 */
+export function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0));
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return out;
+}
