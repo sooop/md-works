@@ -6,6 +6,7 @@ export function decPart(s: string): string;
 export class WorksError extends Error { status: number; constructor(status: number, message: string); }
 export interface WorksFs {
   list(coll: string, part?: string): Promise<unknown[]>;
+  get(coll: string, part: string | undefined, id: string): Promise<unknown | null>;
   put(coll: string, part: string | undefined, rec: unknown): Promise<void>;
   remove(coll: string, part: string | undefined, id: string): Promise<void>;
   parts(coll: string): Promise<string[]>;
