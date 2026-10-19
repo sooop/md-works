@@ -4,6 +4,7 @@
 import type { WorksStore } from '../../works/store';
 import type { Design } from '../../design';
 import { dirname, isExternalSrc, joinPath, safeDecode, IMAGE_RE } from '../../utils';
+import { BundleError } from '../parse';
 import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from '../host';
 
 export interface ServerHostOptions {
@@ -15,6 +16,14 @@ export interface ServerHostOptions {
   afterApply?: () => Promise<void>;
   design?: { current(): string; apply(d: Design): void };
 }
+
+// 서버(server/api.js·worksStore.js)의 규칙과 맞춘 사전 검증 값
+// eslint-disable-next-line no-control-regex
+const SERVER_BAD_CHARS = /[\u0000-\u001f\u007f*?"<>|]/;
+const MAX_PART = 200; // worksStore MAX_PART
+const MAX_DOC_JSON_BYTES = 19 * 1024 * 1024; // 서버 MAX_JSON(20MB) 아래 여유
+const MAX_DOC_CHARS_UNCHECKED = 3_000_000; // 글자당 최대 6바이트(JSON 이스케이프)여도 19MB 를 넘지 못하는 길이
+const MAX_MTIME = 1e13; // 파일 시각으로 쓸 수 있는 상한
 
 interface Index { docs: { path: string; mtime: number }[]; assets: string[] }
 
@@ -41,6 +50,7 @@ export function createServerHost(opts: ServerHostOptions): BundleHost {
   const q = encodeURIComponent;
   const index = () => call<Index>('/api/bundle/index');
   let assetSet = new Set<string>();
+  let lower = new Map<string, string>(); // 소문자 경로 → 서버에 있는 실제 경로
 
   return {
     mode: 'server',
@@ -48,8 +58,27 @@ export function createServerHost(opts: ServerHostOptions): BundleHost {
     convertsImages: false,
     ...(opts.design ? { design: opts.design } : {}),
 
-    async prepare() { await opts.prepare?.(); },
-    normalizeName: (name) => name,
+    foldsCase: true, // 윈도·맥 서버는 대소문자를 구분하지 않는다. 구분하는 서버에서도 대소문자만 다른 글은 충돌로 다룬다(무음 덮어쓰기 방지)
+    async prepare() {
+      await opts.prepare?.();
+      lower = new Map((await index()).docs.map((d) => [d.path.toLowerCase(), d.path]));
+    },
+    // 번들 이름을 이 서버에 있는 글의 표기에 맞춘다(note.md ↔ Note.md 가 같은 글이어야 덮어쓰기 전에 이력이 남는다)
+    normalizeName: (name) => lower.get(name.toLowerCase()) ?? name,
+    validateImport({ docs, partitions, assets }) {
+      const names = [...docs.map((d) => d.name), ...partitions, ...assets];
+      for (const n of names) {
+        if (SERVER_BAD_CHARS.test(n)) throw new BundleError(`서버가 받을 수 없는 문자(제어 문자 또는 * ? " < > |)가 이름에 있습니다: ${JSON.stringify(n.slice(0, 120))}`);
+      }
+      for (const n of [...docs.map((d) => d.name), ...partitions]) {
+        if (n.length > MAX_PART) throw new BundleError(`글 경로가 ${MAX_PART}자를 넘어 서버가 이력을 저장할 수 없습니다: ${JSON.stringify(n.slice(0, 120))}…`);
+      }
+      for (const d of docs) {
+        // 서버는 JSON 본문 20MB 까지만 받는다. 줄바꿈·따옴표 이스케이프로 부풀어도 안전하도록 여유를 둔다
+        const big = d.content.length > MAX_DOC_CHARS_UNCHECKED && new TextEncoder().encode(JSON.stringify({ content: d.content })).length > MAX_DOC_JSON_BYTES;
+        if (big) throw new BundleError(`글이 너무 커서 서버가 받을 수 없습니다(약 19MB 초과): ${d.name}`);
+      }
+    },
     async listDocs(): Promise<HostDocInfo[]> {
       const idx = await index();
       assetSet = new Set(idx.assets);
@@ -79,7 +108,7 @@ export function createServerHost(opts: ServerHostOptions): BundleHost {
         async putDoc(src, name, content, updatedAt) {
           // 글이 참조하는 에셋은 덮어쓴다(번들의 글 본문이 그 이미지를 전제한다)
           for (const p of linkedAssetPaths(src, content)) await putAsset(p);
-          await call(`/api/bundle/doc?path=${q(name)}&mtime=${Math.max(1, Math.round(updatedAt))}`, {
+          await call(`/api/bundle/doc?path=${q(name)}&mtime=${Number.isFinite(updatedAt) ? Math.min(MAX_MTIME, Math.max(1, Math.round(updatedAt))) : Date.now()}`, {
             method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }),
           });
           return name;

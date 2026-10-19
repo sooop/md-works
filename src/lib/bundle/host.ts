@@ -55,6 +55,14 @@ export interface BundleHost {
   textToBundle(stem: string, text: string): Promise<{ text: string; assets: BundleAsset[] }>;
   /** assets: 번들에 들어 있는 모든 에셋(경로 → 데이터) */
   beginImport(assets: ReadonlyMap<string, Uint8Array>): ImportSession;
+  /** 이름의 대소문자를 구분하지 않는 보관소인가(윈도·맥 파일 시스템). 번들 안에 대소문자만 다른 글이 있으면 충돌로 다룬다 */
+  readonly foldsCase?: boolean;
+  /** 이력·스레드의 id 가 파티션과 무관하게 저장소 전체에서 유일한 키인가(스탠드얼론 IndexedDB). 병합이 다른 파티션의 같은 id 를 덮어쓰지 않도록 건너뛴다 */
+  readonly globalIds?: boolean;
+  /** 쓰기 전에(계획 단계) 이 보관소가 받을 수 없는 이름·크기가 있으면 BundleError 를 던진다. docs 는 실제로 쓸 글, partitions 는 이력·스레드를 쓸 글 이름, assets 는 번들의 모든 이미지 경로 */
+  validateImport?(w: { docs: { name: string; content: string; updatedAt?: number }[]; partitions: string[]; assets: string[] }): void;
+  /** 가져오기 시작(true)·끝(false) 알림. 스탠드얼론은 그동안 이미지 정리(gc)를 멈춘다 */
+  setImporting?(on: boolean): void;
   /** 가져오기가 끝난 뒤(성공이든 실패든 쓴 것이 있을 때) 화면 상태를 다시 읽는다 */
   afterApply?(): Promise<void>;
 }

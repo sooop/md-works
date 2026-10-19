@@ -2,7 +2,7 @@
 // 저장소·zip 세부는 host.ts / parse.ts 에, 병합 규칙은 merge.ts 에 있다. 여기는 그 조립이다.
 import { zipSync, type Zippable } from 'fflate';
 import type { BundleSummary, DocAction, MergePreview, MergeResult } from './api';
-import { BUNDLE_SCHEMA, BUNDLE_VERSION, BundleError, MAX_ENTRIES, parseBundle, safeEntryPath, type ParsedBundle } from './parse';
+import { BUNDLE_SCHEMA, BUNDLE_VERSION, BundleError, MAX_ENTRIES, isDocName, parseBundle, type ParsedBundle } from './parse';
 import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from './host';
 import { classifyDoc, mergeRecords, mergeVersions, preMergeVersion, type RecordMerge, type VersionMerge } from './merge';
 import { encPart } from './partName';
@@ -29,14 +29,16 @@ export async function buildBundleWith(host: BundleHost, now = Date.now()): Promi
   const addAssets = (list: BundleAsset[]) => { for (const a of list) assets.set(a.path, a.data); };
   const put = (path: string, text: string) => { files[path] = enc.encode(text); };
 
-  const infos = (await host.listDocs()).sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
+  // 가져올 수 없는 이름(255자 초과·제어 문자 등)의 글은 전체를 멈추지 않고 건너뛰어 summary.skipped 로 알린다
+  const skipped: string[] = [];
+  const infos = (await host.listDocs()).filter((d) => (isDocName(d.name) ? true : (skipped.push(d.name), false)))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true }));
   const keyToName = new Map(infos.map((d) => [d.key, d.name]));
   const docMeta: Record<string, { updatedAt: number }> = {};
   let nVersions = 0;
   let nThreads = 0;
 
   for (const info of infos) {
-    safeEntryPath(info.name); // 가져올 수 없는 이름의 글이 있으면 조용히 빠뜨리지 말고 알린다
     const body = await host.readDoc(info);
     put(info.name, body.content);
     addAssets(body.assets);
@@ -86,7 +88,7 @@ export async function buildBundleWith(host: BundleHost, now = Date.now()): Promi
     bytes,
     summary: {
       docs: infos.length, images: assets.size, versions: nVersions, snippets: snippets.filter((s) => !s.purged).length,
-      threads: nThreads, bytes: bytes.length,
+      threads: nThreads, bytes: bytes.length, ...(skipped.length ? { skipped } : {}),
     },
   };
 }
@@ -113,22 +115,40 @@ interface Plan {
   preview: MergePreview;
 }
 
-function nameMap(host: BundleHost, parsed: ParsedBundle): Map<string, string> {
+function nameMap(host: BundleHost, parsed: ParsedBundle): { nameOf: Map<string, string>; collisions: string[] } {
   const nameOf = new Map<string, string>();
-  const owner = new Map<string, string>();
+  const owner = new Map<string, { src: string; name: string }>();
+  const collisions: string[] = [];
   for (const src of parsed.docs.keys()) {
     const name = host.normalizeName(src);
-    const prev = owner.get(name);
-    if (prev !== undefined && prev !== src) throw new BundleError(`번들의 글 '${prev}' 와 '${src}' 가 이 보관소에서 같은 이름이 됩니다`);
-    owner.set(name, src);
+    const fold = host.foldsCase ? name.toLowerCase() : name;
+    const prev = owner.get(fold);
+    if (prev !== undefined && prev.src !== src) {
+      if (prev.name === name) throw new BundleError(`번들의 글 '${prev.src}' 와 '${src}' 가 이 보관소에서 같은 이름이 됩니다`);
+      collisions.push(`${prev.name} / ${name}`); // 대소문자만 다른 이름: 미리보기가 알리고 적용은 멈춘다
+    } else {
+      owner.set(fold, { src, name });
+    }
     nameOf.set(src, name);
   }
-  return nameOf;
+  return { nameOf, collisions };
+}
+
+/** 이력·스레드의 id 가 저장소 전체에서 유일한 키일 때, 파티션(key)이 아닌 다른 파티션에 이미 있는 id 를 돌려주는 함수를 만든다 */
+async function foreignIds(host: BundleHost, coll: 'versions' | 'threads'): Promise<(key?: string) => ReadonlySet<string> | undefined> {
+  if (!host.globalIds) return () => undefined;
+  const byPart = new Map<string, string[]>();
+  for (const part of await host.store.parts(coll)) {
+    try { byPart.set(part, (await host.store.list(coll, part)).map((r) => r.id)); } catch { /* 읽을 수 없는 파티션은 건너뛴다 */ }
+  }
+  return (key) => new Set([...byPart].flatMap(([part, ids]) => (part === key ? [] : ids)));
 }
 
 async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, currentDesign: string): Promise<Plan> {
   const store = host.store;
-  const nameOf = nameMap(host, parsed);
+  const { nameOf, collisions } = nameMap(host, parsed);
+  const foreignV = await foreignIds(host, 'versions');
+  const foreignT = await foreignIds(host, 'threads');
   const locals = new Map((await host.listDocs()).map((d) => [d.name, d]));
 
   const docs: DocPlan[] = [];
@@ -149,12 +169,12 @@ async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, cur
   const versions: Plan['versions'] = [];
   for (const p of partitions(parsed.versions)) {
     const info = locals.get(p.name);
-    versions.push({ src: p.src, name: p.name, merge: mergeVersions(info ? await store.list<Version>('versions', info.key) : [], p.list, now) });
+    versions.push({ src: p.src, name: p.name, merge: mergeVersions(info ? await store.list<Version>('versions', info.key) : [], p.list, now, foreignV(info?.key)) });
   }
   const threads: Plan['threads'] = [];
   for (const p of partitions(parsed.threads)) {
     const info = locals.get(p.name);
-    threads.push({ src: p.src, name: p.name, merge: mergeRecords(info ? await store.list<Thread>('threads', info.key) : [], p.list) });
+    threads.push({ src: p.src, name: p.name, merge: mergeRecords(info ? await store.list<Thread>('threads', info.key) : [], p.list, foreignT(info?.key)) });
   }
   const snippets = mergeRecords(await store.list<Snippet>('snippets'), parsed.snippets);
 
@@ -176,6 +196,7 @@ async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, cur
     },
     versions: { add: versions.reduce((n, x) => n + x.merge.add, 0), same: versions.reduce((n, x) => n + x.merge.same, 0) },
     designDiffers,
+    ...(collisions.length ? { nameCollisions: collisions } : {}),
   };
   return { docs, versions, threads, snippets, nameOf, preview };
 }
@@ -184,6 +205,12 @@ async function loadParsed(host: BundleHost, bytes: Uint8Array, now: number) {
   await host.prepare();
   const parsed = parseBundle(bytes); // 여기서 경로·크기·형식 검증이 모두 끝난다
   const plan = await makePlan(host, parsed, now, designIO(host).current());
+  // 보관소(서버)가 받을 수 없는 이름·크기는 쓰기 전에 여기서 막는다
+  host.validateImport?.({
+    docs: plan.docs.filter((d) => d.action === 'add' || d.action === 'update').map((d) => ({ name: d.name, content: d.remote.content, updatedAt: d.remote.updatedAt })),
+    partitions: [...new Set([...plan.versions.filter((v) => v.merge.add || v.merge.put.length).map((v) => v.name), ...plan.threads.filter((t) => t.merge.add.length || t.merge.update.length).map((t) => t.name)])],
+    assets: [...parsed.assets.keys()],
+  });
   return { parsed, plan };
 }
 
@@ -219,6 +246,9 @@ export async function applyBundleWith(
 ): Promise<MergeResult> {
   // 읽기 단계: 파싱·검증·계획을 모두 끝낸 뒤에야 쓰기 시작한다
   const { parsed, plan } = await loadParsed(host, bytes, now);
+  if (plan.preview.nameCollisions?.length) {
+    throw new BundleError(`번들에 대소문자만 다른 이름의 글이 있어 이 보관소에 가져올 수 없습니다: ${plan.preview.nameCollisions.join(', ')}`);
+  }
   let design: Design | undefined;
   if (options.applyDesign && parsed.design) {
     const r = parseDesign(parsed.design);
@@ -228,6 +258,7 @@ export async function applyBundleWith(
 
   const store = host.store;
   const result: MergeResult = { docsAdded: 0, docsUpdated: 0, conflicts: [], snippets: 0, threads: 0, versions: 0, designApplied: false };
+  host.setImporting?.(true); // 가져오는 동안 이미지 정리(gc)가 방금 저장한 이미지를 지우지 못하게 한다
   const session: ImportSession = host.beginImport(parsed.assets);
   let wrote = false;
   try {
@@ -254,11 +285,15 @@ export async function applyBundleWith(
     for (const info of await host.listDocs()) keyOf.set(info.name, info.key);
 
     // 2) 이력 버전
+    // 글 처리에서 '병합 전' 버전이 새로 생기거나 이름이 붙었을 수 있으니, 솎아내기 계획은 지금 저장소 상태로 다시 세운다
+    // (처음 계획을 그대로 쓰면 방금 이름 붙은 버전을 지워 진 쪽 내용이 사라진다)
+    const foreignV = await foreignIds(host, 'versions');
     for (const p of plan.versions) {
       const key = keyOf.get(p.name);
       if (!key) continue;
       const remote = parsed.versions.get(p.src) ?? [];
-      const puts = new Set(p.merge.put.map((v) => v.id));
+      const merge = mergeVersions(await store.list<Version>('versions', key), remote, now, foreignV(key));
+      const puts = new Set(merge.put.map((v) => v.id));
       const out: Version[] = [];
       for (const v of remote) {
         if (!puts.has(v.id)) continue;
@@ -273,7 +308,7 @@ export async function applyBundleWith(
         puts.delete(v.id); // 번들 안의 중복 id 는 첫 것만
       }
       if (out.length) { await store.putMany('versions', out, key); wrote = true; }
-      for (const id of p.merge.remove) await store.remove('versions', id, key);
+      for (const id of merge.remove) await store.remove('versions', id, key);
       result.versions += out.length;
     }
 
@@ -301,7 +336,7 @@ export async function applyBundleWith(
     if (design) { designIO(host).apply(design); result.designApplied = true; }
     await session.close();
   } finally {
-    if (wrote) await host.afterApply?.();
+    try { if (wrote) await host.afterApply?.(); } finally { host.setImporting?.(false); }
   }
   return result;
 }

@@ -94,6 +94,10 @@ export async function init() {
     // 번들을 만들거나 가져오기 전에 대기 중인 편집·코멘트를 저장하고, 가져온 뒤에는 메모리 사본을 다시 읽는다
     prepare: async () => { await flush(); await flushComments(); },
     afterApply: reloadAfterBundle,
+    setImporting: (on) => { // 가져오는 동안 gc 는 메모리 사본(all)에 없는 새 이미지를 미참조로 보고 지울 수 있다(5분 유예를 넘기는 큰 번들)
+      importing = Math.max(0, importing + (on ? 1 : -1));
+      if (!importing) scheduleGc();
+    },
     design: { current: () => serializeDesign(designState), apply: importDesign },
   }));
   void loadTemplateInfo();
@@ -326,6 +330,7 @@ export function resolveUrl(src: string): string | Promise<string> {
 // 저장마다 전체 이력을 훑지 않도록 정리는 GC_MIN_INTERVAL_MS 에 한 번만 한다 (삭제 때는 바로 실행)
 const GC_MIN_INTERVAL_MS = 30_000;
 let lastGc = 0;
+let importing = 0;
 let gcTimer: ReturnType<typeof setTimeout> | undefined;
 function scheduleGc() {
   if (gcTimer) return;
@@ -335,6 +340,7 @@ function scheduleGc() {
 
 // 어떤 문서와 이력도 참조하지 않는 이미지를 지운다
 async function gcImages() {
+  if (importing) return; // 번들 가져오는 중에는 하지 않는다(끝나면 setImporting 이 다시 예약한다)
   lastGc = Date.now();
   try {
     const used = new Set<string>();
