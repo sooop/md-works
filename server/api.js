@@ -279,8 +279,11 @@ export function createApi(rootInput, opts = {}) {
       const p2 = (n) => String(n).padStart(2, '0');
       const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
       const ext = isMwb ? 'mwb' : 'zip';
-      let name = `md-works-${stamp}.${ext}`;
-      for (let i = 2; ; i++) {
+      // 같은 초의 기존 파일 중 가장 큰 번호 다음부터 매긴다(회전으로 앞 번호가 지워져도 이름이 되살아나 곧바로 지워지는 일이 없게)
+      const used = (await listBackups(dir)).map((b) => b.name).filter((n) => n.startsWith(`md-works-${stamp}`));
+      const top = used.reduce((m, n) => Math.max(m, Number(/-(\d+)\.(mwb|zip)$/.exec(n)?.[1] ?? 1)), used.length ? 1 : 0);
+      let name = top ? `md-works-${stamp}-${top + 1}.${ext}` : `md-works-${stamp}.${ext}`;
+      for (let i = top + 2; ; i++) {
         try { await fs.writeFile(await safe(`${BACKUP_DIR}/${name}`, { mustExist: false }), body, { flag: 'wx' }); break; }
         catch (e) { if (e.code !== 'EEXIST') throw e; name = `md-works-${stamp}-${i}.${ext}`; }
       }
