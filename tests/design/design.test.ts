@@ -18,10 +18,10 @@ describe('대비 계산', () => {
     const keys = contrastWarnings(p).map((w) => w.key);
     expect(keys).toContain('text');
     expect(keys).toContain('muted');
-    expect(contrastWarnings(PRESETS[0].light).map((w) => w.key)).toEqual(['primary']); // 기존 크림 팔레트의 흰 글자/#c15f3c 대비는 4.23
+    expect(contrastWarnings(PRESETS[0].light).map((w) => w.key)).toEqual([]); // 기본 크림 팔레트는 경고가 없다(md-notes 의 #c15f3c 는 4.23 이라 #b45434 로 조정)
   });
   it('내장 프리셋은 글자·보조 글자 대비 기준을 넘는다', () => {
-    for (const pr of PRESETS) for (const m of ['light', 'dark'] as const) expect(contrastWarnings(pr[m]).filter((w) => w.key !== 'primary'), `${pr.id}/${m}`).toEqual([]);
+    for (const pr of PRESETS) for (const m of ['light', 'dark'] as const) expect(contrastWarnings(pr[m]), `${pr.id}/${m}`).toEqual([]);
   });
   it('hex 정규화', () => {
     expect(normalizeHex('#ABC')).toBe('#aabbcc');

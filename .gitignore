@@ -7,3 +7,8 @@ local/
 .env.*
 !.env.example
 .claude/worktrees/
+
+# 앱이 노트 폴더(sample 등)에 만드는 사이드카·백업
+.works/
+.works-backup/
+.comments/

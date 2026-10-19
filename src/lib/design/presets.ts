@@ -6,7 +6,7 @@ export interface Preset { id: string; name: string; light: Palette; dark: Palett
 export const PRESETS: Preset[] = [
   {
     id: 'cream', name: '크림(기본)',
-    light: { bg: '#faf9f5', surface: '#f5f4ed', text: '#141413', muted: '#6b6a64', border: '#e8e6dc', primary: '#c15f3c', accent: '#d97757', accentSoft: '#f3dcd2', quote: '#e8e6dc', codeBg: '#f5f4ed' },
+    light: { bg: '#faf9f5', surface: '#f5f4ed', text: '#141413', muted: '#6b6a64', border: '#e8e6dc', primary: '#b45434', accent: '#d97757', accentSoft: '#f3dcd2', quote: '#e8e6dc', codeBg: '#f5f4ed' },
     dark: { bg: '#262624', surface: '#2e2e2b', text: '#f0eee6', muted: '#a6a59c', border: '#3d3c38', primary: '#e8956f', accent: '#d97757', accentSoft: '#4a352c', quote: '#403f3a', codeBg: '#2e2e2b' },
   },
   {

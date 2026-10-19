@@ -16,6 +16,7 @@
   import CommentsPanel from './CommentsPanel.svelte';
   import CommentLayer from './CommentLayer.svelte';
   import SnippetPanel from './SnippetPanel.svelte';
+  import SnippetShortcuts from './SnippetShortcuts.svelte';
   import { openCount } from '../comments/store.svelte';
   import FindBar from './FindBar.svelte';
   import StatusBar from './StatusBar.svelte';
@@ -72,6 +73,7 @@
 </svelte:head>
 
 <div class="shell">
+  <SnippetShortcuts openSidebar={() => (sidebarOpen = true)} />
   {#if sidebarOpen}
     <aside class="sidebar">
       <header>

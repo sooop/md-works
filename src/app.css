@@ -24,7 +24,7 @@
   --hover: #efede4;
   --selected: #e8e6dc;
   --accent: #d97757;
-  --primary: #c15f3c; /* 버튼/링크 */
+  --primary: #b45434; /* 버튼/링크 — 흰 글자·배경 위 모두 WCAG 4.5 이상(md-notes 의 #c15f3c 는 4.23) */
   --on-primary: #ffffff;
   --accent-soft: #f3dcd2;
   --danger: #b3261e;

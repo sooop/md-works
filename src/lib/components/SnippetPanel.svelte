@@ -10,7 +10,7 @@
   import { COLOR_HEX } from '../snippets/colors';
   import { asUrl } from '../snippets/filter';
   import { imageToDataUrl, MAX_DATA_URL } from '../snippets/image';
-  import { sn, reload, visible, addSnippet, sendSelection, findByEditorText, trackEditorSelection } from '../snippets/state.svelte';
+  import { sn, reload, visible, addSnippet, sendSelection } from '../snippets/state.svelte';
 
   let input = $state<HTMLTextAreaElement>();
   let phraseInput = $state<HTMLInputElement>();
@@ -25,19 +25,12 @@
   const phraseMode = $derived(!!sn.phrase.trim());
 
   onMount(() => {
-    void reload();
-    return trackEditorSelection();
+    void reload(); // 단축키·선택 추적은 셸의 SnippetShortcuts 가 맡는다
   });
   // 탭을 열 때마다 다시 읽는다 (다른 기능이 글감을 만들었을 수 있다)
   $effect(() => { if (ui.tab === 'snippets') void reload(); });
   $effect(() => { sn.focusInput; if (sn.focusInput) void tick().then(() => input?.focus()); });
   $effect(() => { sn.focusPhrase; if (sn.focusPhrase) void tick().then(() => { phraseInput?.focus(); phraseInput?.select(); }); });
-
-  function onWinKey(e: KeyboardEvent) {
-    if (!e.ctrlKey || !e.altKey || e.shiftKey || e.metaKey) return;
-    if (e.code === 'KeyG') { e.preventDefault(); findByEditorText(); }
-    else if (e.code === 'KeyS') { e.preventDefault(); void sendSelection(); }
-  }
 
   async function add() {
     const body = text.trim();
@@ -88,8 +81,6 @@
     : '글감이 없습니다. 위 입력창에 적고 Enter 를 누르세요.',
   );
 </script>
-
-<svelte:window onkeydown={onWinKey} />
 
 <div class="sn-panel">
   <div class="sn-quick">
