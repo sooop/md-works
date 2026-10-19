@@ -6,7 +6,7 @@ import path from 'node:path';
 
 export const WORKS_DIR = '.works';
 /** 컬렉션 → 문서별 파티션 여부 */
-export const COLLS = { versions: true, snippets: false, threads: true };
+export const COLLS = { versions: true, snippets: false, threads: true, tombstones: false };
 export const GLOBAL_PART = '_';
 const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const MAX_PART = 200;

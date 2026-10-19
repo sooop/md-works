@@ -135,3 +135,67 @@ export function preMergeVersion(docName: string, docKey: string, content: string
     name: preMergeName(now), ...compress(content),
   };
 }
+
+// ---- 글 삭제 묘비 ----
+export type DeletionAction = 'delete' | 'keep-local';
+export interface TombstoneInput {
+  /** 번들의 묘비. name 은 이 보관소의 이름으로 바꾼 것 */
+  bundle: { name: string; deletedAt: number }[];
+  /** 로컬 묘비 */
+  local: { name: string; deletedAt: number }[];
+  /** 로컬 글 */
+  localDocs: { name: string; updatedAt: number }[];
+  /** 번들 글: 이 보관소의 이름 → updatedAt(없을 수 있다) */
+  bundleDocs: { name: string; updatedAt?: number }[];
+}
+export interface TombstoneMerge {
+  /** 번들의 묘비가 로컬 글에 걸리는 것. delete = 로컬이 묘비 이전 그대로라 지울 후보, keep-local = 로컬이 더 최신이라 묘비를 무시 */
+  deletions: { name: string; action: DeletionAction; deletedAt: number }[];
+  /** 로컬 묘비 때문에 되살리지 않는 번들 글(이름) */
+  skippedDeleted: string[];
+  /** 번들 글이 더 최신이라 지울 로컬 묘비(이름) */
+  clear: string[];
+  /** 병합 후 로컬에 새로 쓸 묘비(번들에만 있거나 더 늦은 것). 로컬에 살아 있는 글이 걸린 것은 여기 넣지 않는다 */
+  put: { name: string; deletedAt: number }[];
+}
+
+/**
+ * 묘비 병합(순수 함수). 이름은 대소문자를 구분하지 않고 비교한다.
+ *   번들 묘비 T(t) + 로컬 글 L : L.updatedAt <= t → delete 후보, 로컬이 더 최신 → keep-local(묘비 무시)
+ *   로컬 묘비 t2 + 번들 글 B   : B.updatedAt <= t2 → 되살리지 않음, B 가 더 최신(또는 시각 모름) → 정상 추가하고 로컬 묘비 제거
+ *   번들에 같은 이름의 글이 함께 있으면 그 글이 이기고 번들 묘비는 무시한다
+ *   묘비끼리는 deletedAt 큰 쪽(합집합)
+ */
+export function mergeTombstones(inp: TombstoneInput): TombstoneMerge {
+  const key = (n: string) => n.toLowerCase();
+  const maxBy = (list: { name: string; deletedAt: number }[]) => {
+    const m = new Map<string, { name: string; deletedAt: number }>();
+    for (const t of list) { const c = m.get(key(t.name)); if (!c || t.deletedAt > c.deletedAt) m.set(key(t.name), t); }
+    return m;
+  };
+  const bundleT = maxBy(inp.bundle);
+  const localT = maxBy(inp.local);
+  const localDocs = new Map(inp.localDocs.map((d) => [key(d.name), d]));
+  const bundleDocs = new Map(inp.bundleDocs.map((d) => [key(d.name), d.updatedAt]));
+  const out: TombstoneMerge = { deletions: [], skippedDeleted: [], clear: [], put: [] };
+
+  for (const [k, t] of bundleT) {
+    if (bundleDocs.has(k)) continue; // 같은 번들에 글이 있으면 글이 이긴다
+    const l = localDocs.get(k);
+    if (l) {
+      out.deletions.push({ name: l.name, action: l.updatedAt <= t.deletedAt ? 'delete' : 'keep-local', deletedAt: t.deletedAt });
+      continue;
+    }
+    const mine = localT.get(k);
+    if (!mine || t.deletedAt > mine.deletedAt) out.put.push({ name: t.name, deletedAt: t.deletedAt });
+  }
+  for (const d of inp.bundleDocs) {
+    const k = key(d.name);
+    if (localDocs.has(k)) continue;
+    const mine = localT.get(k);
+    if (!mine) continue;
+    if (d.updatedAt !== undefined && d.updatedAt <= mine.deletedAt) out.skippedDeleted.push(d.name);
+    else out.clear.push(mine.name);
+  }
+  return out;
+}

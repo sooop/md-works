@@ -13,6 +13,7 @@ import { useBackend, flushComments } from './comments/store.svelte';
 import { markChanged } from './bundle/backupState.svelte';
 import { useWorksStore, worksStore } from './works/store';
 import { reattachDoc, reattachPrefix } from './works/snippets';
+import { recordDocsGone, clearDocGone } from './bundle/tombstones';
 import { createSidecarStore } from './works/sidecarStore';
 import { sanitize } from './comments/anchor';
 import { useBundleHost } from './bundle/host';
@@ -92,7 +93,14 @@ async function reloadAfterBundle() {
   try {
     const f = await call<{ content: string }>(`/api/file?path=${q(doc.path)}`);
     if (f.content !== doc.content) await loadDoc(doc.path);
-  } catch { /* 글이 없어졌으면 그대로 둔다 */ }
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) { // 번들의 삭제 반영으로 글이 사라졌다: 빈 화면으로 되돌린다
+      clearAutosave();
+      Object.assign(doc, { path: '', name: '제목 없음', content: '', dirty: false });
+      doc.key++;
+      try { localStorage.removeItem(LAST_KEY); } catch { /* 무시 */ }
+    }
+  }
 }
 
 // ---- 문서 열기/저장 ----
@@ -217,6 +225,7 @@ export async function createDoc(dir: string) {
   const path = joinPath(dir, file);
   try {
     await call('/api/create', jsonInit('POST', { path, type: 'file' }));
+    await clearDocGone(path).catch(() => { /* 무시 */ }); // 같은 이름으로 다시 만들면 삭제 묘비는 지운다
     await refreshTree();
     await openDoc(path);
     if (doc.path === path) doc.edit = true; // 새로 만든 문서도 편집 모드 (loadDoc 이 이미 설정)
@@ -234,6 +243,12 @@ export async function createFolder(dir: string) {
   } catch (e) {
     toast(errMsg(e), 'error');
   }
+}
+
+// 노드(글 또는 폴더) 아래의 글 경로들. 삭제·이름 변경 묘비를 기록할 때 쓴다
+function docPaths(node: TreeNode): string[] {
+  if (node.type === 'file') return [node.path];
+  return (node.children ?? []).flatMap(docPaths);
 }
 
 const affects = (target: string) => doc.path === target || doc.path.startsWith(target + '/');
@@ -257,9 +272,13 @@ async function renameNodeTo(node: TreeNode, name: string) {
   if (next === node.name) return;
   if (affects(node.path) && !(await guardDirty())) return;
   const to = joinPath(dirname(node.path), next);
+  const moved = docPaths(node).filter((p) => /\.md$/i.test(p));
   try {
     await flushComments(); // 대기 중인 코멘트 저장이 옮기기 전 경로에 파일을 다시 만들지 않도록
     await call('/api/rename', jsonInit('POST', { from: node.path, to }));
+    // 옛 이름은 '지운 글'로 기록하고(다른 기기에서 되살아나지 않게), 새 이름의 묘비가 있으면 지운다
+    await recordDocsGone(moved).catch(() => { /* 무시 */ });
+    for (const p of moved) await clearDocGone(to + p.slice(node.path.length)).catch(() => { /* 무시 */ });
     await moveHistory(node.path, to).catch(() => { /* 무시 */ });
     await (isFile ? reattachDoc(node.path, to) : reattachPrefix(node.path, to)).catch(() => { /* 무시 */ }); // 글감의 붙은 글 경로 갱신
     const reopen = affects(node.path) ? to + doc.path.slice(node.path.length) : '';
@@ -274,9 +293,11 @@ async function renameNodeTo(node: TreeNode, name: string) {
 export async function removeNode(node: TreeNode) {
   const what = node.type === 'dir' ? `폴더 '${node.name}' 와 그 안의 모든 문서` : `문서 '${node.name}'`;
   if (!(await askConfirm(`${what}를 삭제할까요? 되돌릴 수 없습니다.`, '삭제'))) return;
+  const gone = docPaths(node).filter((p) => /\.md$/i.test(p));
   try {
     await flushComments();
     await call(`/api/file?path=${q(node.path)}`, { method: 'DELETE' });
+    await recordDocsGone(gone).catch(() => { /* 무시 */ }); // 다른 기기의 번들에서 되살아나지 않도록 묘비를 남긴다
     await removeHistory(node.path).catch(() => { /* 무시 */ });
     await (node.type === 'dir' ? reattachPrefix(node.path) : reattachDoc(node.path)).catch(() => { /* 무시 */ }); // 글감 연결 끊기
     if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = dirname(node.path);
@@ -351,6 +372,7 @@ async function createUnique(dir: string, stem: string): Promise<string> {
     const path = joinPath(dir, i === 1 ? `${stem}.md` : `${stem} (${i}).md`);
     try {
       await call('/api/create', jsonInit('POST', { path, type: 'file' }));
+      await clearDocGone(path).catch(() => { /* 무시 */ });
       return path;
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 409)) throw e;

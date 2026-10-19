@@ -55,6 +55,11 @@ export interface BundleHost {
   textToBundle(stem: string, text: string): Promise<{ text: string; assets: BundleAsset[] }>;
   /** assets: 번들에 들어 있는 모든 에셋(경로 → 데이터) */
   beginImport(assets: ReadonlyMap<string, Uint8Array>): ImportSession;
+  /**
+   * 글 한 편을 지운다(다른 기기에서 지운 글을 따라 지울 때). 이력·스레드·글감 연결·이미지 정리는 앱의 삭제 경로와 같은 규칙을 따른다.
+   * 묘비는 기록하지 않는다(코어가 번들의 묘비를 그대로 저장한다). 없는 글이면 아무것도 하지 않는다
+   */
+  deleteDoc(name: string): Promise<void>;
   /** 이름의 대소문자를 구분하지 않는 보관소인가(윈도·맥 파일 시스템). 번들 안에 대소문자만 다른 글이 있으면 충돌로 다룬다 */
   readonly foldsCase?: boolean;
   /** 이력·스레드의 id 가 파티션과 무관하게 저장소 전체에서 유일한 키인가(스탠드얼론 IndexedDB). 병합이 다른 파티션의 같은 id 를 덮어쓰지 않도록 건너뛴다 */

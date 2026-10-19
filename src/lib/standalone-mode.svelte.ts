@@ -16,6 +16,7 @@ import { commentToThread, listThreads, threadToComment } from './comments/thread
 import { reattachDoc } from './works/snippets';
 import { createIdbStore } from './works/idbStore';
 import { useBundleHost } from './bundle/host';
+import { recordDocGone, clearDocGone } from './bundle/tombstones';
 import { createStandaloneHost } from './bundle/hosts/standalone';
 import { design as designState, importDesign } from './design/state.svelte';
 import { serializeDesign } from './design';
@@ -124,6 +125,12 @@ async function reloadAfterBundle() {
     Object.assign(doc, { name: cur.name, content: cur.content, dirty: false });
     doc.key++;
   }
+  if (doc.path && !cur) { // 열려 있던 글이 번들의 삭제 반영으로 사라졌다: 빈 화면으로 되돌려 되살아 저장되지 않게 한다
+    clearTimeout(timer);
+    Object.assign(doc, { path: '', name: '제목 없음', content: '', dirty: false });
+    doc.key++;
+    try { localStorage.removeItem(LAST_KEY); } catch { /* 무시 */ }
+  }
 }
 
 // ---- 현재 문서 저장 (항상 자동 저장) ----
@@ -184,6 +191,7 @@ function uniqueName(stem: string): string {
 async function createRec(stem: string, content: string, open = true, edit = false): Promise<Rec> {
   const rec: Rec = { id: crypto.randomUUID(), name: uniqueName(stem), content, updated: Date.now() };
   await putDoc(rec);
+  await clearDocGone(rec.name).catch(() => { /* 무시 */ }); // 같은 이름으로 다시 만들면 삭제 묘비는 지운다
   all.set(rec.id, rec);
   refreshList();
   if (open) { await openDoc(rec.id); if (doc.path === rec.id && edit) doc.edit = true; }
@@ -228,6 +236,8 @@ async function renameDocTo(id: string, input: string) {
     rec.name = prev;
     return;
   }
+  await recordDocGone(prev).catch(() => { /* 무시 */ }); // 옛 이름은 '지운 글'로 기록한다
+  await clearDocGone(name).catch(() => { /* 무시 */ });
   if (rec.id === doc.path) doc.name = name;
   refreshList();
 }
@@ -237,6 +247,7 @@ export async function removeDoc(meta: DocMeta) {
   try {
     await flushComments(); // 대기 중인 코멘트 저장이 삭제 뒤에 레코드를 되살리지 않도록
     await idb('docs', 'readwrite', (s) => s.delete(meta.id));
+    await recordDocGone(meta.name).catch(() => { /* 무시 */ }); // 다른 기기의 번들에서 되살아나지 않도록 묘비를 남긴다
     await idb('comments', 'readwrite', (s) => s.delete(meta.id)).catch(() => { /* 무시 */ });
     await worksStore().removePart('threads', meta.id).catch(() => { /* 무시 */ });
     await removeHistory(meta.id).catch(() => { /* 무시 */ });

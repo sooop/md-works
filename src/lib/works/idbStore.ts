@@ -8,7 +8,7 @@ type Row = WorksRecord & { _part: string };
 export function createIdbStore(dbName = 'works-data'): WorksStore {
   let dbPromise: Promise<IDBDatabase> | undefined;
   const open = () => (dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const req = indexedDB.open(dbName, 1);
+    const req = indexedDB.open(dbName, 2); // v2: tombstones 스토어 추가(없는 스토어만 만든다)
     req.onupgradeneeded = () => {
       for (const c of COLLS) {
         if (!req.result.objectStoreNames.contains(c)) req.result.createObjectStore(c, { keyPath: 'id' }).createIndex('part', '_part');

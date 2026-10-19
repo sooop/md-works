@@ -4,6 +4,7 @@
   import DatabaseBackup from '@lucide/svelte/icons/database-backup';
   import { toast, errMsg } from '../store.svelte';
   import { previewBundle, applyBundle, type MergePreview, type MergeResult, type DocAction } from '../bundle/api';
+  import BundleDeletions from './BundleDeletions.svelte';
   import { BundleCryptoError } from '../bundle/crypto';
   import { NOTIFY_DAY_CHOICES } from '../bundle/backupLogic';
   import { MIN_AUTO_MINUTES, getMe, sendMessage } from '../bundle/telegram';
@@ -25,6 +26,7 @@
   let bytes = $state<Uint8Array | null>(null);
   let preview = $state<MergePreview | null>(null);
   let applyDesignToo = $state(false);
+  let applyDeletions = $state(false);
   let result = $state<MergeResult | null>(null);
 
   const ACTION_LABEL: Record<DocAction, string> = {
@@ -32,11 +34,11 @@
   };
   const ACTIONS: DocAction[] = ['add', 'update', 'conflict', 'same', 'keep-local'];
   const actionCount = (a: DocAction) => preview?.docs.filter((d) => d.action === a).length ?? 0;
-  const applicable = $derived(!!preview && (preview.docs.some((d) => d.action !== 'same' && d.action !== 'keep-local') || preview.designDiffers
+  const applicable = $derived(!!preview && (preview.docs.some((d) => d.action !== 'same' && d.action !== 'keep-local') || preview.designDiffers || (applyDeletions && preview.deletions.some((d) => d.action === 'delete'))
     || preview.snippets.add + preview.snippets.update + preview.threads.add + preview.threads.update + preview.versions.add > 0));
 
   function resetImport() {
-    importName = ''; bytes = null; preview = null; result = null; applyDesignToo = false;
+    importName = ''; bytes = null; preview = null; result = null; applyDesignToo = false; applyDeletions = false;
   }
 
   function explain(e: unknown): string {
@@ -78,7 +80,7 @@
     error = '';
     busy = '병합하는 중…';
     try {
-      result = await applyBundle(bytes, { applyDesign: applyDesignToo });
+      result = await applyBundle(bytes, { applyDesign: applyDesignToo, applyDeletions });
       preview = null;
       bytes = null;
     } catch (e) {
@@ -249,6 +251,7 @@
           {#if actionCount('conflict')}
             <p class="hint">충돌한 글은 진 쪽 내용이 '병합 전' 이름의 버전으로 이력에 보존됩니다.</p>
           {/if}
+          <BundleDeletions {preview} bind:applyDeletions />
           {#if preview.designDiffers}
             <label class="check"><input type="checkbox" bind:checked={applyDesignToo} aria-label="디자인도 적용" /><span>디자인도 적용 (번들의 디자인 설정이 현재와 다릅니다)</span></label>
           {/if}
@@ -271,6 +274,9 @@
           </div>
           {#if result.conflicts.length}
             <p class="hint">충돌한 글은 '병합 전' 이력 버전으로 보존되었습니다: {result.conflicts.join(', ')}</p>
+          {/if}
+          {#if result.docsDeleted}
+            <p class="hint">다른 기기에서 지운 글 {result.docsDeleted}개를 삭제했습니다. 내용은 '삭제 전' 글감으로 글감함에 보관되었습니다.</p>
           {/if}
           <button onclick={() => location.reload()} aria-label="새로 고침">새로 고침해서 반영 확인</button>
         {/if}

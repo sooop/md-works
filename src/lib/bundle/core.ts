@@ -4,13 +4,15 @@ import { zipSync, type Zippable } from 'fflate';
 import type { BundleSummary, DocAction, MergePreview, MergeResult } from './api';
 import { BUNDLE_SCHEMA, BUNDLE_VERSION, BundleError, MAX_ENTRIES, isDocName, parseBundle, type ParsedBundle } from './parse';
 import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from './host';
-import { classifyDoc, mergeRecords, mergeVersions, preMergeVersion, type RecordMerge, type VersionMerge } from './merge';
+import { classifyDoc, mergeRecords, mergeTombstones, mergeVersions, preMergeVersion, type RecordMerge, type TombstoneMerge, type VersionMerge } from './merge';
+import { listTombstones, nameKey, tombId } from './tombstones';
 import { encPart } from './partName';
 import { ID_RE } from './records';
 import { compress, decompress } from '../history/compress';
 import { parseDesign, saveDesign, serializeDesign } from '../design/io';
 import type { Design } from '../design/schema';
-import type { Snippet, Thread, Version } from '../works/types';
+import type { Snippet, Thread, Tombstone, Version } from '../works/types';
+import { createSnippet } from '../works/snippets';
 import type { WorksStore } from '../works/store';
 
 const enc = new TextEncoder();
@@ -76,7 +78,13 @@ export async function buildBundleWith(host: BundleHost, now = Date.now()): Promi
 
   put('.works/docs.json', JSON.stringify(docMeta, null, 2));
   put('.works/design.json', designIO(host).current());
-  put('.works/tombstones.json', JSON.stringify({ docs: {} }, null, 2)); // 글 삭제는 추적하지 않는다(전파하지 않으므로 기록할 것이 없다)
+  // 묘비: 지운 글의 이름 → deletedAt. 같은 이름의 글이 지금 있으면(다시 만들었다) 묘비는 낡은 것이라 싣지 않는다
+  const live = new Set(infos.map((d) => nameKey(d.name)));
+  const tombDocs: Record<string, number> = {};
+  for (const t of await listTombstones(store)) {
+    if (isDocName(t.name) && !live.has(nameKey(t.name))) tombDocs[t.name] = Math.max(tombDocs[t.name] ?? 0, t.deletedAt);
+  }
+  put('.works/tombstones.json', JSON.stringify({ docs: tombDocs }, null, 2));
   put('manifest.json', JSON.stringify({ schema: BUNDLE_SCHEMA, version: BUNDLE_VERSION, createdAt: now, mode: host.mode, app: 'md-works' }, null, 2));
   for (const [path, data] of assets) files[path] = [data, { level: 0 }]; // 이미지는 이미 압축돼 있다
 
@@ -110,6 +118,8 @@ interface Plan {
   versions: SidecarPlan<VersionMerge>[];
   threads: SidecarPlan<RecordMerge<Thread>>[];
   snippets: RecordMerge<Snippet>;
+  /** 글 삭제 묘비 병합 결과 */
+  tombs: TombstoneMerge;
   /** 번들 안의 원래 경로 → 이 보관소의 이름 */
   nameOf: Map<string, string>;
   preview: MergePreview;
@@ -151,9 +161,19 @@ async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, cur
   const foreignT = await foreignIds(host, 'threads');
   const locals = new Map((await host.listDocs()).map((d) => [d.name, d]));
 
+  // 묘비: 이 기기에서 이미 지운 글은 되살리지 않고, 다른 기기에서 지운 글은 지울 후보로만 올린다
+  const tombs = mergeTombstones({
+    bundle: Object.entries(parsed.tombstones.docs).map(([n, deletedAt]) => ({ name: host.normalizeName(n), deletedAt })),
+    local: (await listTombstones(store)).map((t) => ({ name: t.name, deletedAt: t.deletedAt })),
+    localDocs: [...locals.values()].map((d) => ({ name: d.name, updatedAt: d.updatedAt })),
+    bundleDocs: [...parsed.docs].map(([src, d]) => ({ name: nameOf.get(src)!, ...(d.updatedAt !== undefined ? { updatedAt: d.updatedAt } : {}) })),
+  });
+  const skipped = new Set(tombs.skippedDeleted.map(nameKey));
+
   const docs: DocPlan[] = [];
   for (const [src, remote] of [...parsed.docs].sort(([a], [b]) => a.localeCompare(b, 'ko', { numeric: true }))) {
     const name = nameOf.get(src)!;
+    if (skipped.has(nameKey(name))) continue;
     const info = locals.get(name);
     const body = info ? await host.readDoc(info) : undefined;
     const d = classifyDoc(body && info ? { content: body.content, updatedAt: info.updatedAt } : undefined, remote);
@@ -161,7 +181,7 @@ async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, cur
   }
 
   // 이력·스레드: 번들에 글이 있거나 이 보관소에 글이 있는 파티션만 다룬다(글 없는 사이드카는 이름 붙일 곳이 없다)
-  const known = (name: string) => locals.has(name) || [...parsed.docs.keys()].some((s) => nameOf.get(s) === name);
+  const known = (name: string) => locals.has(name) || [...parsed.docs.keys()].some((s) => nameOf.get(s) === name && !skipped.has(nameKey(name)));
   const partitions = <T>(m: Map<string, T[]>) => [...m].flatMap(([src, list]) => {
     const name = nameOf.get(src) ?? host.normalizeName(src);
     return known(name) ? [{ src, name, list }] : [];
@@ -197,8 +217,10 @@ async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, cur
     versions: { add: versions.reduce((n, x) => n + x.merge.add, 0), same: versions.reduce((n, x) => n + x.merge.same, 0) },
     designDiffers,
     ...(collisions.length ? { nameCollisions: collisions } : {}),
+    deletions: tombs.deletions.map((d) => ({ name: d.name, action: d.action })),
+    skippedDeleted: tombs.skippedDeleted,
   };
-  return { docs, versions, threads, snippets, nameOf, preview };
+  return { docs, versions, threads, snippets, tombs, nameOf, preview };
 }
 
 async function loadParsed(host: BundleHost, bytes: Uint8Array, now: number) {
@@ -241,8 +263,26 @@ async function keepLoser(store: WorksStore, docName: string, key: string, conten
   return true;
 }
 
+/** 글감으로 보존할 본문 상한(글자 수). 넘으면 앞부분만 남기고 잘렸다고 적는다 */
+export const MAX_KEPT_DELETED_CHARS = 200_000;
+export const deletedKeepName = (now: number) => {
+  const d = new Date(now);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `삭제 전(${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())})`;
+};
+
+/** 지우기 직전의 글 내용을 '삭제 전(<날짜>)' 글감(회색, 붙임 없음)으로 남긴다 */
+async function keepDeleted(store: WorksStore, name: string, content: string, now: number): Promise<void> {
+  const cut = content.length > MAX_KEPT_DELETED_CHARS;
+  const head = `**${deletedKeepName(now)}** · ${name}`;
+  const text = cut ? content.slice(0, MAX_KEPT_DELETED_CHARS) : content;
+  const note = cut ? `…(글이 너무 길어 앞 ${MAX_KEPT_DELETED_CHARS / 1000}KB 만 보관했습니다)` : '';
+  const body = [head, text, note].filter(Boolean).join('\n\n');
+  await createSnippet({ body, color: 'gray' }, store);
+}
+
 export async function applyBundleWith(
-  host: BundleHost, bytes: Uint8Array, options: { applyDesign?: boolean } = {}, now = Date.now(),
+  host: BundleHost, bytes: Uint8Array, options: { applyDesign?: boolean; applyDeletions?: boolean } = {}, now = Date.now(),
 ): Promise<MergeResult> {
   // 읽기 단계: 파싱·검증·계획을 모두 끝낸 뒤에야 쓰기 시작한다
   const { parsed, plan } = await loadParsed(host, bytes, now);
@@ -257,7 +297,7 @@ export async function applyBundleWith(
   }
 
   const store = host.store;
-  const result: MergeResult = { docsAdded: 0, docsUpdated: 0, conflicts: [], snippets: 0, threads: 0, versions: 0, designApplied: false };
+  const result: MergeResult = { docsAdded: 0, docsUpdated: 0, conflicts: [], snippets: 0, threads: 0, versions: 0, designApplied: false, docsDeleted: 0 };
   host.setImporting?.(true); // 가져오는 동안 이미지 정리(gc)가 방금 저장한 이미지를 지우지 못하게 한다
   const session: ImportSession = host.beginImport(parsed.assets);
   let wrote = false;
@@ -332,7 +372,30 @@ export async function applyBundleWith(
     if (snips.length) { await store.putMany('snippets', snips); wrote = true; }
     result.snippets = snips.length;
 
-    // 5) 디자인
+    // 5) 글 삭제 묘비: 번들에만 있는 묘비는 합집합으로 저장하고, 번들 글이 더 최신이라 되살린 글의 로컬 묘비는 지운다
+    for (const t of plan.tombs.put) {
+      await store.put<Tombstone>('tombstones', { id: tombId(t.name), name: t.name, deletedAt: t.deletedAt, updatedAt: t.deletedAt });
+      wrote = true;
+    }
+    for (const name of plan.tombs.clear) { await store.remove('tombstones', tombId(name)); wrote = true; }
+
+    // 6) 다른 기기에서 지운 글: 허락했을 때만 지운다. 지우기 전에 최종 내용을 글감으로 보존한다
+    if (options.applyDeletions) {
+      const cands = plan.tombs.deletions.filter((d) => d.action === 'delete');
+      const byName = cands.length ? new Map((await host.listDocs()).map((d) => [d.name, d])) : new Map<string, HostDocInfo>();
+      for (const d of cands) {
+        const info = byName.get(d.name);
+        if (!info || info.updatedAt > d.deletedAt) continue; // 계획 뒤에 바뀌었으면 지우지 않는다
+        const body = await host.readDoc(info);
+        await keepDeleted(store, d.name, body.content, now); // 보존에 실패하면 여기서 멈춘다(지우지 않는다)
+        await host.deleteDoc(d.name);
+        await store.put<Tombstone>('tombstones', { id: tombId(d.name), name: d.name, deletedAt: d.deletedAt, updatedAt: d.deletedAt });
+        result.docsDeleted++;
+        wrote = true;
+      }
+    }
+
+    // 7) 디자인
     if (design) { designIO(host).apply(design); result.designApplied = true; }
     await session.close();
   } finally {
