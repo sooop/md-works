@@ -12,7 +12,7 @@
   import { table } from '@milkdown/crepe/feature/table';
   import { toolbar } from '@milkdown/crepe/feature/toolbar';
   import { editorViewCtx } from '@milkdown/kit/core';
-  import { editorBridge, doc, toast, askChoose } from '../store.svelte';
+  import { editorBridge, doc, toast, askChoose, focusNext } from '../store.svelte';
   import { stripExt } from '../utils';
   import { tablePaste, attachTableTools, type TableData } from '../tableTools';
   import { tableViewer } from '../tableViewer.svelte';
@@ -99,6 +99,8 @@
             finder.ctlPath = doc.path;
             finder.ctl = ctl;
             unbind = bindComments(view, doc.path);
+            editorBridge.focus = () => { if (!readonly) view.focus(); };
+            if (focusNext.on) { focusNext.on = false; editorBridge.focus(); } // 새로 만든 글: 바로 타이핑할 수 있게
           }
         }
       });
@@ -107,6 +109,7 @@
       disposed = true;
       ready = false;
       builder = undefined;
+      if (!preview) editorBridge.focus = null;
       unbind?.();
       unbindTable?.();
       if (ctl) {
