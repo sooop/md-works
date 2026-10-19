@@ -96,7 +96,7 @@ describe('왕복(내보내기 → 가져오기 후 동일)', () => {
     expect(await b.names()).toEqual([]); // 미리보기는 아무것도 쓰지 않는다
 
     const res = await applyBundleWith(b.host, bytes, {}, T + 2);
-    expect(res).toEqual({ docsAdded: 2, docsUpdated: 0, conflicts: [], snippets: 2, threads: 1, versions: 2, designApplied: false });
+    expect(res).toEqual({ docsAdded: 2, docsUpdated: 0, conflicts: [], snippets: 2, threads: 1, versions: 2, designApplied: false, docsDeleted: 0 });
     expect(b.applied).toBe(1);
 
     expect(await b.names()).toEqual(['둘째.md', '첫 글.md']);

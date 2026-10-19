@@ -47,9 +47,15 @@ export interface Version extends WorksRecord {
   name?: string;
 }
 
-export type Coll = 'versions' | 'snippets' | 'threads';
+/** 글 삭제 묘비(전역, 파티션 없음). id = 이름에서 만든 안전한 id, name = 글 이름(서버는 경로), updatedAt = deletedAt */
+export interface Tombstone extends WorksRecord {
+  name: string;
+  deletedAt: number;
+}
+
+export type Coll = 'versions' | 'snippets' | 'threads' | 'tombstones';
 /** 컬렉션이 문서별 파티션을 쓰는지. false 면 파티션은 GLOBAL_PART 하나다. */
-export const PARTITIONED: Record<Coll, boolean> = { versions: true, snippets: false, threads: true };
+export const PARTITIONED: Record<Coll, boolean> = { versions: true, snippets: false, threads: true, tombstones: false };
 export const GLOBAL_PART = '_';
 
 export const newId = (): string => crypto.randomUUID();

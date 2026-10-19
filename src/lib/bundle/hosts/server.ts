@@ -5,6 +5,7 @@ import type { WorksStore } from '../../works/store';
 import type { Design } from '../../design';
 import { dirname, isExternalSrc, joinPath, safeDecode, IMAGE_RE } from '../../utils';
 import { BundleError } from '../parse';
+import { detachSnippetsFrom } from '../docRemoval';
 import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from '../host';
 
 export interface ServerHostOptions {
@@ -83,6 +84,13 @@ export function createServerHost(opts: ServerHostOptions): BundleHost {
       const idx = await index();
       assetSet = new Set(idx.assets);
       return idx.docs.map((d) => ({ name: d.path, key: d.path, updatedAt: d.mtime }));
+    },
+    async deleteDoc(name) {
+      // 서버의 DELETE 가 파일·에셋·코멘트·이력·스레드를 지운다. 글감 연결은 여기서 끊는다
+      const have = (await index()).docs.some((d) => d.path === name);
+      if (!have) return;
+      await call(`/api/file?path=${q(name)}`, { method: 'DELETE' });
+      await detachSnippetsFrom(opts.store(), name);
     },
     async readDoc(info): Promise<HostDocBody> {
       const { content } = await call<{ content: string }>(`/api/file?path=${q(info.name)}`);

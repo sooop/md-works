@@ -6,6 +6,7 @@ import type { WorksStore } from '../../works/store';
 import type { Design } from '../../design';
 import { relinkImages } from '../../archive';
 import { basename, dirname, isExternalSrc, joinPath, replaceImages, safeDecode, sanitizeName } from '../../utils';
+import { detachSnippetsFrom } from '../docRemoval';
 import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from '../host';
 
 export interface StandaloneHostOptions {
@@ -94,6 +95,23 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
     },
     async listDocs(): Promise<HostDocInfo[]> {
       return (await allDocs()).map((r) => ({ name: r.name, key: r.id, updatedAt: r.updated }));
+    },
+    async deleteDoc(name) {
+      const rec = (await allDocs()).find((r) => r.name === name);
+      if (!rec) return;
+      const d = await db();
+      const del = (store: 'docs' | 'comments') => new Promise<void>((resolve, reject) => {
+        const r = d.transaction(store, 'readwrite').objectStore(store).delete(rec.id);
+        r.onsuccess = () => resolve();
+        r.onerror = () => reject(r.error);
+      });
+      await del('docs');
+      await del('comments').catch(() => { /* 이전 방식 코멘트가 없으면 무시 */ });
+      const store = opts.store();
+      await store.removePart('threads', rec.id).catch(() => { /* 무시 */ });
+      await store.removePart('versions', rec.id).catch(() => { /* 무시 */ });
+      await detachSnippetsFrom(store, rec.id);
+      // 지운 글이 쓰던 이미지는 앱의 이미지 정리(gc)가 afterApply·setImporting(false) 뒤에 치운다
     },
     async readDoc(info): Promise<HostDocBody> {
       const rec = await req<Rec | undefined>('docs', 'readonly', (s) => s.get(info.key));

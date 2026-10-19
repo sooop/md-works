@@ -1,5 +1,5 @@
 // 글감 도메인 API. UI·스레드→글감 변환·번들 가져오기가 모두 이 함수들을 거친다. 저장소는 worksStore() 가 정한다.
-import { worksStore } from './store';
+import { worksStore, type WorksStore } from './store';
 import { newId, type Snippet, type SnippetColor, type SnippetSource } from './types';
 
 export interface NewSnippet {
@@ -10,14 +10,15 @@ export interface NewSnippet {
   attachTo?: string[];
 }
 
-export async function createSnippet(input: NewSnippet): Promise<Snippet> {
+/** store: 기본은 앱의 worksStore(). 번들 가져오기처럼 호스트의 저장소에 쓸 때만 넘긴다 */
+export async function createSnippet(input: NewSnippet, store: WorksStore = worksStore()): Promise<Snippet> {
   const now = Date.now();
   const s: Snippet = {
     id: newId(), body: input.body, color: input.color ?? 'yellow', createdAt: now, updatedAt: now,
     attachedDocs: [...new Set(input.attachTo ?? [])],
     ...(input.source ? { source: input.source } : {}),
   };
-  await worksStore().put('snippets', s);
+  await store.put('snippets', s);
   return s;
 }
 
