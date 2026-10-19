@@ -25,7 +25,8 @@ export function createSidecarStore(base = ''): WorksStore {
       return (await call<{ records: T[] }>(`/api/works?${q(coll, part)}`)).records;
     },
     async get<T extends WorksRecord>(coll: Coll, id: string, part?: string) {
-      return (await this.list<T>(coll, part)).find((r) => r.id === id);
+      const { record } = await call<{ record: T | null }>(`/api/works/one?${q(coll, part, id)}`);
+      return record ?? undefined;
     },
     async put(coll, rec, part) { await this.putMany(coll, [rec], part); },
     async putMany(coll, recs, part) {

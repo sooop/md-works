@@ -30,6 +30,22 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
+// Windows 예약 장치 이름(CON, NUL, COM1 …)이거나 끝이 점·공백인 경로 구성요소인가.
+// 확장자가 붙어도(CON.md, con.txt.md) 장치로 해석되므로 첫 '.' 앞부분으로 판정한다.
+// 번들을 다른 OS 로 옮길 수 있으므로 플랫폼과 무관하게 거부한다.
+const RESERVED_RE = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])$/i;
+export function isWindowsReserved(segment) {
+  if (typeof segment !== 'string') return true;
+  if (/[. ]$/.test(segment)) return true;
+  return RESERVED_RE.test(segment.split('.')[0].replace(/ +$/, ''));
+}
+
+// 요청 본문 상한(바이트). 글 쓰기(PUT /api/file·/api/bundle/doc·/api/comments)와 모든 JSON 요청은 MAX_JSON 하나를 쓴다.
+// 클라이언트 번들 파서의 글 한 편 상한(MAX_TEXT_ENTRY_BYTES 100MB, 레코드 문자열 20M자)과는 독립이며,
+// 서버가 더 작으므로 그보다 큰 글은 가져오기 때 413 으로 거절된다(의도된 동작).
+// mtime 상한: 1e13 ms (서기 2286년) 이하만 받는다. Date 범위(8.64e15)까지 허용하면 유틸이 이상한 값을 쓴다.
+const MAX_MTIME = 1e13;
+
 const WASM_FILE = fileURLToPath(new URL('../node_modules/pandoc-wasm/src/pandoc.wasm', import.meta.url));
 
 // opts.templatesDir: docx 내보내기 템플릿(.docx)을 모아 둔 폴더. 없으면 기본 템플릿만 쓴다.
@@ -49,10 +65,18 @@ export function createApi(rootInput, opts = {}) {
   // 루트 기준 상대경로(슬래시)를 절대경로로 변환한다. symlink 를 해석해 루트 밖이면 거부한다.
   async function safe(relPath, { mustExist = true } = {}) {
     if (typeof relPath !== 'string' || relPath.includes('\0')) throw new HttpError(400, '잘못된 경로');
+    // 입력 단계: 어떤 구성요소에도 ':' 불가(`a.md:x` 대체 데이터 스트림, `C:x.md` 드라이브 상대 경로는 resolve 가 ':' 를 지워 버리므로 원문에서 막는다)
+    if (relPath.includes(':')) throw new HttpError(400, '경로에 ":" 를 쓸 수 없음');
     const abs = path.resolve(root, relPath);
     // realpath 는 UNC 경로(\\서버\공유)에 네트워크 접속을 시도하므로, 문자열 수준에서 루트 밖이면 먼저 거부한다
     const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
     if (!(fold(abs) === fold(root) || fold(abs).startsWith(fold(root) + path.sep))) throw new HttpError(403, '루트 밖 경로는 허용되지 않음');
+    // 모든 구성요소: 대체 데이터 스트림(`a.md:x`)·드라이브 문자(`C:x`)의 ':' 와 Windows 예약 장치 이름·끝 점/공백 거부
+    for (const s of path.relative(root, abs).split(/[\\/]/)) {
+      if (!s) continue;
+      if (s.includes(':')) throw new HttpError(400, '경로에 ":" 를 쓸 수 없음');
+      if (isWindowsReserved(s)) throw new HttpError(400, '사용할 수 없는 이름(예약어 또는 끝의 점·공백)');
+    }
     const realRoot = await fs.realpath(root);
     let real;
     try {
@@ -63,6 +87,9 @@ export function createApi(rootInput, opts = {}) {
       let cur = abs;
       const tail = [];
       for (;;) {
+        // realpath 가 실패했는데 lstat 은 되는 구성요소 = 끊어진(댕글링) symlink/junction.
+        // 쓰기가 링크를 따라가 루트 밖에 파일을 만들 수 있으므로 거부한다.
+        if (await fs.lstat(cur).then(() => true, () => false)) throw new HttpError(403, '끊어진 링크는 허용되지 않음');
         const up = path.dirname(cur);
         tail.unshift(path.basename(cur));
         if (up === cur) break;
@@ -216,7 +243,7 @@ export function createApi(rootInput, opts = {}) {
     if (typeof p !== 'string' || !p || p.length > 1024 || p.includes('\0') || p.includes('\\') || p.startsWith('/') || /^[A-Za-z]:/.test(p)) throw bad();
     const segs = p.split('/');
     for (const s of segs) {
-      if (!s || s === '.' || s === '..' || s.includes(':') || s.startsWith('.') || /[. ]$/.test(s) || s.length > 255) throw bad();
+      if (!s || s === '.' || s === '..' || s.includes(':') || s.startsWith('.') || isWindowsReserved(s) || s.length > 255) throw bad();
     }
     if (kind === 'doc') {
       if (!isMd(p) || segs.slice(0, -1).some((s) => SKIP_DIRS.has(s))) throw bad();
@@ -247,6 +274,31 @@ export function createApi(rootInput, opts = {}) {
     };
     await walk(root, 0);
     return { docs, assets };
+  }
+
+  let backupBusy = false;
+  async function storeBackup(req) {
+    const body = await readBody(req, MAX_BACKUP);
+    const isMwb = body.length > 4 && body.subarray(0, 4).toString('latin1') === 'MWB1';
+    const isZip = body.length > 4 && body[0] === 0x50 && body[1] === 0x4b;
+    if (!isMwb && !isZip) throw new HttpError(400, '번들(.mwb 또는 zip) 형식이 아님');
+    const dir = await safe(BACKUP_DIR, { mustExist: false });
+    await fs.mkdir(dir, { recursive: true });
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+    const ext = isMwb ? 'mwb' : 'zip';
+    // 같은 초의 기존 파일 중 가장 큰 번호 다음부터 매긴다(회전으로 앞 번호가 지워져도 이름이 되살아나 곧바로 지워지는 일이 없게)
+    const used = (await listBackups(dir)).map((b) => b.name).filter((n) => n.startsWith(`md-works-${stamp}`));
+    const top = used.reduce((m, n) => Math.max(m, Number(/-(\d+)\.(mwb|zip)$/.exec(n)?.[1] ?? 1)), used.length ? 1 : 0);
+    let name = top ? `md-works-${stamp}-${top + 1}.${ext}` : `md-works-${stamp}.${ext}`;
+    for (let i = top + 2; ; i++) {
+      try { await fs.writeFile(await safe(`${BACKUP_DIR}/${name}`, { mustExist: false }), body, { flag: 'wx' }); break; }
+      catch (e) { if (e.code !== 'EEXIST') throw e; name = `md-works-${stamp}-${i}.${ext}`; }
+    }
+    const all = await listBackups(dir);
+    for (const old of all.slice(KEEP_BACKUPS)) await fs.rm(path.join(dir, old.name), { force: true });
+    return { name, size: body.length, kept: Math.min(all.length, KEEP_BACKUPS) };
   }
 
   const routes = {
@@ -301,6 +353,8 @@ export function createApi(rootInput, opts = {}) {
 
     // 글감·이력·스레드 사이드카. coll=versions|snippets|threads, part=문서 경로(글감은 생략)
     'GET /api/works': async (_req, q) => ({ records: await works.list(q.get('coll'), q.get('part') ?? undefined) }),
+    // 단건 조회: coll, part(글감은 생략), id. 없으면 record: null
+    'GET /api/works/one': async (_req, q) => ({ record: await works.get(q.get('coll'), q.get('part') ?? undefined, q.get('id')) }),
     'GET /api/works/parts': async (_req, q) => ({ parts: await works.parts(q.get('coll')) }),
     'PUT /api/works': async (req) => {
       const { coll, part, recs } = await readJson(req);
@@ -323,28 +377,13 @@ export function createApi(rootInput, opts = {}) {
     },
 
     // 노트 폴더 백업: 본문은 번들 바이너리('MWB1' 암호화 또는 zip). .works-backup/md-works-YYYYMMDD-HHmmss.<mwb|zip>
+    // 요청당 최대 200MB 를 메모리에 올리므로 동시 업로드는 1건만 받고(진행 중이면 429), 선언된 크기가 상한을 넘으면 본문을 읽기 전에 413 으로 거절한다.
     'POST /api/backup': async (req) => {
-      const body = await readBody(req, MAX_BACKUP);
-      const isMwb = body.length > 4 && body.subarray(0, 4).toString('latin1') === 'MWB1';
-      const isZip = body.length > 4 && body[0] === 0x50 && body[1] === 0x4b;
-      if (!isMwb && !isZip) throw new HttpError(400, '번들(.mwb 또는 zip) 형식이 아님');
-      const dir = await safe(BACKUP_DIR, { mustExist: false });
-      await fs.mkdir(dir, { recursive: true });
-      const d = new Date();
-      const p2 = (n) => String(n).padStart(2, '0');
-      const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
-      const ext = isMwb ? 'mwb' : 'zip';
-      // 같은 초의 기존 파일 중 가장 큰 번호 다음부터 매긴다(회전으로 앞 번호가 지워져도 이름이 되살아나 곧바로 지워지는 일이 없게)
-      const used = (await listBackups(dir)).map((b) => b.name).filter((n) => n.startsWith(`md-works-${stamp}`));
-      const top = used.reduce((m, n) => Math.max(m, Number(/-(\d+)\.(mwb|zip)$/.exec(n)?.[1] ?? 1)), used.length ? 1 : 0);
-      let name = top ? `md-works-${stamp}-${top + 1}.${ext}` : `md-works-${stamp}.${ext}`;
-      for (let i = top + 2; ; i++) {
-        try { await fs.writeFile(await safe(`${BACKUP_DIR}/${name}`, { mustExist: false }), body, { flag: 'wx' }); break; }
-        catch (e) { if (e.code !== 'EEXIST') throw e; name = `md-works-${stamp}-${i}.${ext}`; }
-      }
-      const all = await listBackups(dir);
-      for (const old of all.slice(KEEP_BACKUPS)) await fs.rm(path.join(dir, old.name), { force: true });
-      return { name, size: body.length, kept: Math.min(all.length, KEEP_BACKUPS) };
+      const declared = Number(req.headers['content-length']);
+      if (Number.isFinite(declared) && declared > MAX_BACKUP) throw new HttpError(413, '본문이 너무 큼');
+      if (backupBusy) throw new HttpError(429, '다른 백업이 진행 중입니다. 잠시 후 다시 시도하세요');
+      backupBusy = true;
+      try { return await storeBackup(req); } finally { backupBusy = false; }
     },
 
     'GET /api/backups': async () => {
@@ -361,7 +400,7 @@ export function createApi(rootInput, opts = {}) {
       const { content } = await readJson(req);
       if (typeof content !== 'string') throw new HttpError(400, 'content 필요');
       const mtime = q.get('mtime');
-      if (mtime !== null && !(Number.isFinite(Number(mtime)) && Number(mtime) > 0)) throw new HttpError(400, '잘못된 mtime');
+      if (mtime !== null && !(Number.isFinite(Number(mtime)) && Number(mtime) > 0 && Number(mtime) <= MAX_MTIME)) throw new HttpError(400, '잘못된 mtime');
       await fs.mkdir(path.dirname(abs), { recursive: true });
       await fs.writeFile(abs, content, 'utf8');
       if (mtime !== null) { const t = new Date(Number(mtime)); await fs.utimes(abs, t, t); }

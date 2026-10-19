@@ -52,6 +52,13 @@ export function createWorksFs(safe) {
     return out;
   }
 
+  // 단건 조회: 파일 하나만 읽는다(list 후 find 하는 O(n) 을 피한다). 없거나 깨졌으면 null
+  async function get(coll, part, id) {
+    const p = check(coll, part);
+    const file = `${await partDir(coll, p)}/${checkId(id)}.json`;
+    try { return JSON.parse(await fs.readFile(file, 'utf8')); } catch { return null; }
+  }
+
   async function put(coll, part, rec) {
     const p = check(coll, part);
     if (!rec || typeof rec !== 'object' || Array.isArray(rec)) throw new WorksError(400, '레코드 형식 오류');
@@ -118,5 +125,5 @@ export function createWorksFs(safe) {
     }
   }
 
-  return { list, put, remove, parts, removePart, movePart, moveDoc, deleteDoc };
+  return { list, get, put, remove, parts, removePart, movePart, moveDoc, deleteDoc };
 }
