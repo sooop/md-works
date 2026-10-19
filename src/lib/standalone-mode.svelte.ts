@@ -132,7 +132,7 @@ export async function openDoc(id: string) {
   await flush();
   const rec = all.get(id);
   if (!rec) return;
-  Object.assign(doc, { path: id, name: rec.name, content: rec.content, dirty: false }); // 모드(읽기/편집)는 문서를 옮겨도 유지한다
+  Object.assign(doc, { path: id, name: rec.name, content: rec.content, dirty: false, edit: true }); // 문서는 항상 편집 모드로 연다
   doc.key++;
   void snapshot(id, rec.content).catch(() => { /* 무시 */ });
   try { localStorage.setItem(LAST_KEY, id); } catch { /* 무시 */ }
@@ -147,7 +147,7 @@ function uniqueName(stem: string): string {
   }
 }
 
-// edit: 열었을 때 편집 모드로 시작할지 (새로 만든 문서·붙여넣은 문서). 가져온 파일은 읽기 모드로 연다.
+// edit: 열었을 때 편집 모드로 시작할지. 이제 모든 문서가 편집 모드로 열려 사실상 의미가 없다(호출부 호환용).
 async function createRec(stem: string, content: string, open = true, edit = false): Promise<Rec> {
   const rec: Rec = { id: crypto.randomUUID(), name: uniqueName(stem), content, updated: Date.now() };
   await putDoc(rec);

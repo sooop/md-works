@@ -75,7 +75,7 @@ export const doc = $state({
   content: '',
   dirty: false,
   saving: false,
-  edit: false, // 편집 모드 여부. 문서를 옮겨도 유지하고, 새로 만든 문서는 편집 모드로 바꾼다
+  edit: true, // 편집 모드 여부. 기본은 편집이고, 문서를 열 때마다 편집으로 초기화한다(읽기 전환은 토글/Ctrl+E)
 });
 
 // 마지막 에디터 내용을 외부에서 읽기 위한 훅 (Editor 가 등록)
