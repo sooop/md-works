@@ -35,12 +35,24 @@ const WASM_FILE = fileURLToPath(new URL('../node_modules/pandoc-wasm/src/pandoc.
 // opts.templatesDir: docx 내보내기 템플릿(.docx)을 모아 둔 폴더. 없으면 기본 템플릿만 쓴다.
 export function createApi(rootInput, opts = {}) {
   const root = path.resolve(rootInput);
+  // 접속을 허용할 Host 이름(포트 제외). 기본은 로컬 주소만, 역프록시 등은 opts.allowedHosts 또는 WORKS_ALLOWED_HOSTS(쉼표)로 추가
+  const allowedHosts = new Set([
+    '127.0.0.1', 'localhost', '[::1]',
+    ...(opts.allowedHosts ?? (process.env.WORKS_ALLOWED_HOSTS ?? '').split(',')).map((h) => h.trim().toLowerCase()).filter(Boolean),
+  ]);
+  const hostAllowed = (h) => {
+    const m = /^(\[[^\]]+\]|[^:\[\]]+)(?::\d+)?$/.exec(h ?? '');
+    return !!m && allowedHosts.has(m[1].toLowerCase());
+  };
   const templatesDir = opts.templatesDir ? path.resolve(opts.templatesDir) : null;
 
   // 루트 기준 상대경로(슬래시)를 절대경로로 변환한다. symlink 를 해석해 루트 밖이면 거부한다.
   async function safe(relPath, { mustExist = true } = {}) {
     if (typeof relPath !== 'string' || relPath.includes('\0')) throw new HttpError(400, '잘못된 경로');
     const abs = path.resolve(root, relPath);
+    // realpath 는 UNC 경로(\\서버\공유)에 네트워크 접속을 시도하므로, 문자열 수준에서 루트 밖이면 먼저 거부한다
+    const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+    if (!(fold(abs) === fold(root) || fold(abs).startsWith(fold(root) + path.sep))) throw new HttpError(403, '루트 밖 경로는 허용되지 않음');
     const realRoot = await fs.realpath(root);
     let real;
     try {
@@ -184,6 +196,7 @@ export function createApi(rootInput, opts = {}) {
     if (!BACKUP_NAME_RE.test(name)) throw new HttpError(400, '잘못된 백업 파일 이름');
     const abs = await safe(`${BACKUP_DIR}/${name}`);
     const st = await fs.stat(abs);
+    if (!st.isFile()) throw new HttpError(404, '없는 백업');
     res.writeHead(200, {
       'Content-Type': 'application/octet-stream',
       'Content-Length': st.size,
@@ -191,7 +204,7 @@ export function createApi(rootInput, opts = {}) {
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-store',
     });
-    createReadStream(abs).pipe(res);
+    createReadStream(abs).on('error', () => res.destroy()).pipe(res);
   }
 
   // ---- 번들(백업·동기화) 일괄 라우트용 ----
@@ -498,7 +511,7 @@ export function createApi(rootInput, opts = {}) {
       'Content-Length': st.size,
       'Cache-Control': 'public, max-age=86400',
     });
-    createReadStream(WASM_FILE).pipe(res);
+    createReadStream(WASM_FILE).on('error', () => res.destroy()).pipe(res);
   }
 
   // 처리했으면 true, 아니면 false(다음 핸들러로)
@@ -506,9 +519,15 @@ export function createApi(rootInput, opts = {}) {
     const url = new URL(req.url, 'http://localhost');
     if (!url.pathname.startsWith('/api/')) return false;
     try {
-      // 다른 출처 페이지가 보내는 요청 차단
+      // DNS rebinding 방어: Host 가 로컬 주소가 아니면 Origin 이 같아 보여도 거부한다
+      if (!hostAllowed(req.headers.host)) throw new HttpError(403, '허용되지 않는 호스트');
+      // 다른 출처 페이지가 보내는 요청 차단 (Origin: null 같은 해석 불가 값도 거부)
       const origin = req.headers.origin;
-      if (origin && new URL(origin).host !== req.headers.host) throw new HttpError(403, '허용되지 않는 출처');
+      if (origin) {
+        let originHost = '';
+        try { originHost = new URL(origin).host; } catch { /* 아래에서 거부 */ }
+        if (originHost !== req.headers.host) throw new HttpError(403, '허용되지 않는 출처');
+      }
       if (req.method === 'GET' && url.pathname === '/api/raw') { await raw(res, url.searchParams); return true; }
       if (req.method === 'GET' && url.pathname === '/api/template') { await template(res, url.searchParams); return true; }
       if (req.method === 'GET' && url.pathname === '/api/pandoc.wasm') { await wasm(res); return true; }

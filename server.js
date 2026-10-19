@@ -40,10 +40,23 @@ const TYPES = {
 };
 
 const server = http.createServer(async (req, res) => {
+  try {
+    await handle(req, res);
+  } catch (e) {
+    // 한 요청의 예외가 서버 전체를 죽이지 않게 한다 (예: 깨진 퍼센트 인코딩 URL)
+    console.error(e);
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  }
+});
+
+async function handle(req, res) {
   if (await api(req, res)) return;
   const url = new URL(req.url, 'http://localhost');
-  let file = path.normalize(path.join(dist, decodeURIComponent(url.pathname)));
-  if (!file.startsWith(dist)) { res.writeHead(403).end(); return; }
+  let pathname;
+  try { pathname = decodeURIComponent(url.pathname); } catch { res.writeHead(400).end(); return; }
+  let file = path.normalize(path.join(dist, pathname));
+  if (file !== dist && !file.startsWith(dist + path.sep)) { res.writeHead(403).end(); return; }
   try {
     if ((await fs.stat(file)).isDirectory()) file = path.join(file, 'index.html');
   } catch {
@@ -56,7 +69,7 @@ const server = http.createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('dist 가 없습니다. npm run build 를 먼저 실행하세요.');
   }
-});
+}
 
 server.listen(port, '127.0.0.1', () => {
   console.log(`Notes server: http://127.0.0.1:${port}  (root: ${root})`);

@@ -2,6 +2,7 @@
 // 파티션은 문서 경로(이력·스레드)이고, 글감처럼 문서에 속하지 않는 컬렉션은 파티션이 '_' 하나뿐이다.
 // 숨김 폴더라 트리·검색에서 제외된다. 경로 검사는 호출자가 넘긴 safe()(루트 밖·symlink 거부)에 맡긴다.
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 export const WORKS_DIR = '.works';
 /** 컬렉션 → 문서별 파티션 여부 */
@@ -16,7 +17,7 @@ export class WorksError extends Error {
 
 // 파일 시스템에 쓸 수 없는 글자(윈도 기준)와 맨 앞 '.', 끝의 '.'·공백만 %XX 로 바꾼다 (한글 등은 그대로 둔다)
 export const encPart = (s) =>
-  s.replace(/[\/:*?"<>|%\x00-\x1f]/g, (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
+  s.replace(/[\\/:*?"<>|%\x00-\x1f]/g, (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
     .replace(/^\./, '%2e').replace(/[. ]$/, (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'));
 export const decPart = (s) => s.replace(/%([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
@@ -32,7 +33,12 @@ export function createWorksFs(safe) {
     return id;
   };
   const collDir = (coll) => safe(`${WORKS_DIR}/${coll}`, { mustExist: false });
-  const partDir = (coll, part) => safe(`${WORKS_DIR}/${coll}/${encPart(part)}`, { mustExist: false });
+  // 파티션 폴더는 반드시 컬렉션 폴더 바로 아래 한 단계여야 한다(이스케이프가 어긋나도 밖으로 못 나가게 이중 방어)
+  const partDir = async (coll, part) => {
+    const d = await safe(`${WORKS_DIR}/${coll}/${encPart(part)}`, { mustExist: false });
+    if (path.dirname(d) !== (await collDir(coll))) throw new WorksError(400, '잘못된 파티션');
+    return d;
+  };
   const readDir = (d) => fs.readdir(d, { withFileTypes: true }).catch(() => []);
 
   async function list(coll, part) {
