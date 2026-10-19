@@ -78,7 +78,9 @@ export function persistBackupSettings() {
 // ---- 변경 감지 ----
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
 /** 글 저장·글감/이력/스레드 쓰기에서 호출한다. 입력마다 저장소를 두드리지 않도록 기록은 2초 묶어서 한다. */
+let building = 0; // 번들을 만드는 동안(makeBundle) 그 준비 과정의 글 저장은 '사용자 변경'이 아니다
 export function markChanged() {
+  if (building > 0) return;
   backup.lastChange = Date.now();
   clearTimeout(persistTimer);
   persistTimer = setTimeout(persist, 2000);
@@ -94,7 +96,14 @@ export const keyAvailable = () => hasBundleKey();
 
 // ---- 번들 만들기 ----
 export async function makeBundle(encrypted: boolean): Promise<{ bytes: Uint8Array; summary: BundleSummary; ext: 'mwb' | 'zip' }> {
-  const { bytes, summary } = await buildBundle();
+  building++;
+  let built: Awaited<ReturnType<typeof buildBundle>>;
+  try {
+    built = await buildBundle(); // 내부에서 열린 글을 먼저 저장(flush)하는데, 그 쓰기가 변경으로 기록되면 방금 만든 백업이 곧바로 '낡음'이 된다
+  } finally {
+    building--;
+  }
+  const { bytes, summary } = built;
   if (!encrypted) return { bytes, summary, ext: 'zip' };
   return { bytes: await encryptBundle(bytes), summary, ext: 'mwb' };
 }

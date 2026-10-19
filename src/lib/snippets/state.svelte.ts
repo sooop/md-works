@@ -5,6 +5,7 @@ import {
   createSnippet, listSnippets, listTrashedSnippets, updateSnippet, attachSnippet, detachSnippet, trashSnippet, restoreSnippet, purgeSnippet,
 } from '../works/snippets';
 import type { Snippet, SnippetColor, SnippetSource } from '../works/types';
+import { hasWorksStore } from '../works/store';
 import { filterSnippets, findByPhrase, type SnippetView } from './filter';
 
 export const sn = $state({
@@ -21,6 +22,7 @@ export const sn = $state({
 });
 
 export async function reload() {
+  if (!hasWorksStore()) return; // 시작 직후엔 아직 저장소가 없다 — 글감 탭을 열 때 다시 읽는다
   try {
     [sn.active, sn.trashed] = await Promise.all([listSnippets(), listTrashedSnippets()]);
     sn.loaded = true;

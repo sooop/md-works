@@ -24,8 +24,14 @@
       doc.edit = !doc.edit;
       return;
     }
-    // Esc: 집중 모드 해제 (다른 곳에서 Esc 를 이미 처리했으면 건드리지 않는다)
-    if (e.key === 'Escape' && writing.focus && !e.defaultPrevented) toggleFocus(false);
+  }
+
+  // Esc: 집중 모드 해제. 에디터(ProseMirror)가 Esc 의 기본 동작을 먼저 막아 버려서 defaultPrevented 로는 판단할 수 없으므로
+  // 캡처 단계에서 받고, 대화상자·메뉴가 열려 있거나 IME 조합 중이면 그쪽 Esc 로 넘긴다.
+  function onEscCapture(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !writing.focus || e.isComposing) return;
+    if (document.querySelector('[role="dialog"], [role="menu"], [role="listbox"]')) return;
+    toggleFocus(false);
   }
 
   // ---- 선택 영역 글자 수 ----
@@ -73,5 +79,5 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} onkeyup={onKeyUp} oninput={centerCaret} />
+<svelte:window onkeydowncapture={onEscCapture} onkeydown={onKey} onkeyup={onKeyUp} oninput={centerCaret} />
 <svelte:document onselectionchange={onSelection} />

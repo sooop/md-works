@@ -119,14 +119,16 @@ html.focus-mode .milkdown .ProseMirror { padding-bottom: 50vh; }
   .topbar .spacer { flex: 0 0 0; }
   .topbar .modetoggle { min-width: 0; padding: 4px 10px; }
   .topbar .modetoggle .mt-label { display: none; }
-  .topbar button.primary { font-size: 0; gap: 0; }
-  .topbar button.primary svg { flex: none; }
+  /* 백업·이력·디자인 대화상자도 <header class="topbar"> 안에 렌더되므로 .dialog 안의 버튼은 제외한다(라벨이 사라지던 결함) */
+  .topbar button.primary:not(.dialog button) { font-size: 0; gap: 0; }
+  .topbar button.primary:not(.dialog button) svg { flex: none; }
 
   /* 본문 좌우 여백 축소 */
   html:root .milkdown .ProseMirror { padding-left: 12px; padding-right: 12px; }
 
   /* 터치 타깃 최소 40px */
-  .topbar button, .statusbar button, .sidebar button, .sidebar .sidetabs button { min-height: 40px; min-width: 40px; }
+  .topbar button:not(.dialog button), .statusbar button, .sidebar button, .sidebar .sidetabs button { min-height: 40px; min-width: 40px; }
+  .dialog button { min-height: 40px; }
   .sidebar .row .name { min-height: 40px; }
   .row .ops { display: flex; }
   .statusbar { padding: 0 8px; gap: 4px; flex-wrap: wrap; }

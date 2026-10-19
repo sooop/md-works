@@ -23,6 +23,8 @@ export function useWorksStore(store: WorksStore) { current = trackWrites(store, 
 // 쓰기 감지(백업의 '마지막 변경 시각'). 어떤 쓰기든 성공하면 알린다.
 let writeListener: (() => void) | undefined;
 export function onWorksWrite(fn: () => void) { writeListener = fn; }
+/** 셸의 init() 이 저장소를 등록했는지(자식 컴포넌트의 onMount 가 init 보다 먼저 돌 수 있다) */
+export const hasWorksStore = (): boolean => !!current;
 export function worksStore(): WorksStore {
   if (!current) throw new Error('WorksStore 가 등록되지 않았습니다');
   return current;
