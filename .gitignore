@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-html/
+local/
+# sample/
+.env
+.env.*
+!.env.example
