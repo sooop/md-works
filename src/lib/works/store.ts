@@ -1,5 +1,6 @@
 // 글감·이력·스레드 저장소 인터페이스. 스탠드얼론은 IndexedDB(idbStore), 서버 버전은 `.works/` 사이드카(sidecarStore)가 구현한다.
 import type { Coll, WorksRecord } from './types';
+import { trackWrites } from './track';
 
 export interface WorksStore {
   /** part: 문서 파티션 컬렉션이면 docKey, 글감처럼 전역 컬렉션이면 생략 */
@@ -18,7 +19,10 @@ export interface WorksStore {
 
 let current: WorksStore | undefined;
 /** 셸이 시작할 때 모드에 맞는 구현을 등록한다 */
-export function useWorksStore(store: WorksStore) { current = store; }
+export function useWorksStore(store: WorksStore) { current = trackWrites(store, () => writeListener?.()); }
+// 쓰기 감지(백업의 '마지막 변경 시각'). 어떤 쓰기든 성공하면 알린다.
+let writeListener: (() => void) | undefined;
+export function onWorksWrite(fn: () => void) { writeListener = fn; }
 export function worksStore(): WorksStore {
   if (!current) throw new Error('WorksStore 가 등록되지 않았습니다');
   return current;

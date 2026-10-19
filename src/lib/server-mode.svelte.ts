@@ -11,6 +11,7 @@ import { snapshot, moveHistory, removeHistory } from './history';
 import type { SearchResponse, FileHit } from './search/types';
 import { useBackend, flushComments } from './comments/store.svelte';
 import { useWorksStore } from './works/store';
+import { markChanged } from './bundle/backupState.svelte';
 import { reattachDoc, reattachPrefix } from './works/snippets';
 import { createSidecarStore } from './works/sidecarStore';
 import { sanitize } from './comments/anchor';
@@ -135,6 +136,7 @@ export async function save(): Promise<boolean> {
 
 export function onEditorChange(md: string) {
   doc.content = md;
+  markChanged(); // 백업 '마지막 변경' 추적
   doc.dirty = true;
   clearTimeout(autosaveTimer);
   if (!settings.autosave || !doc.path) return;

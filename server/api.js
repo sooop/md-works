@@ -17,6 +17,13 @@ const MAX_UPLOAD = 50 * 1024 * 1024;
 const SKIP_DIRS = new Set(['node_modules', 'assets']);
 const COMMENTS_DIR = '.comments'; // 코멘트 사이드카: .comments/<문서 경로>.json (숨김 폴더라 트리·검색에서 제외된다)
 const SEARCH = { perFile: 50, total: 500, maxBytes: 2 * 1024 * 1024, timeoutMs: 8000 };
+// 노트 폴더 백업: 번들(.mwb 암호화 / .zip)을 숨김 폴더에 쌓고 최근 KEEP_BACKUPS 개만 남긴다(트리·검색에서 제외된다)
+const BACKUP_DIR = '.works-backup';
+const MAX_BACKUP = 200 * 1024 * 1024;
+const KEEP_BACKUPS = 10;
+const BACKUP_NAME_RE = /^md-works-\d{8}-\d{6}(-\d+)?\.(mwb|zip)$/;
+// 이름 안의 시각(+같은 초 충돌 번호)으로 만든 정렬 키 — 클수록 최신
+const backupKey = (n) => { const m = /^md-works-(\d{8}-\d{6})(?:-(\d+))?\./.exec(n); return m ? m[1] + String(m[2] ?? 1).padStart(6, '0') : ''; };
 const SEARCH_WORKER = fileURLToPath(new URL('./searchWorker.js', import.meta.url));
 
 class HttpError extends Error {
@@ -159,6 +166,34 @@ export function createApi(rootInput, opts = {}) {
     });
   }
 
+  // 백업 폴더의 번들 목록(최신순). 이름 규칙에 맞는 파일만 보인다.
+  async function listBackups(dir) {
+    let entries;
+    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return []; }
+    const out = [];
+    for (const e of entries) {
+      if (!e.isFile() || !BACKUP_NAME_RE.test(e.name)) continue;
+      const st = await fs.stat(path.join(dir, e.name));
+      out.push({ name: e.name, size: st.size, mtime: st.mtimeMs });
+    }
+    return out.sort((a, b) => (backupKey(a.name) < backupKey(b.name) ? 1 : -1));
+  }
+
+  async function backupFile(res, q) {
+    const name = q.get('name') ?? '';
+    if (!BACKUP_NAME_RE.test(name)) throw new HttpError(400, '잘못된 백업 파일 이름');
+    const abs = await safe(`${BACKUP_DIR}/${name}`);
+    const st = await fs.stat(abs);
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': st.size,
+      'Content-Disposition': `attachment; filename="${name}"`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store',
+    });
+    createReadStream(abs).pipe(res);
+  }
+
   const routes = {
     'GET /api/info': async () => ({ root: path.basename(root) || root }),
 
@@ -230,6 +265,33 @@ export function createApi(rootInput, opts = {}) {
       const { coll, from, to } = await readJson(req);
       await works.movePart(coll, from, to);
       return { ok: true };
+    },
+
+    // 노트 폴더 백업: 본문은 번들 바이너리('MWB1' 암호화 또는 zip). .works-backup/md-works-YYYYMMDD-HHmmss.<mwb|zip>
+    'POST /api/backup': async (req) => {
+      const body = await readBody(req, MAX_BACKUP);
+      const isMwb = body.length > 4 && body.subarray(0, 4).toString('latin1') === 'MWB1';
+      const isZip = body.length > 4 && body[0] === 0x50 && body[1] === 0x4b;
+      if (!isMwb && !isZip) throw new HttpError(400, '번들(.mwb 또는 zip) 형식이 아님');
+      const dir = await safe(BACKUP_DIR, { mustExist: false });
+      await fs.mkdir(dir, { recursive: true });
+      const d = new Date();
+      const p2 = (n) => String(n).padStart(2, '0');
+      const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+      const ext = isMwb ? 'mwb' : 'zip';
+      let name = `md-works-${stamp}.${ext}`;
+      for (let i = 2; ; i++) {
+        try { await fs.writeFile(await safe(`${BACKUP_DIR}/${name}`, { mustExist: false }), body, { flag: 'wx' }); break; }
+        catch (e) { if (e.code !== 'EEXIST') throw e; name = `md-works-${stamp}-${i}.${ext}`; }
+      }
+      const all = await listBackups(dir);
+      for (const old of all.slice(KEEP_BACKUPS)) await fs.rm(path.join(dir, old.name), { force: true });
+      return { name, size: body.length, kept: Math.min(all.length, KEEP_BACKUPS) };
+    },
+
+    'GET /api/backups': async () => {
+      const dir = await safe(BACKUP_DIR, { mustExist: false });
+      return { backups: await listBackups(dir) };
     },
 
     'GET /api/file': async (_req, q) => {
@@ -380,6 +442,7 @@ export function createApi(rootInput, opts = {}) {
       if (req.method === 'GET' && url.pathname === '/api/raw') { await raw(res, url.searchParams); return true; }
       if (req.method === 'GET' && url.pathname === '/api/template') { await template(res, url.searchParams); return true; }
       if (req.method === 'GET' && url.pathname === '/api/pandoc.wasm') { await wasm(res); return true; }
+      if (req.method === 'GET' && url.pathname === '/api/backup/file') { await backupFile(res, url.searchParams); return true; }
       res.once('close', () => { if (!res.writableEnded) req.emit('client-abort'); });
       const fn = routes[`${req.method} ${url.pathname}`];
       if (!fn) throw new HttpError(404, '없는 API');
