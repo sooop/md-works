@@ -39,7 +39,17 @@
     const sel = document.getSelection();
     const node = sel?.anchorNode;
     const el = node instanceof Element ? node : node?.parentElement;
-    if (!sel || sel.isCollapsed || !el?.closest('.editor-wrap .ProseMirror')) {
+    const inEditor = (n: Node | null | undefined) => {
+      const e = n instanceof Element ? n : n?.parentElement;
+      return !!e?.closest('.editor-wrap .ProseMirror');
+    };
+    // Ctrl+A(전체 선택)는 anchor 가 .ProseMirror 바깥(래퍼)이나 비편집 노드뷰에 놓일 수 있다.
+    // anchor 가 에디터 밖이어도 선택의 공통 조상이 에디터 안이거나, 포커스가 에디터에 있으면 에디터 선택으로 본다.
+    const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    const active = document.activeElement;
+    const inside = inEditor(el) || inEditor(range?.commonAncestorContainer)
+      || (!!active?.closest?.('.editor-wrap .ProseMirror') && !!range && range.intersectsNode(active as Node));
+    if (!sel || sel.isCollapsed || !inside) {
       if (writing.selection) writing.selection = 0;
       return;
     }
