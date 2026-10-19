@@ -11,6 +11,7 @@ import { snapshot, moveHistory, removeHistory } from './history';
 import type { SearchResponse, FileHit } from './search/types';
 import { useBackend, flushComments } from './comments/store.svelte';
 import { useWorksStore } from './works/store';
+import { reattachDoc, reattachPrefix } from './works/snippets';
 import { createSidecarStore } from './works/sidecarStore';
 import { sanitize } from './comments/anchor';
 
@@ -236,6 +237,7 @@ async function renameNodeTo(node: TreeNode, name: string) {
     await flushComments(); // 대기 중인 코멘트 저장이 옮기기 전 경로에 파일을 다시 만들지 않도록
     await call('/api/rename', jsonInit('POST', { from: node.path, to }));
     await moveHistory(node.path, to).catch(() => { /* 무시 */ });
+    await (isFile ? reattachDoc(node.path, to) : reattachPrefix(node.path, to)).catch(() => { /* 무시 */ }); // 글감의 붙은 글 경로 갱신
     const reopen = affects(node.path) ? to + doc.path.slice(node.path.length) : '';
     if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = to + nav.dir.slice(node.path.length);
     await refreshTree();
@@ -252,6 +254,7 @@ export async function removeNode(node: TreeNode) {
     await flushComments();
     await call(`/api/file?path=${q(node.path)}`, { method: 'DELETE' });
     await removeHistory(node.path).catch(() => { /* 무시 */ });
+    await (node.type === 'dir' ? reattachPrefix(node.path) : reattachDoc(node.path)).catch(() => { /* 무시 */ }); // 글감 연결 끊기
     if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = dirname(node.path);
     if (affects(node.path)) {
       clearAutosave();

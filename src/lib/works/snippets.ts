@@ -58,6 +58,21 @@ export const restoreSnippet = (id: string) =>
 /** 휴지통에서 완전히 지운다 */
 export const purgeSnippet = (id: string) => worksStore().remove('snippets', id);
 
+/**
+ * 폴더 이름 변경·삭제 때 접두사(from + '/')로 붙은 글감을 정리한다 (서버 모드: docKey 가 경로).
+ * to 가 없으면 연결만 끊고, 있으면 접두사를 치환한다.
+ */
+export async function reattachPrefix(from: string, to?: string): Promise<void> {
+  const pre = from + '/';
+  const swap = (d: string[]) => [...new Set(d.flatMap((x) => (x.startsWith(pre) ? (to ? [to + '/' + x.slice(pre.length)] : []) : [x])))];
+  for (const s of await worksStore().list<Snippet>('snippets')) {
+    if (![...s.attachedDocs, ...(s.trashedFrom ?? [])].some((x) => x.startsWith(pre))) continue;
+    await worksStore().put('snippets', {
+      ...s, updatedAt: Date.now(), attachedDocs: swap(s.attachedDocs), ...(s.trashedFrom ? { trashedFrom: swap(s.trashedFrom) } : {}),
+    });
+  }
+}
+
 /** 글이 삭제·이름 변경될 때 붙은 글감의 연결을 정리한다 (to 가 없으면 연결만 끊는다) */
 export async function reattachDoc(from: string, to?: string): Promise<void> {
   for (const s of await worksStore().list<Snippet>('snippets')) {
