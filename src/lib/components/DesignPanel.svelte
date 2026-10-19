@@ -44,6 +44,7 @@
       `font-size:${t.fontSize}px`,
       `line-height:${t.lineHeight}`,
       `letter-spacing:${t.letterSpacing}em`,
+      `font-weight:${t.bodyWeight}`,
       `text-align:${t.align}`,
       `text-indent:${t.indent}em`,
     ].filter(Boolean).join(';'),
@@ -163,6 +164,10 @@
         {@render numRow('fontSize', '글자 크기', 'px')}
         {@render numRow('lineHeight', '줄간격', '배')}
         {@render numRow('letterSpacing', '자간', 'em')}
+        {@render numRow('bodyWeight', '본문 굵기', '')}
+        {@render numRow('headingWeight', '제목 굵기 (0 = 기본)', '')}
+        {@render numRow('boldWeight', '굵게(강조) 굵기', '')}
+        <p class="hint">굵기는 100~900 이며 폰트가 해당 굵기를 지원할 때만 바뀝니다. 제목 굵기는 숫자 칸에 0 을 넣으면 기본값입니다(가변 폰트는 모두 지원, 일반 폰트는 보통·굵게 두 단계만 보일 수 있습니다).</p>
         {@render numRow('paragraphGap', '문단 간격', 'em')}
         {@render numRow('indent', '첫 줄 들여쓰기', 'em')}
         <div class="row">

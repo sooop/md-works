@@ -21,6 +21,9 @@ export interface Typography {
   fontSize: number; // px
   lineHeight: number; // 배수
   letterSpacing: number; // em
+  bodyWeight: number; // 본문 굵기 100~900
+  headingWeight: number; // 제목 굵기 100~900, 0 = 기본(H1·H2 700, H3~H6 600)
+  boldWeight: number; // 굵게(**강조**) 굵기 100~900
   paragraphGap: number; // em (문단 위·아래 각각)
   indent: number; // em, 0 = 없음
   align: Align;
@@ -76,6 +79,9 @@ export const TYPO_SPEC = {
   fontSize: num(12, 24, 1, 15),
   lineHeight: num(1.2, 2.4, 0.05, 1.5),
   letterSpacing: num(-0.05, 0.2, 0.005, 0),
+  bodyWeight: num(100, 900, 100, 400),
+  headingWeight: num(100, 900, 100, 0, true),
+  boldWeight: num(100, 900, 100, 700),
   paragraphGap: num(0, 2, 0.05, 0.4),
   indent: num(0, 4, 0.1, 0),
   align: { kind: 'enum', def: 'left', values: ['left', 'justify'] },

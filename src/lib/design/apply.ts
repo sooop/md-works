@@ -23,6 +23,8 @@ export function typographyVars(t: Typography): Record<string, string> {
     '--editor-width': t.contentWidth > 0 ? `${t.contentWidth}px` : 'none',
     '--ed-line-height': String(t.lineHeight),
     '--ed-letter-spacing': `${t.letterSpacing}em`,
+    '--ed-weight': String(t.bodyWeight),
+    '--ed-bold-weight': String(t.boldWeight),
     '--ed-para-gap': `${t.paragraphGap}em`,
     '--ed-indent': `${t.indent}em`,
     '--ed-align': t.align === 'justify' ? 'justify' : 'left',
@@ -31,6 +33,7 @@ export function typographyVars(t: Typography): Record<string, string> {
     '--ed-cell-y': `${t.cellPadY}px`,
     '--ed-cell-x': `${t.cellPadX}px`,
   };
+  if (t.headingWeight > 0) v['--ed-heading-weight'] = String(t.headingWeight); // 0 이면 정의하지 않아 app.css 의 제목별 기본 굵기
   if (body) v['--ed-font'] = body;
   // 제목 서체가 비면 본문 서체를 따른다(둘 다 비면 정의하지 않아 app.css 기본값)
   if (heading || body) v['--ed-heading-font'] = heading || body;

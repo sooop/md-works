@@ -14,11 +14,11 @@
   import HistoryPanel from './HistoryPanel.svelte';
   import ModeToggle from './ModeToggle.svelte';
   import DocTitle from './DocTitle.svelte';
-  import CommentsPanel from './CommentsPanel.svelte';
   import CommentLayer from './CommentLayer.svelte';
-  import SnippetPanel from './SnippetPanel.svelte';
+  import RightSidebar from './RightSidebar.svelte';
+  import RightToggle from './RightToggle.svelte';
+  import { closeRightOnMobile, leftSheet } from '../rightbar/state.svelte';
   import SnippetShortcuts from './SnippetShortcuts.svelte';
-  import { openCount } from '../comments/store.svelte';
   import FindBar from './FindBar.svelte';
   import StatusBar from './StatusBar.svelte';
   import SheetBackdrop from './SheetBackdrop.svelte';
@@ -41,6 +41,7 @@
   import { filterTree } from '../search/nameMatch';
 
   let sidebarOpen = $state(true);
+  leftSheet.close = () => { sidebarOpen = false; };
   let historyOpen = $state(false);
   let pasteOpen = $state(false);
 
@@ -80,7 +81,7 @@
 </svelte:head>
 
 <div class="shell">
-  <SnippetShortcuts openSidebar={() => (sidebarOpen = true)} />
+  <SnippetShortcuts />
   {#if sidebarOpen}
     <aside class="sidebar">
       <header>
@@ -99,8 +100,6 @@
       <div class="sidetabs" role="tablist">
         <button role="tab" class:on={ui.tab === 'files'} aria-selected={ui.tab === 'files'} onclick={() => (ui.tab = 'files')}>파일</button>
         <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} title="모든 문서에서 검색 (Ctrl+Shift+F)">검색</button>
-        <button role="tab" class:on={ui.tab === 'comments'} aria-selected={ui.tab === 'comments'} onclick={() => (ui.tab = 'comments')} title="이 문서의 코멘트">코멘트{#if openCount()} <span class="cm-badge">{openCount()}</span>{/if}</button>
-        <button role="tab" class:on={ui.tab === 'snippets'} aria-selected={ui.tab === 'snippets'} onclick={() => (ui.tab = 'snippets')} title="글감함 (Ctrl+Alt+G 문구로 찾기, Ctrl+Alt+S 선택을 글감으로)">글감</button>
       </div>
       <div class="tabpane" hidden={ui.tab !== 'files'}>
         <div class="filterbox">
@@ -125,19 +124,13 @@
       <div class="tabpane" hidden={ui.tab !== 'search'}>
         <SearchPanel run={searchFiles} onOpen={openDoc} activeId={doc.path} />
       </div>
-      <div class="tabpane" hidden={ui.tab !== 'comments'}>
-        <CommentsPanel />
-      </div>
-      <div class="tabpane" hidden={ui.tab !== 'snippets'}>
-        <SnippetPanel />
-      </div>
     </aside>
   {/if}
   <SheetBackdrop open={sidebarOpen} onClose={() => (sidebarOpen = false)} />
 
   <main class="main">
     <header class="topbar">
-      <button class="icon-btn" aria-label="사이드바 토글" onclick={() => (sidebarOpen = !sidebarOpen)}><PanelLeft size={18} /></button>
+      <button class="icon-btn" aria-label="사이드바 토글" onclick={() => { sidebarOpen = !sidebarOpen; if (sidebarOpen) closeRightOnMobile(); }}><PanelLeft size={18} /></button>
       <DocTitle title={doc.path ? stripExt(doc.name) : '문서를 선택하세요'} editable={!!doc.path} dirty={doc.dirty} onRename={renameCurrent} />
       <span class="spacer"></span>
       {#if doc.path}
@@ -161,6 +154,7 @@
         </button>
       {/if}
       <BackupDialog server />
+      <RightToggle />
       <Settings server />
     </header>
 
@@ -178,6 +172,7 @@
     <StatusBar />
     <Lightbox root={wrapEl} readMode={!doc.edit} />
   </main>
+  <RightSidebar />
 </div>
 
 <DropOverlay onDrop={async (items) => { const rest = await divertBundleDrop(items.map((d) => d.file)); if (rest.length) await handleDrop(rest); }} />

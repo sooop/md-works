@@ -1,11 +1,11 @@
 // 글감함 UI 상태와 동작. 저장은 works/snippets.ts → worksStore() 를 거친다.
 import { doc, toast, errMsg, askConfirm } from '../store.svelte';
-import { ui } from '../search/state.svelte';
 import {
   createSnippet, listSnippets, listTrashedSnippets, updateSnippet, attachSnippet, detachSnippet, trashSnippet, restoreSnippet, purgeSnippet,
 } from '../works/snippets';
 import type { Snippet, SnippetColor, SnippetSource } from '../works/types';
 import { hasWorksStore } from '../works/store';
+import { openRight } from '../rightbar/state.svelte';
 import { filterSnippets, findByPhrase, type SnippetView } from './filter';
 
 export const sn = $state({
@@ -90,7 +90,7 @@ export async function sendSelection() {
 
 /** 에디터 선택(없으면 문단)을 문구 칸에 채워 관련 글감을 보여 준다 */
 export function findByEditorText() {
-  ui.tab = 'snippets';
+  openRight('snippets'); // 오른쪽 사이드바의 글감 탭을 연다
   const { text } = editorText();
   if (text) sn.phrase = text.slice(0, 500);
   sn.focusPhrase++;

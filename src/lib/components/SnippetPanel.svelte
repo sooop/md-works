@@ -2,15 +2,14 @@
   import { onMount, tick } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import X from '@lucide/svelte/icons/x';
-  import SendHorizontal from '@lucide/svelte/icons/send-horizontal';
   import SnippetCard from './SnippetCard.svelte';
   import { doc, toast, errMsg } from '../store.svelte';
-  import { ui } from '../search/state.svelte';
   import { SNIPPET_COLORS } from '../works/types';
   import { COLOR_HEX } from '../snippets/colors';
   import { asUrl } from '../snippets/filter';
   import { imageToDataUrl, MAX_DATA_URL } from '../snippets/image';
-  import { sn, reload, visible, addSnippet, sendSelection } from '../snippets/state.svelte';
+  import { sn, reload, visible, addSnippet } from '../snippets/state.svelte';
+  import { right } from '../rightbar/state.svelte';
 
   let input = $state<HTMLTextAreaElement>();
   let phraseInput = $state<HTMLInputElement>();
@@ -30,7 +29,7 @@
     void reload(); // 단축키·선택 추적은 셸의 SnippetShortcuts 가 맡는다
   });
   // 탭을 열 때마다 다시 읽는다 (다른 기능이 글감을 만들었을 수 있다)
-  $effect(() => { if (ui.tab === 'snippets') void reload(); });
+  $effect(() => { if (right.open && right.tab === 'snippets') void reload(); });
   $effect(() => { sn.focusInput; if (sn.focusInput) void tick().then(() => input?.focus()); });
   $effect(() => { sn.focusPhrase; if (sn.focusPhrase) void tick().then(() => { phraseInput?.focus(); phraseInput?.select(); }); });
 
@@ -94,7 +93,7 @@
       ondragover={(e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); }}
       ondrop={onDrop}
       rows="2"
-      placeholder="글감 적기 — Enter 로 추가 (Shift+Enter 줄바꿈), 이미지 붙여넣기·드롭"
+      placeholder="글감을 적고 Enter — 포스트잇처럼 붙여 둡니다 (Shift+Enter 줄바꿈 · 이미지 붙여넣기·드롭)"
       aria-label="새 글감"
     ></textarea>
     <details class="sn-src" bind:open={srcOpen}>
@@ -106,8 +105,8 @@
     <div class="sn-row">
       <span class="hint" title={`이미지는 최대 1600px 로 줄여 본문에 포함합니다. 줄인 뒤 약 ${(MAX_DATA_URL / 1_000_000).toFixed(1)}MB 를 넘으면 넣을 수 없습니다.`}>이미지 ≤ 1600px · {(MAX_DATA_URL / 1_000_000).toFixed(1)}MB</span>
       <span class="spacer"></span>
-      <button title="선택한 본문을 글감으로 보내기 (Ctrl+Alt+S)" disabled={!doc.path} onmousedown={(e) => e.preventDefault()} onclick={sendSelection}>선택 → 글감</button>
-      <button class="primary" title="추가 (Enter)" aria-label="추가" disabled={!text.trim() || busy} onclick={add}><SendHorizontal size={14} /></button>
+      <!-- 키보드가 없는 터치 폭에서만 보이는 글자 버튼(아이콘 없음) — 데스크톱은 Enter 로 붙인다 -->
+      <button class="sn-add-m" disabled={!text.trim() || busy} onclick={add}>글감 담기</button>
     </div>
   </div>
 
@@ -162,6 +161,12 @@
 <style>
   .sn-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 6px; padding: 8px 0 0; }
   .sn-quick { display: flex; flex-direction: column; gap: 4px; padding: 0 8px; }
+  /* 노란 포스트잇 모양: 채팅 입력창처럼 보이지 않게 한다 */
+  .sn-quick > textarea:first-child {
+    background: color-mix(in srgb, #f6d860 24%, var(--bg)); border-color: color-mix(in srgb, #d9b93a 55%, var(--border-strong));
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.10); border-radius: 2px 2px 14px 2px; height: 220px; min-height: 120px; padding: 8px 10px; line-height: 1.5;
+  }
+  .sn-add-m { display: none; }
   .sn-quick textarea, .sn-src input, .sn-src textarea {
     width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--text); background: var(--bg);
     border: 1px solid var(--border-strong); border-radius: 4px; padding: 5px 7px; resize: vertical;
@@ -192,7 +197,7 @@
     .sn-quick textarea:first-child { min-height: 0; height: 34px; resize: none; }
     /* textarea 자신이 아니라 영역 전체의 포커스로 키운다 — '추가' 버튼을 누르는 순간 textarea 가 blur 로 줄어들며
        버튼이 위로 밀려 click 이 빗나가던 결함 */
-    .sn-quick:focus-within textarea:first-child { height: 72px; }
+    .sn-quick:focus-within textarea:first-child { height: 160px; }
     .hint { display: none; }
     .fold-m { display: none !important; }
     .sn-ftoggle {
@@ -200,6 +205,7 @@
       background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--muted);
     }
     .sn-ftoggle .chev { margin-left: auto; }
+    .sn-add-m { display: inline-block; }
     .on-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
   }
   .sn-list { flex: 1; overflow: auto; padding: 0 8px 16px; display: flex; flex-direction: column; gap: 8px; }

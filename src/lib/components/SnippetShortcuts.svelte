@@ -4,13 +4,11 @@
   import { onMount } from 'svelte';
   import { findByEditorText, sendSelection, trackEditorSelection } from '../snippets/state.svelte';
 
-  let { openSidebar }: { openSidebar: () => void } = $props();
-
   onMount(() => trackEditorSelection());
 
   function onKey(e: KeyboardEvent) {
     if (!e.ctrlKey || !e.altKey || e.shiftKey || e.metaKey) return;
-    if (e.code === 'KeyG') { e.preventDefault(); openSidebar(); findByEditorText(); }
+    if (e.code === 'KeyG') { e.preventDefault(); findByEditorText(); }
     else if (e.code === 'KeyS') { e.preventDefault(); void sendSelection(); }
   }
 </script>

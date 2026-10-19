@@ -63,6 +63,8 @@ html.focus-mode .milkdown .ProseMirror { padding-bottom: 50vh; }
 /* ---- 좁은 화면: 사이드바를 하단 시트로 ---- */
 @media (max-width: 720px) {
   /* 시트: 바닥에서 올라오는 패널. 탭 콘텐츠는 .sidetabs / .tabpane 구조에 그대로 들어간다(글감 탭 등 후속 추가용 슬롯). */
+  /* 오른쪽 사이드바도 같은 하단 시트다(폭 변수는 무시) */
+  html .sidebar.right-sidebar { width: auto; border-left: 0; }
   html .sidebar {
     inset: auto 0 0 0;
     width: auto;

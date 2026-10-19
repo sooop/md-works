@@ -15,7 +15,7 @@ export function persistSearchOpts() {
 }
 
 export const ui = $state({
-  tab: 'files' as 'files' | 'search' | 'comments' | 'snippets',
+  tab: 'files' as 'files' | 'search',
   findOpen: false,
   findFocus: 0, // 바뀔 때마다 검색 바 입력창에 포커스
   globalFocus: 0, // 바뀔 때마다 전체 검색 입력창에 포커스
