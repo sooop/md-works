@@ -30,7 +30,10 @@
   // 캡처 단계에서 받고, 대화상자·메뉴가 열려 있거나 IME 조합 중이면 그쪽 Esc 로 넘긴다.
   function onEscCapture(e: KeyboardEvent) {
     if (e.key !== 'Escape' || !writing.focus || e.isComposing) return;
-    if (document.querySelector('[role="dialog"], [role="menu"], [role="listbox"]')) return;
+    // 보이는 것만 센다: 표 도구(tbl-menu)처럼 항상 DOM 에 있는 숨김 role=menu 가 Esc 를 영영 막던 결함
+    const open = [...document.querySelectorAll('[role="dialog"], [role="menu"], [role="listbox"]')]
+      .some((el) => !(el as HTMLElement).hidden && el.getClientRects().length > 0);
+    if (open) return;
     toggleFocus(false);
   }
 

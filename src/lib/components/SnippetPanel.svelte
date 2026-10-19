@@ -190,7 +190,9 @@
   @media (max-width: 720px) {
     /* 좁은 화면: 시트 높이를 글감 카드에 돌려주도록 입력창을 줄이고 찾기·필터를 한 줄로 접는다 */
     .sn-quick textarea:first-child { min-height: 0; height: 34px; resize: none; }
-    .sn-quick textarea:first-child:focus { height: 72px; }
+    /* textarea 자신이 아니라 영역 전체의 포커스로 키운다 — '추가' 버튼을 누르는 순간 textarea 가 blur 로 줄어들며
+       버튼이 위로 밀려 click 이 빗나가던 결함 */
+    .sn-quick:focus-within textarea:first-child { height: 72px; }
     .hint { display: none; }
     .fold-m { display: none !important; }
     .sn-ftoggle {

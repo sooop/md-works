@@ -546,6 +546,11 @@ input.invalid { color: #c0392b; }
 
 .cm-layer { position: fixed; z-index: 40; }
 .cm-add { display: inline-flex; align-items: center; gap: 4px; box-shadow: var(--shadow); border-color: var(--comment); }
+/* 터치 폭: 서식 툴바(B/I/S)와 겹치지 않게 화면 오른쪽 아래에 고정 */
+.cm-add.cm-add-fixed { right: 12px; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); min-height: 44px; padding: 0 14px; }
+/* 에디터가 포커스를 잃으면(코멘트 입력창 등으로 이동) Crepe 툴바를 숨긴다 — 크레페는 포커스 이동만으로는 툴바를 다시 평가하지 않아 잔상이 남는다.
+   재점검에서 버튼 클릭(포커스가 .milkdown 안에 남음)·링크 입력·슬래시 메뉴·표 핸들이 영향받지 않음을 확인했다. */
+.milkdown:not(:focus-within) .milkdown-toolbar { display: none; }
 .cm-pop {
   width: 320px; max-height: min(60vh, 480px); overflow: auto; display: flex; flex-direction: column; gap: 8px;
   background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow); padding: 10px;

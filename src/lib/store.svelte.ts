@@ -72,7 +72,14 @@ export const editorBridge: { getMarkdown: () => string; preparePrint: (() => Pro
 
 // '새로 만든 글'·'이름 변경 직후'에만 본문에 포커스를 준다(파일 목록을 키보드로 탐색 중이면 빼앗지 않는다).
 // 문서를 열기 직전에 켜 두면 새로 만들어지는 에디터가 한 번 소비한다.
+// 에디터 생성은 openDoc 이 끝난 뒤에 비동기로 완료되므로 호출부가 바로 끄면 소비되지 못한다 — 일정 시간 뒤 스스로 꺼진다.
 export const focusNext = { on: false };
+let focusTimer: ReturnType<typeof setTimeout> | undefined;
+export function requestEditorFocus() {
+  focusNext.on = true;
+  clearTimeout(focusTimer);
+  focusTimer = setTimeout(() => { focusNext.on = false; }, 4000);
+}
 
 // ---- 진행 상태 (pandoc 엔진 준비/변환 등 시간이 걸리는 작업) ----
 export const status = $state({ text: '' });

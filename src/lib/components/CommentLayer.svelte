@@ -56,7 +56,8 @@
   {#if cm.sel && !cm.draft}
     {@const p = place(cm.sel, 36)}
     <!-- 눌러도 본문 선택이 풀리지 않게 mousedown 의 기본 동작을 막는다 -->
-    <button class="cm-layer cm-add" style:left="{p.left}px" style:top="{p.top}px" title="선택한 본문에 코멘트 (Ctrl+Alt+M)" onmousedown={(e) => e.preventDefault()} onclick={startDraft}>
+    <!-- 터치 폭에서는 선택 위치 옆이 아니라 화면 오른쪽 아래에 고정한다(서식 툴바와 겹쳐 클릭을 가로채던 문제) -->
+    <button class="cm-layer cm-add" class:cm-add-fixed={touch} style:left={touch ? null : `${p.left}px`} style:top={touch ? null : `${p.top}px`} title="선택한 본문에 코멘트 (Ctrl+Alt+M)" onmousedown={(e) => e.preventDefault()} onclick={startDraft}>
       <MessageSquarePlus size={15} />코멘트
     </button>
   {/if}
