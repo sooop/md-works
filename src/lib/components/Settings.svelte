@@ -88,6 +88,11 @@
       <button class="link-btn" onclick={resetLayout}>글자 크기·본문 폭 기본값으로</button>
       <button onclick={openDesign}>디자인…</button>
 
+      <label class="check">
+        <input type="checkbox" checked={settings.snippetColors} onchange={(e) => { settings.snippetColors = e.currentTarget.checked; persistSettings(); }} />
+        <span>글감 색 사용 (색 지정·색으로 거르기)</span>
+      </label>
+
       {#if server}
         <div class="field">
           <span class="label">이미지 삽입 방식</span>

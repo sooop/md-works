@@ -27,6 +27,35 @@ export function matchName(target: string, query: string): boolean {
   return false;
 }
 
+/** 검색어(공백으로 나눈 단어마다)가 target 에서 처음 일치하는 구간 [시작, 끝) 들. 겹치면 합친다(하이라이트용, 초성 가능) */
+export function matchRanges(target: string, query: string): [number, number][] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return [];
+  const orig = [...target];
+  const low = orig.map((c) => c.toLowerCase());
+  const offs: number[] = [];
+  let o = 0;
+  for (const c of orig) { offs.push(o); o += c.length; }
+  const found: [number, number][] = [];
+  for (const term of terms) {
+    const q = [...term];
+    for (let i = 0; i + q.length <= low.length; i++) {
+      if (q.every((ch, j) => same(ch, low[i + j]))) {
+        found.push([offs[i], offs[i + q.length - 1] + orig[i + q.length - 1].length]);
+        break;
+      }
+    }
+  }
+  found.sort((x, y) => x[0] - y[0]);
+  const merged: [number, number][] = [];
+  for (const r of found) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) last[1] = Math.max(last[1], r[1]);
+    else merged.push([r[0], r[1]]);
+  }
+  return merged;
+}
+
 // 트리에서 경로가 일치하거나 일치하는 하위 항목이 있는 노드만 남긴다
 export function filterTree<T extends { path: string; type: 'file' | 'dir'; children?: T[] }>(
   nodes: T[],

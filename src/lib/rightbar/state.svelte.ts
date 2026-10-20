@@ -1,5 +1,6 @@
 // 오른쪽 사이드바(글감·코멘트)의 열림·탭 상태. 왼쪽 사이드바(파일·검색)와 분리해 본문 옆에 두고 쓰는 자료를 모은다.
-import { isMobile } from '../writing/state.svelte';
+import { isMobile, writing } from '../writing/state.svelte';
+import { rightPeek } from '../sidebar/state.svelte';
 
 const KEY = 'works.right';
 export type RightTab = 'snippets' | 'comments';
@@ -32,14 +33,23 @@ function persist() {
 /** 모바일에서 오른쪽 시트를 열 때 왼쪽 시트를 닫기 위해 셸이 등록한다 */
 export const leftSheet: { close: (() => void) | null } = { close: null };
 
+/** 패널을 보여 준다. 데스크톱에서 고정(right.open)이 아니면 팝오버로 잠깐 띄우고(밖을 누르거나 마우스가 벗어나면 닫힌다), 모바일은 시트로 연다 */
 export function openRight(tab?: RightTab) {
   if (tab) right.tab = tab;
-  right.open = true;
-  if (isMobile()) leftSheet.close?.(); // 모바일은 시트가 하나만 열린다
+  if (isMobile()) {
+    right.open = true;
+    leftSheet.close?.(); // 모바일은 시트가 하나만 열린다
+    persist();
+    return;
+  }
+  if (!right.open || writing.focus) rightPeek.open = true;
   persist();
 }
+/** 팝오버로 열려 있는 패널을 본문 옆에 고정한다 */
+export function pinRight() { right.open = true; rightPeek.open = false; persist(); }
 export function closeRight() { right.open = false; persist(); }
-export function toggleRight() { if (right.open) closeRight(); else openRight(); }
+/** 메뉴의 '글감·코멘트 패널': 본문 옆에 고정하거나 풀어 숨긴다(모바일은 시트를 여닫는다) */
+export function toggleRight() { if (right.open) closeRight(); else if (isMobile()) openRight(); else pinRight(); }
 export function setRightTab(tab: RightTab) { right.tab = tab; persist(); }
 export function setRightWidth(w: number, save = true) { right.width = clampRightWidth(w); if (save) persist(); }
 /** 왼쪽 사이드바를 열 때(모바일) 오른쪽을 닫는다 */

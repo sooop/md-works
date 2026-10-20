@@ -1,13 +1,14 @@
 <script lang="ts">
   // 본문 오른쪽에 두고 쓰는 자료: 글감과 코멘트. 왼쪽 사이드바(파일·검색)와 따로 열고 닫는다.
   // 닫혀 있거나 집중 모드이면 오른쪽 가장자리에 마우스를 대면 팝오버로 나타난다.
-  import X from '@lucide/svelte/icons/x';
+  import Pin from '@lucide/svelte/icons/pin';
+  import PinOff from '@lucide/svelte/icons/pin-off';
   import SnippetPanel from './SnippetPanel.svelte';
   import CommentsPanel from './CommentsPanel.svelte';
   import SheetBackdrop from './SheetBackdrop.svelte';
   import Resizer from './Resizer.svelte';
   import { openCount } from '../comments/store.svelte';
-  import { right, closeRight, setRightTab, setRightWidth, RIGHT_W } from '../rightbar/state.svelte';
+  import { right, closeRight, pinRight, setRightTab, setRightWidth, RIGHT_W } from '../rightbar/state.svelte';
   import { writing } from '../writing/state.svelte';
   import { rightPeek, viewport } from '../sidebar/state.svelte';
   import { edgeHover, peekPanel } from '../sidebar/peek';
@@ -32,7 +33,13 @@
       <button role="tab" class:on={right.tab === 'snippets'} aria-selected={right.tab === 'snippets'} onclick={() => setRightTab('snippets')} use:tip={{ title: '글감함', lines: ['Ctrl+Alt+G 문구로 찾기', 'Ctrl+Alt+S 선택을 글감으로'] }}>글감</button>
       <button role="tab" class:on={right.tab === 'comments'} aria-selected={right.tab === 'comments'} onclick={() => setRightTab('comments')} use:tip={'이 문서의 코멘트'}>코멘트{#if openCount()} <span class="cm-badge">{openCount()}</span>{/if}</button>
       <span class="spacer"></span>
-      <button class="icon-btn rs-close" aria-label="오른쪽 패널 닫기" use:tip={'닫기'} onclick={() => { if (peek) rightPeek.open = false; else closeRight(); }}><X size={15} /></button>
+      {#if !viewport.mobile}
+        <button class="icon-btn rs-close pin-btn" class:on={!peek} aria-pressed={!peek} aria-label={peek ? '오른쪽 패널 고정' : '오른쪽 패널 고정 해제'}
+          use:tip={peek ? { title: '본문 옆에 고정', lines: ['지금은 마우스가 벗어나면 닫힙니다'] } : { title: '고정됨', lines: ['누르면 숨기고, 오른쪽 가장자리에 마우스를 대면 나타납니다'] }}
+          onclick={() => { if (peek) pinRight(); else closeRight(); }}>{#if peek}<PinOff size={16} />{:else}<Pin size={16} />{/if}</button>
+      {:else}
+        <button class="icon-btn rs-close" aria-label="오른쪽 패널 닫기" use:tip={'닫기'} onclick={closeRight}>✕</button>
+      {/if}
     </div>
     <div class="tabpane" hidden={right.tab !== 'snippets'}><SnippetPanel /></div>
     <div class="tabpane" hidden={right.tab !== 'comments'}><CommentsPanel /></div>

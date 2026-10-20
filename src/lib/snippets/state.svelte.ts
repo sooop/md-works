@@ -47,14 +47,14 @@ export async function reload() {
 export const visible = (): Snippet[] =>
   sn.phrase.trim() ? findByPhrase(sn.phrase, sn.active) : filterSnippets(sn.active, sn.trashed, { view: sn.view, docKey: doc.path, color: sn.color, query: sn.query });
 
-/** 정렬 값을 바꿀 수 있는 상태인가: '이 글에 붙은 것' 보기이고 문구 찾기·검색어·색 필터가 없을 때 */
+/** 정렬 값을 바꿀 수 있는 상태인가: '이 글에 꽂힌 글감' 보기이고 문구 찾기·검색어·색 필터가 없을 때 */
 export const canReorder = (): boolean => sn.view === 'doc' && !!doc.path && !sn.phrase.trim() && !sn.query.trim() && !sn.color;
 
 /** 순서를 바꿀 수 없을 때 보여 줄 안내(바꿀 수 있으면 빈 문자열) */
 export function reorderHint(): string {
   if (canReorder()) return '';
   if (sn.view === 'doc' && doc.path && !sn.phrase.trim()) return '필터를 풀면 순서를 바꿀 수 있습니다';
-  return "'이 글에 붙은 것' 보기에서만 순서를 바꿀 수 있습니다";
+  return "'이 글에 꽂힌 글감' 보기에서만 순서를 바꿀 수 있습니다";
 }
 
 async function run<T>(fn: () => Promise<T>, fail: string): Promise<T | undefined> {
@@ -71,8 +71,8 @@ async function run<T>(fn: () => Promise<T>, fail: string): Promise<T | undefined
 export const addSnippet = (body: string, source?: SnippetSource, attach = true) =>
   run(() => createSnippet({ body, ...(source ? { source } : {}), ...(attach && doc.path ? { attachTo: [doc.path] } : {}) }), '글감을 추가하지 못했습니다');
 export const editSnippet = (id: string, patch: Partial<Pick<Snippet, 'body' | 'source' | 'color'>>) => run(() => updateSnippet(id, patch), '글감을 고치지 못했습니다');
-export const attachHere = (id: string) => doc.path ? run(() => attachSnippet(id, doc.path), '붙이지 못했습니다') : Promise.resolve(undefined);
-export const detachHere = (id: string) => doc.path ? run(() => detachSnippet(id, doc.path), '떼지 못했습니다') : Promise.resolve(undefined);
+export const attachHere = (id: string) => doc.path ? run(() => attachSnippet(id, doc.path), '핀을 꽂지 못했습니다') : Promise.resolve(undefined);
+export const detachHere = (id: string) => doc.path ? run(() => detachSnippet(id, doc.path), '핀을 떼지 못했습니다') : Promise.resolve(undefined);
 export const discardSnippet = (id: string) => run(() => trashSnippet(id), '휴지통으로 옮기지 못했습니다');
 export const recoverSnippet = (id: string) => run(() => restoreSnippet(id), '복구하지 못했습니다');
 export async function deleteForever(id: string) {
@@ -106,6 +106,16 @@ export function pruneSelected() {
 export async function bulkColor(color: SnippetColor) {
   const ids = [...sn.selected];
   if (ids.length) await run(() => setSnippetColors(ids, color), '색을 바꾸지 못했습니다');
+}
+/** 선택한 글감을 지금 글에서 뗀다(글감은 남는다) */
+export async function bulkDetach() {
+  const ids = [...sn.selected];
+  const key = doc.path;
+  if (!ids.length || !key) return;
+  const n = await run(async () => { for (const id of ids) await detachSnippet(id, key); return ids.length; }, '핀을 떼지 못했습니다');
+  if (n === undefined) return;
+  sn.selected = [];
+  toast(`${n}개의 핀을 뗐습니다`);
 }
 export async function bulkTrash() {
   const ids = [...sn.selected];

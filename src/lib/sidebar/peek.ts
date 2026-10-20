@@ -28,7 +28,7 @@ export function peekPanel(node: HTMLElement, opts: { active: () => boolean; clos
     t = setTimeout(() => {
       const a = document.activeElement;
       if (a && node.contains(a) && a.matches('input, textarea, [contenteditable="true"]')) return;
-      if (node.querySelector('[role="menu"], [role="listbox"], .popover')) return; // 안에서 메뉴·팝오버를 연 채로 벗어난 경우
+      if (node.querySelector('[role="menu"], [role="listbox"], .popover, .pop-panel')) return; // 안에서 메뉴·팝오버를 연 채로 벗어난 경우
       if (document.querySelector('.ctx-menu, .overlay')) return; // 우클릭 메뉴·대화상자(이름·삭제 확인 등)를 쓰는 중
       if (opts.active()) opts.close();
     }, CLOSE_DELAY);

@@ -4,6 +4,7 @@
   import BookmarkPlus from '@lucide/svelte/icons/bookmark-plus';
   import { sendSelection } from '../snippets/state.svelte';
   import CommentItem from './CommentItem.svelte';
+  import { tip } from '../tooltip.svelte';
   import { cm, startDraft, cancelDraft, commitDraft, closePick } from '../comments/store.svelte';
 
   // 본문 위에 뜨는 요소: 선택 영역의 '코멘트' 버튼, 새 코멘트 입력, 코멘트를 눌렀을 때의 팝오버
@@ -48,7 +49,8 @@
     }
   }
   function onDraftKey(e: KeyboardEvent) {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commitDraft(); }
+    if (e.isComposing) return;
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (cm.draft?.text.trim()) commitDraft(); }
   }
 </script>
 
@@ -60,10 +62,10 @@
     <!-- 눌러도 본문 선택이 풀리지 않게 mousedown 의 기본 동작을 막는다 -->
     <!-- 터치 폭에서는 선택 위치 옆이 아니라 화면 오른쪽 아래에 고정한다(서식 툴바와 겹쳐 클릭을 가로채던 문제) -->
     <div class="cm-layer cm-selbar" class:cm-add-fixed={touch} style:left={touch ? null : `${p.left}px`} style:top={touch ? null : `${p.top}px`}>
-      <button class="cm-add" title="선택한 본문에 코멘트 (Ctrl+Alt+M)" onmousedown={(e) => e.preventDefault()} onclick={startDraft}>
+      <button class="cm-add" use:tip={{ title: '선택한 본문에 코멘트', kbd: 'Ctrl+Alt+M' }} onmousedown={(e) => e.preventDefault()} onclick={startDraft}>
         <MessageSquarePlus size={15} />코멘트
       </button>
-      <button class="cm-add" title="선택한 문장을 글감함에 담기 (Ctrl+Alt+S)" onmousedown={(e) => e.preventDefault()} onclick={() => void sendSelection()}>
+      <button class="cm-add" use:tip={{ title: '선택한 문장을 글감함에 담기', kbd: 'Ctrl+Alt+S' }} onmousedown={(e) => e.preventDefault()} onclick={() => void sendSelection()}>
         <BookmarkPlus size={15} />글감 담기
       </button>
     </div>
@@ -72,7 +74,7 @@
   {#if cm.draft}
     {@const p = place(cm.draft, 170)}
     <div class="cm-layer cm-pop" style:left="{p.left}px" style:top="{p.top}px" role="dialog" aria-label="새 코멘트">
-      <textarea bind:this={area} bind:value={cm.draft.text} onkeydown={onDraftKey} rows="4" placeholder={touch ? '코멘트를 입력하세요' : '코멘트를 입력하세요 (Ctrl+Enter 로 저장)'} aria-label="코멘트 내용"></textarea>
+      <textarea bind:this={area} bind:value={cm.draft.text} onkeydown={onDraftKey} rows="4" placeholder={touch ? '코멘트를 입력하세요' : '코멘트를 입력하세요 (Enter 저장, Shift+Enter 줄바꿈)'} aria-label="코멘트 내용"></textarea>
       <div class="cm-actions" class:touch>
         <button onclick={cancelDraft}>취소</button>
         <button class="primary" disabled={!cm.draft.text.trim()} onclick={commitDraft}>저장</button>

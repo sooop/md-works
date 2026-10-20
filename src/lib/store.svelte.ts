@@ -15,6 +15,7 @@ function loadSettings() {
     autosave: true,
     imageMode: 'file' as ImageMode,
     template: '', // 서버 버전의 docx 템플릿 파일명, 빈 값이면 기본 템플릿
+    snippetColors: false, // 글감 색 지정·색 필터 같은 '고급' 기능을 쓸지(기본 꺼짐: 화면을 어지럽히지 않는다)
     version: SETTINGS_VERSION,
   };
   try {
