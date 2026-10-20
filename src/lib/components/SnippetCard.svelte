@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import Paperclip from '@lucide/svelte/icons/paperclip';
   import Unlink from '@lucide/svelte/icons/unlink';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -9,11 +10,19 @@
   import { COLOR_HEX } from '../snippets/colors';
   import { suggestProvider } from '../works/suggest';
   import { splitBody, bodyLines, suggestCandidates, snippetText } from '../snippets/filter';
-  import { sn, editSnippet, attachHere, detachHere, discardSnippet, recoverSnippet, deleteForever } from '../snippets/state.svelte';
+  import {
+    sn, editSnippet, attachHere, detachHere, discardSnippet, recoverSnippet, deleteForever,
+    toggleSelect, selectRangeTo, dragGroup, moveStep,
+  } from '../snippets/state.svelte';
 
-  interface Props { s: Snippet }
-  let { s }: Props = $props();
-
+  interface Props {
+    s: Snippet;
+    /** 끌어서·Alt+화살표로 순서를 바꿀 수 있는 보기인지 */
+    reorderable?: boolean;
+    /** 삽입 위치 표시선: 이 카드 위('before') 또는 아래('after') */
+    dropMark?: '' | 'before' | 'after';
+  }
+  let { s, reorderable = false, dropMark = '' }: Props = $props();
 
   const trashed = $derived(!!s.deletedAt);
   const open = $derived(sn.openId === s.id);
@@ -60,14 +69,74 @@
     return () => { stale = true; };
   });
 
+  const selected = $derived(sn.selected.includes(s.id));
+  const INTERACTIVE = 'button, a, textarea, input, summary, details';
+
+  /** 클릭 수식키에 따라 선택을 바꾼다. 처리했으면 true */
+  function pick(e: MouseEvent): boolean {
+    if (e.shiftKey) { selectRangeTo(s.id); return true; }
+    if (e.ctrlKey || e.metaKey || sn.selectMode) { toggleSelect(s.id); return true; }
+    return false;
+  }
   function toggle(e: MouseEvent) {
-    if ((e.target as HTMLElement).closest('button, a, textarea, input, summary, details')) return;
+    if ((e.target as HTMLElement).closest(INTERACTIVE)) return;
+    if (!editing && pick(e)) return;
+    sn.anchor = s.id; // 그냥 클릭은 선택을 건드리지 않고 Shift 범위의 기준만 옮긴다
     sn.openId = open ? '' : s.id;
+  }
+  // Shift+클릭이 글자 선택으로 번지지 않게
+  function onMouseDown(e: MouseEvent) {
+    if (e.shiftKey && !(e.target as HTMLElement).closest(INTERACTIVE)) e.preventDefault();
+  }
+
+  // ---- 드래그·키보드 이동 ----
+  let el = $state<HTMLDivElement>();
+  const draggable = $derived(reorderable && !editing && !trashed);
+  function onDragStart(e: DragEvent) {
+    if (!draggable) { e.preventDefault(); return; }
+    sn.dragIds = dragGroup(s.id);
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('application/x-snippet-id', s.id); }
+  }
+  function onDragEnd() { sn.dragIds = []; sn.dropIndex = -1; }
+  async function onKeyDown(e: KeyboardEvent) {
+    if (e.target !== e.currentTarget || editing) return; // 카드 자신에 포커스가 있을 때만
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      if (!reorderable) return;
+      await moveStep(e.key === 'ArrowUp' ? -1 : 1, s.id);
+      await tick();
+      el?.focus(); // 목록이 다시 그려져도 포커스를 유지
+    } else if (e.key === ' ' && sn.selectMode) {
+      e.preventDefault();
+      toggleSelect(s.id);
+    }
   }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="sn-card" class:open style:--sn={COLOR_HEX[s.color]} onclick={toggle}>
+<div
+  bind:this={el}
+  class="sn-card" class:open class:selected class:drop-before={dropMark === 'before'} class:drop-after={dropMark === 'after'}
+  class:dragging={sn.dragIds.includes(s.id)}
+  style:--sn={COLOR_HEX[s.color]}
+  role="option" aria-selected={selected} tabindex="0" data-sn-id={s.id}
+  draggable={draggable}
+  title={draggable ?'Alt+↑/↓ 로 한 칸 이동, 끌어서 순서 바꾸기' : undefined}
+  onclick={toggle} onmousedown={onMouseDown} onkeydown={onKeyDown} ondragstart={onDragStart} ondragend={onDragEnd}
+>
+  {#if sn.selectMode}
+    <label class="sn-check">
+      <input
+        type="checkbox" checked={selected} aria-label="이 글감 선택"
+        onclick={(e) => {
+          e.stopPropagation();
+          const box = e.currentTarget;
+          pick(e);
+          void tick().then(() => { box.checked = sn.selected.includes(s.id); }); // Shift 범위 등으로 기본 토글과 어긋난 표시를 바로잡는다
+        }}
+      />
+    </label>
+  {/if}
   {#if editing}
     <textarea class="sn-edit" bind:value={body} onkeydown={onEditKey} rows="4" aria-label="글감 내용"></textarea>
     <details class="sn-src" open={!!s.source}>
@@ -147,6 +216,18 @@
     font-size: 13px;
   }
   .sn-card.open { border-color: var(--sn); }
+  .sn-card { position: relative; }
+  .sn-card.selected { outline: 2px solid var(--accent); outline-offset: -1px; background: color-mix(in srgb, var(--accent) 10%, color-mix(in srgb, var(--sn) 14%, var(--surface))); }
+  .sn-card.dragging { opacity: 0.45; }
+  /* 삽입 위치 표시선 (카드 사이 간격 8px 의 가운데에 걸친다) */
+  .sn-card.drop-before::before, .sn-card.drop-after::after {
+    content: ''; position: absolute; left: 0; right: 0; height: 3px; border-radius: 2px; background: var(--accent); pointer-events: none;
+  }
+  .sn-card.drop-before::before { top: -6px; }
+  .sn-card.drop-after::after { bottom: -6px; }
+  .sn-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .sn-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .sn-check input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--primary); }
   .sn-body { white-space: pre-wrap; word-break: break-word; max-height: 9em; overflow: hidden; }
   .open .sn-body { max-height: none; }
   .sn-body .ln { min-height: 1.2em; }

@@ -1,14 +1,21 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import X from '@lucide/svelte/icons/x';
+  import ListChecks from '@lucide/svelte/icons/list-checks';
+  import ArrowUp from '@lucide/svelte/icons/arrow-up';
+  import ArrowDown from '@lucide/svelte/icons/arrow-down';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import SnippetCard from './SnippetCard.svelte';
   import { doc, toast, errMsg } from '../store.svelte';
   import { SNIPPET_COLORS } from '../works/types';
   import { COLOR_HEX } from '../snippets/colors';
   import { asUrl } from '../snippets/filter';
   import { imageToDataUrl, MAX_DATA_URL } from '../snippets/image';
-  import { sn, reload, visible, addSnippet } from '../snippets/state.svelte';
+  import {
+    sn, reload, visible, addSnippet, canReorder, reorderHint, setSelectMode, clearSelection, pruneSelected,
+    bulkColor, bulkTrash, moveStep, moveTo,
+  } from '../snippets/state.svelte';
   import { right } from '../rightbar/state.svelte';
 
   let input = $state<HTMLTextAreaElement>();
@@ -24,6 +31,61 @@
 
   const list = $derived(visible());
   const phraseMode = $derived(!!sn.phrase.trim());
+
+  const reorderable = $derived(canReorder());
+  const hint = $derived(reorderHint());
+  const trashView = $derived(sn.view === 'trash' && !phraseMode);
+
+  // 보기·필터·글이 바뀌면 선택을 비운다. 목록에서 사라진 카드는 선택에서 뺀다
+  let viewSig = '';
+  $effect(() => {
+    const next = [sn.view, sn.color, sn.query, sn.phrase, doc.path].join('\u0000');
+    if (viewSig && next !== viewSig) clearSelection();
+    viewSig = next;
+  });
+  $effect(() => {
+    void list.map((s) => s.id).join(',');
+    if (sn.loaded) untrack(() => pruneSelected());
+  });
+
+  // ---- 드래그로 순서 바꾸기: 포인터 위치로 삽입 위치(카드 사이)를 정한다 ----
+  let listEl = $state<HTMLDivElement>();
+  function slotAt(y: number): number {
+    const cards = [...(listEl?.querySelectorAll<HTMLElement>('[data-sn-id]') ?? [])];
+    for (let i = 0; i < cards.length; i++) {
+      const r = cards[i].getBoundingClientRect();
+      if (y < r.top + r.height / 2) return i;
+    }
+    return cards.length;
+  }
+  function onDragOver(e: DragEvent) {
+    if (!sn.dragIds.length || !reorderable) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    sn.dropIndex = slotAt(e.clientY);
+  }
+  function onDropList(e: DragEvent) {
+    if (!sn.dragIds.length) return;
+    e.preventDefault();
+    const moving = sn.dragIds;
+    const at = reorderable ? slotAt(e.clientY) : -1;
+    sn.dragIds = [];
+    sn.dropIndex = -1;
+    if (at >= 0) void moveTo(moving, at);
+  }
+  function onDragLeave(e: DragEvent) {
+    if (!listEl?.contains(e.relatedTarget as Node | null)) sn.dropIndex = -1;
+  }
+  const dropMark = (i: number): '' | 'before' | 'after' =>
+    !sn.dragIds.length ? '' : sn.dropIndex === i ? 'before' : sn.dropIndex === list.length && i === list.length - 1 ? 'after' : '';
+
+  // Esc: 선택 모드 종료, 그다음엔 선택 해제 (입력 중일 때는 건드리지 않는다)
+  function onPanelKey(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if ((e.target as HTMLElement).closest('textarea, input:not([type="checkbox"])')) return;
+    if (sn.selectMode) { setSelectMode(false); e.preventDefault(); }
+    else if (sn.selected.length) { clearSelection(); e.preventDefault(); }
+  }
 
   onMount(() => {
     void reload(); // 단축키·선택 추적은 셸의 SnippetShortcuts 가 맡는다
@@ -83,7 +145,8 @@
   );
 </script>
 
-<div class="sn-panel">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="sn-panel" onkeydown={onPanelKey}>
   <div class="sn-quick">
     <textarea
       bind:this={input}
@@ -147,13 +210,44 @@
     <p class="sn-note">전체 글감을 관련도 순으로 보여 줍니다 ({list.length}개).</p>
   {/if}
 
-  <div class="sn-list">
+  <div class="sn-tools" title={hint || '카드를 끌거나 Alt+↑/↓ 로 순서를 바꿉니다'}>
+    <button
+      class="sn-seltoggle" class:on={sn.selectMode} aria-pressed={sn.selectMode}
+      aria-label={sn.selectMode ? '선택 모드 끄기' : '선택 모드 켜기'}
+      title="선택 모드: 카드를 눌러 여러 장을 고릅니다 (Ctrl/Shift+클릭도 가능, Esc 로 종료)"
+      onclick={() => setSelectMode(!sn.selectMode)}
+    ><ListChecks size={14} /> 선택</button>
+    {#if sn.view === 'doc' && !reorderable && !phraseMode && doc.path}<span class="sn-orderhint">{hint}</span>{/if}
+  </div>
+
+  {#if sn.selected.length}
+    <div class="sn-selbar" role="toolbar" aria-label="선택한 글감 일괄 작업">
+      <strong>{sn.selected.length}개 선택</strong>
+      <span class="sn-selcolors" role="group" aria-label="선택한 글감의 색 바꾸기">
+        {#each SNIPPET_COLORS as c}
+          <button class="dot" style:--c={COLOR_HEX[c]} title={`선택한 글감을 ${c} 색으로`} aria-label={`선택한 글감 색 변경: ${c}`} disabled={trashView} onclick={() => bulkColor(c)}></button>
+        {/each}
+      </span>
+      <button aria-label="선택한 글감을 휴지통으로" title="휴지통으로 (휴지통에서 복구할 수 있습니다)" disabled={trashView} onclick={bulkTrash}><Trash2 size={13} /> 휴지통으로</button>
+      {#if reorderable}
+        <button aria-label="선택한 글감을 위로" title="선택한 글감을 한 칸 위로" onclick={() => moveStep(-1)}><ArrowUp size={13} /> 위로</button>
+        <button aria-label="선택한 글감을 아래로" title="선택한 글감을 한 칸 아래로" onclick={() => moveStep(1)}><ArrowDown size={13} /> 아래로</button>
+      {/if}
+      <button aria-label="선택 해제" onclick={clearSelection}>선택 해제</button>
+    </div>
+  {/if}
+
+  <div
+    class="sn-list" bind:this={listEl}
+    role={list.length ? 'listbox' : undefined} aria-multiselectable={list.length ? true : undefined} aria-label={list.length ? '글감 목록' : undefined}
+    ondragover={onDragOver} ondrop={onDropList} ondragleave={onDragLeave}
+  >
     {#if !sn.loaded}
       <p class="empty">불러오는 중…</p>
     {:else if !list.length}
       <p class="empty">{emptyMsg}</p>
     {:else}
-      {#each list as s (s.id)}<SnippetCard {s} />{/each}
+      {#each list as s, i (s.id)}<SnippetCard {s} {reorderable} dropMark={dropMark(i)} />{/each}
     {/if}
   </div>
 </div>
@@ -192,6 +286,27 @@
   .dot.on { border-color: var(--text); }
   .sn-note { margin: 0; padding: 0 10px; font-size: 12px; color: var(--muted); }
   .sn-ftoggle { display: none; }
+  .sn-tools { display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+  .sn-seltoggle, .sn-selbar button {
+    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px; cursor: pointer;
+    background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--muted);
+  }
+  .sn-seltoggle.on { color: var(--text); background: var(--selected); border-color: var(--accent); font-weight: 600; }
+  .sn-orderhint { font-size: 11px; color: var(--muted); }
+  .sn-selbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 8px; padding: 6px 8px; font-size: 12px;
+    background: var(--surface); border: 1px solid var(--accent); border-radius: 6px;
+  }
+  .sn-selbar button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+  .sn-selbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .sn-selbar .dot { padding: 0; width: 16px; height: 16px; border: 2px solid transparent; background: var(--c); border-radius: 50%; }
+  .sn-selcolors { display: inline-flex; gap: 5px; align-items: center; }
+  @media (max-width: 720px) {
+    /* 터치: 누르기 쉽게 키운다 */
+    .sn-selbar button { padding: 6px 10px; }
+    .sn-selbar .dot { width: 24px; height: 24px; padding: 0; }
+    .sn-seltoggle { padding: 6px 10px; }
+  }
   @media (max-width: 720px) {
     /* 좁은 화면: 시트 높이를 글감 카드에 돌려주도록 입력창을 줄이고 찾기·필터를 한 줄로 접는다 */
     .sn-quick textarea:first-child { min-height: 0; height: 34px; resize: none; }

@@ -2,6 +2,7 @@
 // UI 상태(state.svelte.ts)와 분리해 단위 테스트한다.
 import { matchName } from '../search/nameMatch';
 import { rankByText } from '../works/suggest';
+import { sortForDoc } from '../works/snippetOrder';
 import type { Snippet, SnippetColor } from '../works/types';
 
 export type SnippetView = 'doc' | 'all' | 'trash';
@@ -31,7 +32,9 @@ export function matchSnippet(s: Snippet, query: string): boolean {
 }
 
 export function filterSnippets(active: Snippet[], trashed: Snippet[], q: ListQuery): Snippet[] {
-  let list = q.view === 'trash' ? trashed : q.view === 'all' ? active : active.filter((s) => !!q.docKey && s.attachedDocs.includes(q.docKey));
+  // '이 글에 붙은 것' 은 글별 순서(orders), 나머지는 호출자가 준 순서(최근 수정 순) 그대로
+  let list = q.view === 'trash' ? trashed : q.view === 'all' ? active
+    : sortForDoc(active.filter((s) => !!q.docKey && s.attachedDocs.includes(q.docKey)), q.docKey);
   if (q.color) list = list.filter((s) => s.color === q.color);
   return list.filter((s) => matchSnippet(s, q.query));
 }

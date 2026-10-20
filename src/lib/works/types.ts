@@ -21,6 +21,8 @@ export interface Snippet extends WorksRecord {
   attachedDocs: string[];
   /** 휴지통으로 가기 직전에 붙어 있던 글. 복구하면 attachedDocs 로 되돌린다. */
   trashedFrom?: string[];
+  /** 글별 정렬 값(키 = 붙은 글의 docKey, 작을수록 위). 없는 글에서는 맨 위에 최근 수정 순. 휴지통에서도 보존한다. */
+  orders?: Record<string, number>;
   /** 휴지통에서 완전히 지운 글감의 묘비. body 는 비어 있고, 번들 병합이 되살림을 막는 데만 쓴다. */
   purged?: boolean;
 }
