@@ -1,6 +1,7 @@
 // 내장 팔레트 프리셋. 각 프리셋은 라이트/다크 한 쌍. 'cream' 은 app.css 의 현재 값이다
 import type { Palette } from './schema';
 import { TERMINAL_PRESETS } from './presetsTerminal';
+import { mixHex, luminance } from './colors';
 
 export type PresetGroup = 'basic' | 'terminal';
 export interface Preset { id: string; name: string; group: PresetGroup; light: Palette; dark: Palette }
@@ -48,9 +49,20 @@ const BASIC: Omit<Preset, 'group'>[] = [
   },
 ];
 
+/** 라이트 바탕이 너무 밝으면(상대휘도 0.86 초과) 글자색 쪽으로 조금씩 섞어 눈부심을 줄인다. 면(바탕·패널·코드·강조 배경·테두리)은 같은 비율로 함께 낮춘다 */
+export const SOFT_LIGHT_MAX = 0.86;
+export function softenLight<T extends { bg: string; surface: string; text: string; border: string; accentSoft: string; quote: string; codeBg: string }>(pal: T): T {
+  if (luminance(pal.bg) <= SOFT_LIGHT_MAX) return pal;
+  let pct = 0;
+  while (pct < 30 && luminance(mixHex(pal.bg, pal.text, pct)) > SOFT_LIGHT_MAX) pct++;
+  const m = (c: string) => mixHex(c, pal.text, pct);
+  return { ...pal, bg: m(pal.bg), surface: m(pal.surface), border: m(pal.border), accentSoft: m(pal.accentSoft), quote: m(pal.quote), codeBg: m(pal.codeBg) };
+}
+
 export const PRESETS: Preset[] = [
   ...BASIC.map((p) => ({ ...p, group: 'basic' as const })),
-  ...TERMINAL_PRESETS.map((p) => ({ ...p, group: 'terminal' as const })),
+  // 터미널·에디터 테마의 라이트 쪽은 원래 밝은 흰 바탕이라 눈이 아프다는 의견이 있어 밝기를 낮춰 쓴다
+  ...TERMINAL_PRESETS.map((p) => ({ ...p, light: softenLight(p.light), group: 'terminal' as const })),
 ];
 
 export const DEFAULT_PRESET_ID = 'cream';

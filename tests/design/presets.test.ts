@@ -18,9 +18,13 @@ describe('모든 프리셋', () => {
       });
     }
   }
+  it('터미널·에디터 테마의 라이트 바탕도 지나치게 밝지 않다(0.86 이하)', async () => {
+    const { luminance } = await import('../../src/lib/design/colors');
+    for (const pr of PRESETS.filter((p) => p.group === 'terminal')) expect(luminance(pr.light.bg), pr.id).toBeLessThanOrEqual(0.86);
+  });
   it('눈이 편한 라이트 바탕은 지나치게 밝지 않다(상대휘도 0.85 이하)', async () => {
     const { luminance } = await import('../../src/lib/design/colors');
-    for (const id of ['sepia', 'gruvbox', 'moss', 'mist', 'graphite']) {
+    for (const id of ['sepia', 'gruvbox', 'solarized', 'moss', 'mist', 'graphite']) {
       const pr = PRESETS.find((p) => p.id === id)!;
       expect(luminance(pr.light.bg), id).toBeLessThanOrEqual(0.85);
     }

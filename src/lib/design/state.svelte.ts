@@ -5,6 +5,8 @@ import { getPreset } from './presets';
 import type { Design, PaletteKey, TypoKey, Typography } from './schema';
 import { clampTypography } from './schema';
 import { normalizeHex } from './colors';
+import { varyPalette, randomTheme, mulberry32, type VaryStrength } from './generate';
+import type { Palette } from './schema';
 import { loadCustom, persistCustom, newCustomId, CUSTOM_PREFIX, isCustomId, type CustomTheme } from './custom';
 
 export const design: Design = $state(loadDesign());
@@ -125,4 +127,25 @@ export function deleteCustom(id: string) {
   customs.splice(i, 1);
   persistCustom(customs);
   if (design.presetId === CUSTOM_PREFIX + id) { design.presetId = undefined; commit(); }
+}
+
+// ---- 변주·랜덤 테마 ----
+/** 생성한 팔레트를 적용한다. 직전 상태는 '직전 설정으로 되돌리기'용으로 보관하고, 프리셋 표시는 푼다 */
+function applyGenerated(light: Palette, dark: Palette) {
+  undoState.prev = cloneDesign(design);
+  design.palettes = { light: { ...light }, dark: { ...dark } };
+  design.presetId = undefined;
+  commit();
+}
+
+/** 지금 팔레트(라이트·다크)를 조금씩 흔든다 */
+export function varyColors(strength: VaryStrength, seed: number) {
+  const rng = mulberry32(seed);
+  applyGenerated(varyPalette(design.palettes.light, 'light', rng, strength), varyPalette(design.palettes.dark, 'dark', rng, strength));
+}
+
+/** 시드에서 완전히 새로운 라이트·다크 테마를 만든다 */
+export function randomizeColors(seed: number) {
+  const t = randomTheme(mulberry32(seed));
+  applyGenerated(t.light, t.dark);
 }

@@ -15,8 +15,9 @@ export const TERMINAL_PRESETS: TerminalPreset[] = [
   },
   {
     id: 'solarized', name: 'Solarized',
-    light: p('#fdf6e3', '#eee8d5', '#4f666d', '#657b83', '#ddd6c1', '#1f6fa8', '#cb4b16', '#e9dfc0', '#93a1a1', '#eee8d5'),
-    dark: p('#002b36', '#073642', '#a3b0b0', '#839496', '#124a58', '#2f9be0', '#2aa198', '#0b4351', '#586e75', '#073642'),
+    // 원래 팔레트(#fdf6e3 바탕, #002b36 청록 바탕)는 눈이 부시거나 쨍해서 밝기·채도를 낮췄다
+    light: p('#ebe6d6', '#e0dbc9', '#4a6168', '#5f7379', '#cfc9b5', '#2f6f9a', '#b5603a', '#dfd9bd', '#a9b1ad', '#e0dbc9'),
+    dark: p('#10282e', '#17343b', '#a3b0b0', '#839496', '#24464e', '#4a9fcc', '#3a9a92', '#17414a', '#586e75', '#0d2227'),
   },
   {
     id: 'nord', name: 'Nord',

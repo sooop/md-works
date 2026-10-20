@@ -10,6 +10,12 @@
   import { design, setTypo, setColor, selectPreset, resetPalette, resetTypography, importDesign, undoImport, undoState, customs, saveCustom, renameCustom, overwriteCustom, deleteCustom } from '../design/state.svelte';
   import { CUSTOM_PREFIX } from '../design/custom';
   import { dui } from '../design/ui.svelte';
+  import ColorPicker from './ColorPicker.svelte';
+  import FontPicker from './FontPicker.svelte';
+  import Dices from '@lucide/svelte/icons/dices';
+  import Undo2 from '@lucide/svelte/icons/undo-2';
+  import { varyColors, randomizeColors } from '../design/state.svelte';
+  import type { VaryStrength } from '../design/generate';
   import RenameInput from './RenameInput.svelte';
   import { TYPO_SPEC, PALETTE_KEYS, PALETTE_LABELS, type NumSpec, type TypoKey, type PaletteKey } from '../design/schema';
   import { PRESETS } from '../design/presets';
@@ -21,6 +27,9 @@
   const tabs: [Tab, string][] = [['preset', '프리셋'], ['color', '색상'], ['font', '서체·간격'], ['block', '제목·블록'], ['io', '이식']];
   let tab = $state<Tab>('preset');
   let renamingId = $state('');
+  let strength = $state<VaryStrength>('mid');
+  let seed = $state(0);
+  const newSeed = () => 1 + Math.floor(Math.random() * 999_999);
   let saving = $state(false);
   let newName = $state('');
   const basic = PRESETS.filter((p) => p.group === 'basic');
@@ -34,25 +43,6 @@
   // 색상 탭에서 편집할 모드: 현재 화면에 적용 중인 쪽으로 시작
   const mode = $derived(dui.mode);
   const dark = $derived(mode === 'dark');
-
-  // 한글 글쓰기 서체 후보 + (가능하면) 내 컴퓨터 폰트
-  const FONT_HINTS = [
-    'Pretendard Variable', 'Jetendard', 'Noto Serif KR', 'Noto Sans KR', 'Nanum Myeongjo', 'Nanum Gothic', 'KoPub Batang', 'Malgun Gothic',
-    'Batang', 'Georgia', 'Times New Roman', 'Consolas', 'Cascadia Mono',
-  ];
-  let localFonts = $state<string[]>([]);
-  let canQueryFonts = $state(typeof (window as any).queryLocalFonts === 'function');
-  const fontOptions = $derived([...new Set([...FONT_HINTS, ...localFonts])]);
-
-  async function loadLocalFonts() {
-    try {
-      const list: { family: string }[] = await (window as any).queryLocalFonts();
-      localFonts = [...new Set(list.map((f) => f.family))].sort((a, b) => a.localeCompare(b)).slice(0, 1500);
-      if (!localFonts.length) canQueryFonts = false;
-    } catch {
-      canQueryFonts = false; // 권한 거부·미지원: 조용히 숨긴다
-    }
-  }
 
   const t = $derived(design.typography);
   const previewStyle = $derived(
@@ -140,10 +130,10 @@
 {/snippet}
 
 {#snippet fontRow(k: 'bodyFont' | 'headingFont' | 'codeFont', label: string, placeholder: string)}
-  <label class="row">
+  <div class="row">
     <span class="lbl">{label}</span>
-    <input class="txt" type="text" list="design-fonts" value={t[k]} {placeholder} onchange={(e) => onStr(k, e)} aria-label={label} maxlength="200" spellcheck="false" />
-  </label>
+    <div class="fpw"><FontPicker value={t[k]} kind={k === 'codeFont' ? 'code' : 'text'} {placeholder} {label} onchange={(v) => setTypo(k, v as never)} /></div>
+  </div>
 {/snippet}
 
 {#snippet check(k: TypoKey, label: string)}
@@ -157,9 +147,6 @@
     {/each}
   </div>
 
-    <datalist id="design-fonts">
-      {#each fontOptions as f}<option value={f}></option>{/each}
-    </datalist>
 
     <div class="dp-body">
       {#if tab === 'preset'}
@@ -207,10 +194,7 @@
       {:else if tab === 'font'}
         {@render fontRow('bodyFont', '본문 서체', '비우면 기본(Pretendard Variable)')}
         {@render fontRow('headingFont', '제목 서체', '비우면 본문과 동일')}
-        {#if canQueryFonts}
-          <button class="link-btn" onclick={loadLocalFonts}>내 컴퓨터 폰트 불러오기</button>
-        {/if}
-        <p class="hint">시스템에 설치된 폰트 이름을 입력하세요(쉼표로 여러 개 가능). 목록에 없는 폰트는 기본 서체로 대체됩니다.</p>
+        <p class="hint">목록에서 고르거나 직접 입력할 수 있고(쉼표로 여러 개), 이 컴퓨터에 설치된 글꼴만 쓸 수 있습니다. 없는 글꼴은 기본 서체로 대체됩니다.</p>
         {@render numRow('fontSize', '글자 크기', 'px')}
         {@render numRow('lineHeight', '줄간격', '배')}
         {@render numRow('letterSpacing', '자간', 'em')}
@@ -266,6 +250,23 @@
         {@render numRow('cellPadY', '셀 위·아래 여백', 'px')}
         {@render numRow('cellPadX', '셀 좌·우 여백', 'px')}
       {:else if tab === 'color'}
+        <div class="gen" role="group" aria-label="색 만들기">
+          <div class="gen-row">
+            <span class="lbl">변주</span>
+            <div class="seg" role="group" aria-label="변주 세기">
+              {#each [['low', '약하게'], ['mid', '보통'], ['high', '강하게']] as [id, name]}
+                <button class:active={strength === id} onclick={() => (strength = id as VaryStrength)}>{name}</button>
+              {/each}
+            </div>
+            <button onclick={() => { seed = newSeed(); varyColors(strength, seed); blocked = null; }} use:tip={{ title: '지금 색을 조금씩 흔들기', lines: ['라이트·다크 모두 분위기는 유지하면서 약간 달라집니다', '마음에 들 때까지 반복해 눌러도 됩니다'] }}><RefreshCw size={14} /> 변주</button>
+          </div>
+          <div class="gen-row">
+            <span class="lbl">랜덤</span>
+            <button onclick={() => { seed = newSeed(); randomizeColors(seed); blocked = null; }} use:tip={{ title: '완전히 새로운 테마', lines: ['한 색조에서 라이트·다크 한 쌍을 만듭니다', '바탕은 눈이 편하게 낮은 채도, 글자 대비는 항상 기준 이상'] }}><Dices size={14} /> 랜덤 테마 만들기</button>
+            <button onclick={undoImport} disabled={!undoState.prev}><Undo2 size={14} /> 직전으로</button>
+            {#if seed}<small class="hint">시드 #{seed}</small>{/if}
+          </div>
+        </div>
         <div class="row">
           <button onclick={resetPalette}>프리셋 색으로 되돌리기</button>
         </div>
@@ -282,7 +283,9 @@
             {@const w = warnOf(k)}
             <div class="crow">
               <span class="lbl">{PALETTE_LABELS[k]}</span>
-              <input type="color" value={palette[k]} oninput={(e) => tryColor(k, (e.currentTarget as HTMLInputElement).value)} aria-label={`${PALETTE_LABELS[k]} 색 선택`} />
+              <ColorPicker value={palette[k]} bg={palette.bg} label={PALETTE_LABELS[k]} mixable={k !== 'bg'}
+                against={k === 'text' || k === 'muted' || k === 'primary' ? palette.bg : k === 'bg' ? palette.text : ''}
+                onpick={(hex) => tryColor(k, hex)} />
               <input class="hex" type="text" value={palette[k]} onchange={(e) => onHex(k, e)} maxlength="7" spellcheck="false" aria-label={`${PALETTE_LABELS[k]} 16진수`} />
               {#if w}
                 <span class="warn" role="img" aria-label={`대비 부족: ${w.ratio.toFixed(2)} (기준 ${w.need})`} use:tip={`대비 ${w.ratio.toFixed(2)} — 기준 ${w.need} 미달`}>
@@ -319,6 +322,10 @@
 
 <style>
   .design-editor { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+  .gen { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  .gen-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .gen button { display: inline-flex; align-items: center; gap: 6px; }
+  .fpw { flex: 1; min-width: 200px; max-width: 360px; }
   .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   .pcard { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface); text-align: left; width: 100%; }
   .pcard:hover { background: var(--hover); }
@@ -343,7 +350,6 @@
   .row input[type='range'] { flex: 1; min-width: 120px; accent-color: var(--primary); }
   .row .n { width: 76px; }
   .row .unit { width: 24px; font-size: 12px; color: var(--muted); }
-  .row .txt { flex: 1; min-width: 180px; }
   .dp-body input[type='text'], .dp-body input[type='number'] {
     padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); width: auto; margin: 0;
   }
@@ -361,7 +367,6 @@
   .pv-code { flex: none; margin: 0; padding: 8px 12px; border-radius: 6px; background: var(--code-bg, var(--surface)); overflow-x: auto; white-space: pre; }
   .colors { display: flex; flex-direction: column; gap: 6px; }
   .crow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .crow input[type='color'] { width: 36px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: transparent; }
   .crow .hex { width: 88px; font-family: var(--font-code); }
   .warn.block { flex-basis: 100%; }
   .warn { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--danger); }
