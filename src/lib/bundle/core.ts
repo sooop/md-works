@@ -13,6 +13,7 @@ import { parseDesign, saveDesign, serializeDesign } from '../design/io';
 import type { Design } from '../design/schema';
 import type { Snippet, Thread, Tombstone, Version } from '../works/types';
 import { createSnippet } from '../works/snippets';
+import { mapOrderKeys } from '../works/snippetOrder';
 import type { WorksStore } from '../works/store';
 
 const enc = new TextEncoder();
@@ -72,7 +73,11 @@ export async function buildBundleWith(host: BundleHost, now = Date.now()): Promi
   const snippets = (await store.list<Snippet>('snippets')).filter((s) => ID_RE.test(s.id));
   const toNames = (keys: string[]) => [...new Set(keys.flatMap((k) => { const n = keyToName.get(k); return n ? [n] : []; }))];
   for (const s of snippets) {
-    const rec: Snippet = { ...s, attachedDocs: toNames(s.attachedDocs), ...(s.trashedFrom ? { trashedFrom: toNames(s.trashedFrom) } : {}) };
+    // 순서 키도 글 이름으로 바꾼다(알 수 없는 글의 키는 버림)
+    const { orders: _o, ...base } = s;
+    void _o;
+    const orders = mapOrderKeys(s.orders, (k) => keyToName.get(k));
+    const rec: Snippet = { ...base, attachedDocs: toNames(s.attachedDocs), ...(s.trashedFrom ? { trashedFrom: toNames(s.trashedFrom) } : {}), ...(orders ? { orders } : {}) };
     put(`.works/snippets/_/${s.id}.json`, JSON.stringify(rec));
   }
 
@@ -366,9 +371,13 @@ export async function applyBundleWith(
       const k = keyOf.get(plan.nameOf.get(n) ?? host.normalizeName(n));
       return k ? [k] : [];
     }))];
-    const snips = [...plan.snippets.add, ...plan.snippets.update].map((s): Snippet => ({
-      ...s, attachedDocs: toKeys(s.attachedDocs), ...(s.trashedFrom ? { trashedFrom: toKeys(s.trashedFrom) } : {}),
-    }));
+    const keyOfName = (n: string) => keyOf.get(plan.nameOf.get(n) ?? host.normalizeName(n));
+    const snips = [...plan.snippets.add, ...plan.snippets.update].map((s): Snippet => {
+      const { orders: _o, ...base } = s;
+      void _o;
+      const orders = mapOrderKeys(s.orders, keyOfName); // 이 보관소에 없는 글의 순서 값은 버린다
+      return { ...base, attachedDocs: toKeys(s.attachedDocs), ...(s.trashedFrom ? { trashedFrom: toKeys(s.trashedFrom) } : {}), ...(orders ? { orders } : {}) };
+    });
     if (snips.length) { await store.putMany('snippets', snips); wrote = true; }
     result.snippets = snips.length;
 

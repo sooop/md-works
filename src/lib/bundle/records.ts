@@ -31,6 +31,15 @@ export function cleanVersion(v: unknown, docKey: string): Version | null {
   return { ...h, docKey, ts, content, enc: v.enc, ...(name ? { name } : {}) };
 }
 
+/** 글별 정렬 값: 키는 1000자 이하 문자열, 값은 유한 숫자만(그 밖은 버림). 최대 10,000개. 비면 undefined */
+export function cleanOrders(v: unknown): Record<string, number> | undefined {
+  if (!isObj(v)) return undefined;
+  const entries = Object.entries(v)
+    .filter((e): e is [string, number] => e[0].length > 0 && e[0].length <= 1000 && typeof e[1] === 'number' && Number.isFinite(e[1]))
+    .slice(0, 10_000);
+  return entries.length ? Object.fromEntries(entries) : undefined; // fromEntries 는 '__proto__' 키도 평범한 속성으로 만든다
+}
+
 export function cleanSnippet(v: unknown): Snippet | null {
   if (!isObj(v)) return null;
   const h = head(v);
@@ -46,6 +55,8 @@ export function cleanSnippet(v: unknown): Snippet | null {
     if (excerpt !== undefined) s.source.excerpt = excerpt;
   }
   if (Array.isArray(v.trashedFrom)) s.trashedFrom = strList(v.trashedFrom);
+  const orders = cleanOrders(v.orders);
+  if (orders) s.orders = orders;
   if (v.purged === true) s.purged = true;
   return s;
 }
