@@ -3,7 +3,6 @@
   import { onMount } from 'svelte';
   import Editor from './Editor.svelte';
   import Lightbox from './Lightbox.svelte';
-  import Settings from './Settings.svelte';
   import DropOverlay from './DropOverlay.svelte';
   import PasteModal from './PasteModal.svelte';
   import MoreMenu from './MoreMenu.svelte';
@@ -15,8 +14,20 @@
   import DocTitle from './DocTitle.svelte';
   import CommentLayer from './CommentLayer.svelte';
   import RightSidebar from './RightSidebar.svelte';
-  import RightToggle from './RightToggle.svelte';
   import { closeRightOnMobile, leftSheet } from '../rightbar/state.svelte';
+  import { untrack } from 'svelte';
+  import Resizer from './Resizer.svelte';
+  import Pin from '@lucide/svelte/icons/pin';
+  import PinOff from '@lucide/svelte/icons/pin-off';
+  import Settings from './Settings.svelte';
+  import { tip } from '../tooltip.svelte';
+  import { openContextMenu } from '../contextmenu.svelte';
+  import RenameInput from './RenameInput.svelte';
+  let renamingId = $state<string | null>(null);
+  import { left, viewport, isDocked, toggleLeft, openLeft, closeLeft, togglePin, setLeftWidth, LEFT_W, rightPeek } from '../sidebar/state.svelte';
+  import { edgeHover, peekPanel } from '../sidebar/peek';
+  import { right, toggleRight } from '../rightbar/state.svelte';
+  import { backupUi, isStale } from '../bundle/backupState.svelte';
   import SnippetShortcuts from './SnippetShortcuts.svelte';
   import FindBar from './FindBar.svelte';
   import StatusBar from './StatusBar.svelte';
@@ -29,22 +40,32 @@
   import FolderOpen from '@lucide/svelte/icons/folder-open';
   import Archive from '@lucide/svelte/icons/archive';
   import FileText from '@lucide/svelte/icons/file-text';
-  import Pencil from '@lucide/svelte/icons/pencil';
-  import Trash2 from '@lucide/svelte/icons/trash-2';
   import PanelLeft from '@lucide/svelte/icons/panel-left';
   import { doc } from '../store.svelte';
   import {
-    lib, init, save, flush, exportMd, copyMd, exportAll, openPicker, openDoc, createDoc, renameDoc, removeDoc, onEditorChange,
+    lib, docUpdatedAt, renameDocBy, init, save, flush, exportMd, copyMd, exportAll, openPicker, openDoc, createDoc, removeDoc, onEditorChange,
     upload, resolveUrl, importFiles, createFromText, exportDocxCurrent, tpl, pickTemplate, clearTemplate, restoreVersion, searchLibrary, renameCurrent,
   } from '../standalone-mode.svelte';
-  import { stripExt } from '../utils';
+  import { stripExt, fmtDateTime } from '../utils';
   import { ui, searchShortcut } from '../search/state.svelte';
   import { matchName } from '../search/nameMatch';
 
-  let pasteOpen = $state(false);
-  let sidebarOpen = $state(true);
-  leftSheet.close = () => { sidebarOpen = false; };
+  leftSheet.close = closeLeft;
+  const docked = $derived(isDocked());
+  let settingsOpen = $state(false);
+  // 열린 문서가 없으면 목록을 보여 주고, 문서가 열리면 마우스가 목록 위에 있을 때만 남긴다(직접 글을 고른 경우). 시작할 때 마지막 글이 열리는 경우엔 닫는다
+  $effect(() => {
+    void doc.key;
+    const has = !!doc.path;
+    untrack(() => {
+      if (viewport.mobile) return;
+      if (!has) openLeft();
+      else if (!document.querySelector('.left-sidebar:hover')) closeLeft();
+    });
+  });
+  function closePeeks() { if (!viewport.mobile) { closeLeft(); rightPeek.open = false; } }
   let historyOpen = $state(false);
+  let pasteOpen = $state(false);
 
   const templateOptions = $derived([
     { id: '', label: '기본 템플릿' },
@@ -56,7 +77,8 @@
   onMount(() => { void init(); });
 
   function onKey(e: KeyboardEvent) {
-    if (searchShortcut(e, !!doc.path) === 'global') sidebarOpen = true;
+    if (e.key === 'Escape' && left.open && !viewport.mobile && !e.defaultPrevented && (document.activeElement as HTMLElement | null)?.closest('.left-sidebar')) closeLeft();
+    if (searchShortcut(e, !!doc.path) === 'global') openLeft();
     if (!(e.ctrlKey || e.metaKey)) return;
     const k = e.key.toLowerCase();
     if (k === 's') { e.preventDefault(); void save(); }
@@ -75,42 +97,60 @@
 
 <div class="shell">
   <SnippetShortcuts />
-  {#if sidebarOpen}
-    <aside class="sidebar">
+  {#if !docked && !left.open && !viewport.mobile}
+    <div class="left-edge" data-side="left" use:edgeHover={openLeft}></div>
+  {/if}
+  {#if docked || left.open}
+    <aside
+      class="sidebar left-sidebar" class:peek={!docked} style:--left-w="{left.width}px"
+      use:peekPanel={{ active: () => !docked && !viewport.mobile, close: closeLeft }}
+    >
       <header>
-        <span class="root-btn" title="이 브라우저에 보관된 문서">Notes</span>
+        <span class="root-btn" use:tip={'이 브라우저에 보관된 문서'}>Notes</span>
         <span class="ops-head">
-          <button class="icon-btn" title="새 문서" aria-label="새 문서" onclick={createDoc}><FilePlus size={17} /></button>
-          <button class="icon-btn" title="붙여넣어 새 문서 만들기" aria-label="붙여넣어 새 문서 만들기" onclick={() => (pasteOpen = true)}><ClipboardPaste size={17} /></button>
-          <button class="icon-btn" title="파일 가져오기 (Ctrl+O)" aria-label="파일 가져오기" onclick={openPicker}><FolderOpen size={17} /></button>
-          <button class="icon-btn" title="모든 문서를 zip 으로 내보내기 (백업)" aria-label="모든 문서 내보내기" onclick={exportAll}><Archive size={17} /></button>
+          <button class="icon-btn" use:tip={'새 문서'} aria-label="새 문서" onclick={createDoc}><FilePlus size={17} /></button>
+          <button class="icon-btn" use:tip={'붙여넣어 새 문서 만들기'} aria-label="붙여넣어 새 문서 만들기" onclick={() => (pasteOpen = true)}><ClipboardPaste size={17} /></button>
+          <button class="icon-btn" use:tip={'파일 가져오기 (Ctrl+O)'} aria-label="파일 가져오기" onclick={openPicker}><FolderOpen size={17} /></button>
+          <button class="icon-btn" use:tip={'모든 문서를 zip 으로 내보내기 (백업)'} aria-label="모든 문서 내보내기" onclick={exportAll}><Archive size={17} /></button>
         </span>
+        {#if !viewport.mobile}
+          <button class="icon-btn pin-btn" class:on={left.pinned} aria-pressed={left.pinned} aria-label={left.pinned ? '사이드바 고정 해제' : '사이드바 고정'}
+            use:tip={left.pinned ? { title: '고정됨', lines: ['누르면 자동 숨김으로 바꿉니다'] } : { title: '본문 옆에 고정', lines: ['지금은 글을 쓰면 자동으로 숨고, 왼쪽 가장자리에 마우스를 대면 나타납니다'] }}
+            onclick={togglePin}>{#if left.pinned}<Pin size={16} />{:else}<PinOff size={16} />{/if}</button>
+        {/if}
       </header>
       <div class="sidetabs" role="tablist">
         <button role="tab" class:on={ui.tab === 'files'} aria-selected={ui.tab === 'files'} onclick={() => (ui.tab = 'files')}>파일</button>
-        <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} title="모든 문서에서 검색 (Ctrl+Shift+F)">검색</button>
+        <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} use:tip={{ title: '모든 문서에서 검색', kbd: 'Ctrl+Shift+F' }}>검색</button>
       </div>
       <div class="tabpane" hidden={ui.tab !== 'files'}>
         <div class="filterbox">
           <Search size={14} />
           <input bind:value={lib.filter} placeholder="파일 이름 검색 (초성 가능)" aria-label="파일 이름 검색" spellcheck="false" />
-          {#if lib.filter}<button class="icon-btn" title="지우기" aria-label="검색어 지우기" onclick={() => (lib.filter = '')}><X size={14} /></button>{/if}
+          {#if lib.filter}<button class="icon-btn" use:tip={'지우기'} aria-label="검색어 지우기" onclick={() => (lib.filter = '')}><X size={14} /></button>{/if}
         </div>
         <nav class="tree">
           {#if visibleDocs.length}
             <ul>
               {#each visibleDocs as d (d.id)}
                 <li>
-                  <div class="row" class:active={doc.path === d.id} style:padding-left="8px">
-                    <button class="name" onclick={() => openDoc(d.id)}>
-                      <span class="twisty"></span>
-                      <FileText size={15} class="ico" />
-                      <span class="label">{stripExt(d.name)}</span>
-                    </button>
-                    <span class="ops">
-                      <button title="이름 변경" aria-label="이름 변경" onclick={() => renameDoc(d)}><Pencil size={14} /></button>
-                      <button title="삭제" aria-label="삭제" onclick={() => removeDoc(d)}><Trash2 size={14} /></button>
-                    </span>
+                  <div
+                    class="row" class:active={doc.path === d.id} style:padding-left="8px" role="presentation"
+                    oncontextmenu={(e) => openContextMenu(e, [{ label: '이름 변경', run: () => { renamingId = d.id; } }, { label: '삭제…', run: () => removeDoc(d), danger: true, sep: true }])}
+                  >
+                    {#if renamingId === d.id}
+                      <span class="name">
+                        <span class="twisty"></span>
+                        <FileText size={15} class="ico" />
+                        <RenameInput value={stripExt(d.name)} onCommit={(v) => { renamingId = null; void renameDocBy(d.id, v); }} onCancel={() => (renamingId = null)} />
+                      </span>
+                    {:else}
+                      <button class="name" ondblclick={() => (renamingId = d.id)} onclick={() => openDoc(d.id)} use:tip={{ title: stripExt(d.name), lines: [...(docUpdatedAt(d.id) ? [`수정 ${fmtDateTime(docUpdatedAt(d.id))}`] : []), '더블 클릭: 이름 변경 · 우클릭: 메뉴'] }}>
+                        <span class="twisty"></span>
+                        <FileText size={15} class="ico" />
+                        <span class="label">{stripExt(d.name)}</span>
+                      </button>
+                    {/if}
                   </div>
                 </li>
               {/each}
@@ -125,19 +165,30 @@
       <div class="tabpane" hidden={ui.tab !== 'search'}>
         <SearchPanel run={searchLibrary} onOpen={openDoc} activeId={doc.path} />
       </div>
+      {#if !viewport.mobile}
+        <Resizer side="left" value={left.width} min={LEFT_W.min} max={LEFT_W.max} def={LEFT_W.def} label="왼쪽 사이드바 폭 조절" onchange={(w, save) => setLeftWidth(w, save)} />
+      {/if}
     </aside>
   {/if}
-  <SheetBackdrop open={sidebarOpen} onClose={() => (sidebarOpen = false)} />
+  <SheetBackdrop open={left.open && viewport.mobile} onClose={closeLeft} />
 
   <main class="main">
+    <div class="top-edge"></div>
     <header class="topbar">
-      <button class="icon-btn" aria-label="사이드바 토글" onclick={() => { sidebarOpen = !sidebarOpen; if (sidebarOpen) closeRightOnMobile(); }}><PanelLeft size={18} /></button>
+      <button class="icon-btn" class:on={docked || left.open} aria-label="사이드바 토글" use:tip={{ title: '파일 목록', lines: [left.pinned ? '누르면 고정을 풀고 숨깁니다' : '왼쪽 가장자리에 마우스를 대도 열립니다'] }} onclick={() => { toggleLeft(); if (left.open) closeRightOnMobile(); }}><PanelLeft size={18} /></button>
       <DocTitle title={doc.path ? stripExt(doc.name) : '문서를 선택하세요'} editable={!!doc.path} onRename={renameCurrent} />
       <span class="spacer"></span>
       {#if doc.path}
         <ModeToggle />
         <HistoryPanel docKey={doc.path} {resolveUrl} onRestore={restoreVersion} current={doc.content} bind:open={historyOpen} />
-        <MoreMenu
+      {/if}
+      <MoreMenu
+          hasDoc={!!doc.path}
+          rightOpen={right.open}
+          onRight={toggleRight}
+          onSettings={() => (settingsOpen = true)}
+          onBackup={() => (backupUi.open = true)}
+          backupStale={isStale()}
           onHistory={() => (historyOpen = true)}
           onMd={exportMd}
           onCopyMd={copyMd}
@@ -149,13 +200,12 @@
           actions={[{ label: '템플릿 .docx 파일 선택…', run: pickTemplate }]}
           hint="템플릿은 이 브라우저에 보관됩니다. 첫 docx 사용 때 pandoc 엔진(약 16MB)을 내려받습니다."
         />
-      {/if}
-      <BackupDialog />
-      <RightToggle />
-      <Settings />
+      <BackupDialog trigger={false} />
+      <Settings trigger={false} bind:open={settingsOpen} />
     </header>
 
-    <section class="editor-wrap" bind:this={wrapEl}>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <section class="editor-wrap" bind:this={wrapEl} onpointerdown={closePeeks}>
       <FindBar />
       {#if doc.path}
         {#key doc.key}

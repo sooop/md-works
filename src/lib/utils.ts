@@ -132,3 +132,7 @@ export function relTime(ts: number): string {
   if (hour < 24) return `${hour}시간 전`;
   return new Date(ts).toLocaleString('ko-KR', { month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 }
+
+/** 'YYYY. M. D. 오후 3:04' 처럼 날짜·시각을 한 줄로 */
+export const fmtDateTime = (ts: number): string =>
+  new Date(ts).toLocaleString('ko-KR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });

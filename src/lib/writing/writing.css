@@ -3,11 +3,20 @@
    데스크톱 레이아웃은 상태 표시줄 한 줄을 빼면 그대로다. */
 
 /* ---- 집중 모드: 사이드바·상단바·상태 표시줄 숨김 (에디터 중앙 정렬은 그대로) ---- */
-html.focus-mode .sidebar,
-html.focus-mode .topbar,
+html.focus-mode .sidebar:not(.peek),
 html.focus-mode .statusbar,
 html.focus-mode .sheet-backdrop,
 html.focus-mode .sheet-handle { display: none; }
+/* 상단바는 숨겨 두었다가 위쪽 가장자리(.top-edge)에 마우스를 대면 내려온다. transform 은 fixed 자손(대화상자)의 기준을 바꾸므로 top 으로 숨긴다 */
+@media (min-width: 721px) {
+  html.focus-mode .top-edge { display: block; position: fixed; z-index: 19; top: 0; left: 0; right: 0; height: 14px; pointer-events: auto; }
+  html.focus-mode .topbar { position: fixed; z-index: 19; left: 0; right: 0; top: -72px; transition: top 0.18s ease-out 0.5s; box-shadow: var(--shadow); }
+  html.focus-mode .top-edge:hover + .topbar,
+  html.focus-mode .topbar:hover,
+  html.focus-mode .topbar:focus-within { top: 0; transition-delay: 0s; }
+  @media (prefers-reduced-motion: reduce) { html.focus-mode .topbar { transition: none; } }
+}
+@media (max-width: 720px) { html.focus-mode .topbar { display: none; } }
 /* 마지막 줄도 세로 중앙까지 올라올 수 있도록 아래 여백을 준다 */
 html.focus-mode .milkdown .ProseMirror { padding-bottom: 50vh; }
 
@@ -119,8 +128,6 @@ html.focus-mode .milkdown .ProseMirror { padding-bottom: 50vh; }
   .topbar { flex-wrap: nowrap; gap: 4px; }
   .topbar .doc-title { min-width: 0; flex: 1 1 auto; }
   .topbar .spacer { flex: 0 0 0; }
-  .topbar .modetoggle { min-width: 0; padding: 4px 10px; }
-  .topbar .modetoggle .mt-label { display: none; }
   /* 백업·이력·디자인 대화상자도 <header class="topbar"> 안에 렌더되므로 .dialog 안의 버튼은 제외한다(라벨이 사라지던 결함) */
   .topbar button.primary:not(.dialog button) { font-size: 0; gap: 0; }
   .topbar button.primary:not(.dialog button) svg { flex: none; }

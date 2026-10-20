@@ -3,6 +3,8 @@
   import Dialog from './lib/components/Dialog.svelte';
   import Toasts from './lib/components/Toasts.svelte';
   import TableViewer from './lib/components/TableViewer.svelte';
+  import TooltipHost from './lib/components/TooltipHost.svelte';
+  import ContextMenuHost from './lib/components/ContextMenuHost.svelte';
   import { settings, applyTheme } from './lib/store.svelte';
 
   let { Shell }: { Shell: Component } = $props();
@@ -20,3 +22,5 @@
 <Dialog />
 <Toasts />
 <TableViewer />
+<TooltipHost />
+<ContextMenuHost />

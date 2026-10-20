@@ -54,6 +54,9 @@ async function idb<T>(store: Store, mode: IDBTransactionMode, fn: (s: IDBObjectS
 
 interface Rec { id: string; name: string; content: string; updated: number }
 interface Img { id: string; blob: Blob; created: number }
+/** 사이드바 툴팁용 수정 시각(없으면 0) */
+export const docUpdatedAt = (id: string): number => all.get(id)?.updated ?? 0;
+
 export interface DocMeta { id: string; name: string }
 
 const LAST_KEY = 'notes.lastDoc';
@@ -217,6 +220,9 @@ export async function renameDoc(meta: DocMeta) {
 export async function renameCurrent(input: string) {
   if (doc.path) await renameDocTo(doc.path, input);
 }
+
+/** 목록에서 그 자리 이름 변경(더블 클릭) */
+export const renameDocBy = (id: string, input: string) => renameDocTo(id, input);
 
 async function renameDocTo(id: string, input: string) {
   const rec = all.get(id);

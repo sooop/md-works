@@ -8,8 +8,7 @@
   import { TYPO_SPEC, DEFAULT_TYPOGRAPHY, type NumSpec } from '../design/schema';
   import DesignPanel from './DesignPanel.svelte';
 
-  let { server = false }: { server?: boolean } = $props();
-  let open = $state(false);
+  let { server = false, trigger = true, open = $bindable(false) }: { server?: boolean; trigger?: boolean; open?: boolean } = $props();
   let designOpen = $state(false);
 
   const FONT = TYPO_SPEC.fontSize as NumSpec;
@@ -42,7 +41,7 @@
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') open = false; }} />
 
 <div class="settings">
-  <button class="icon-btn" aria-label="설정" aria-expanded={open} onclick={() => (open = !open)}><SettingsIcon size={18} /></button>
+  {#if trigger}<button class="icon-btn" aria-label="설정" aria-expanded={open} onclick={() => (open = !open)}><SettingsIcon size={18} /></button>{/if}
   {#if open}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="backdrop" onclick={() => (open = false)}></div>

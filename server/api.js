@@ -169,7 +169,7 @@ export function createApi(rootInput, opts = {}) {
       if (e.isDirectory()) {
         out.push({ name: e.name, path: rel(abs), type: 'dir', children: await buildTree(abs) });
       } else if (e.isFile() && isMd(e.name)) {
-        out.push({ name: e.name, path: rel(abs), type: 'file' });
+        out.push({ name: e.name, path: rel(abs), type: 'file', mtime: Math.round((await fs.stat(abs)).mtimeMs) });
       }
     }
     out.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name, 'ko') : a.type === 'dir' ? -1 : 1));

@@ -14,7 +14,7 @@
     listFolderBackups, backupToFolder, folderBackupUrl, FOLDER_DEFAULT_MINUTES, type FolderBackup,
   } from '../bundle/backupState.svelte';
 
-  let { server = false }: { server?: boolean } = $props();
+  let { server = false, trigger = true }: { server?: boolean; trigger?: boolean } = $props();
 
   const hasKey = keyAvailable();
   let exportKind = $state<'enc' | 'zip'>(hasKey ? 'enc' : 'zip');
@@ -176,6 +176,7 @@
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape' && backupUi.open && !busy) close(); }} />
 
+{#if trigger}
 <button
   class="icon-btn backup-btn"
   aria-label="백업"
@@ -184,6 +185,7 @@
 >
   <DatabaseBackup size={18} />{#if dotOn}<span class="dot-badge" aria-label="백업 필요"></span>{/if}
 </button>
+{/if}
 
 {#if backupUi.open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->

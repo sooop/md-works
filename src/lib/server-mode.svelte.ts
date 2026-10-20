@@ -31,6 +31,7 @@ export interface TreeNode {
   name: string;
   path: string;
   type: 'file' | 'dir';
+  mtime?: number;
   children?: TreeNode[];
 }
 
@@ -265,6 +266,12 @@ export async function renameCurrent(input: string) {
   if (!doc.path) return;
   const name = validName(input.trim());
   if (name) await renameNodeTo({ name: basename(doc.path), path: doc.path, type: 'file' }, name);
+}
+
+/** 목록에서 그 자리 이름 변경(더블 클릭) */
+export async function renameNodeBy(node: TreeNode, input: string) {
+  const name = validName(input.trim());
+  if (name) await renameNodeTo(node, name);
 }
 
 async function renameNodeTo(node: TreeNode, name: string) {

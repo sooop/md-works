@@ -1,7 +1,16 @@
 <script lang="ts">
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import Check from '@lucide/svelte/icons/check';
+  import { tip } from '../tooltip.svelte';
   interface Props {
+    /** 열린 문서가 있는가 — 없으면 문서 관련 항목(이력·내보내기·템플릿)을 숨긴다 */
+    hasDoc: boolean;
+    rightOpen: boolean;
+    onRight: () => void;
+    onSettings: () => void;
+    onBackup: () => void;
+    /** 백업한 지 오래됨 — 메뉴 아이콘에 점을 찍어 알린다 */
+    backupStale?: boolean;
     onHistory: () => void;
     onDocx: () => void;
     onPrint?: () => void;
@@ -18,7 +27,7 @@
     hint?: string;
     actions?: { label: string; run: () => void }[];
   }
-  let { onHistory, onDocx, onPrint, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
+  let { hasDoc, rightOpen, onRight, onSettings, onBackup, backupStale = false, onHistory, onDocx, onPrint, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
 
   let open = $state(false);
 
@@ -35,11 +44,17 @@
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') open = false; }} />
 
 <div class="menu">
-  <button class="icon-btn" onclick={toggle} aria-expanded={open} aria-haspopup="menu" aria-label="문서 메뉴" title="문서 메뉴 (이력, 내보내기 …)"><Ellipsis size={18} /></button>
+  <button class="icon-btn menu-btn" onclick={toggle} aria-expanded={open} aria-haspopup="menu" aria-label="메뉴" use:tip={backupStale ? { title: '메뉴', lines: ['백업한 지 오래됐습니다'] } : '메뉴 (패널·이력·내보내기·설정·백업)'}>
+    <Ellipsis size={18} />{#if backupStale}<span class="stale-dot" aria-hidden="true"></span>{/if}
+  </button>
   {#if open}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="backdrop" onclick={() => (open = false)}></div>
     <div class="popover menu-list" role="menu">
+      <button role="menuitemcheckbox" aria-checked={rightOpen} onclick={() => run(onRight)}>
+        <span class="check">{#if rightOpen}<Check size={14} />{/if}</span>글감·코멘트 패널
+      </button>
+      {#if hasDoc}
       <button role="menuitem" onclick={() => run(onHistory)}>이전 버전 보기 (이력)</button>
       {#if onImages}
         <hr />
@@ -64,6 +79,16 @@
         <button role="menuitem" onclick={() => run(a.run)}>{a.label}</button>
       {/each}
       {#if hint}<p class="menu-hint">{hint}</p>{/if}
+      {/if}
+      <hr />
+      <button role="menuitem" onclick={() => run(onSettings)}>설정 …</button>
+      <button role="menuitem" onclick={() => run(onBackup)}>백업 · 가져오기{#if backupStale}<span class="stale-note"> · 백업 필요</span>{/if}</button>
     </div>
   {/if}
 </div>
+
+<style>
+  .menu-btn { position: relative; }
+  .stale-dot { position: absolute; top: 3px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
+  .stale-note { color: var(--danger); font-size: 12px; }
+</style>
