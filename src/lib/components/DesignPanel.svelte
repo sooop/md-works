@@ -156,7 +156,7 @@
 
     <div class="dp-body">
       {#if tab === 'font'}
-        {@render fontRow('bodyFont', '본문 서체', '비우면 기본(Pretendard)')}
+        {@render fontRow('bodyFont', '본문 서체', '비우면 기본(Pretendard Variable)')}
         {@render fontRow('headingFont', '제목 서체', '비우면 본문과 동일')}
         {#if canQueryFonts}
           <button class="link-btn" onclick={loadLocalFonts}>내 컴퓨터 폰트 불러오기</button>
@@ -300,17 +300,18 @@
   .hgrid .lbl { width: auto; }
   .hgrid .gh { font-size: 12px; color: var(--muted); }
   .hgrid input { width: 100%; }
-  .preview { border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; background: var(--bg); }
+  /* 패널이 세로 flex 라 flex-shrink 로 눌려 잘리던 미리보기 상자들: 줄이지 않는다 */
+  .preview { flex: none; border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; background: var(--bg); }
   .preview p { margin: 6px 0; }
   .pv-h { font-weight: 700; }
-  .pv-code { margin: 0; padding: 8px 12px; border-radius: 6px; background: var(--code-bg, var(--surface)); overflow-x: auto; }
+  .pv-code { flex: none; margin: 0; padding: 8px 12px; border-radius: 6px; background: var(--code-bg, var(--surface)); overflow-x: auto; white-space: pre; }
   .colors { display: flex; flex-direction: column; gap: 6px; }
   .crow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .crow input[type='color'] { width: 36px; height: 28px; padding: 0; border: 1px solid var(--border-strong); border-radius: 6px; background: transparent; }
   .crow .hex { width: 88px; font-family: var(--font-code); }
   .warn.block { flex-basis: 100%; }
   .warn { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--danger); }
-  .swatch { border: 1px solid; border-radius: 8px; padding: 10px 14px; display: flex; gap: 12px; align-items: center; }
+  .swatch { flex: none; border: 1px solid; border-radius: 8px; padding: 10px 14px; display: flex; gap: 12px; align-items: center; }
   .chip { border-radius: 6px; padding: 2px 10px; font-size: 13px; }
   .filebtn { position: relative; display: inline-flex; align-items: center; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
   .filebtn:hover { background: var(--hover); }

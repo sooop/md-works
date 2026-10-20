@@ -60,7 +60,7 @@ export const doc = $state({
   content: '',
   dirty: false,
   saving: false,
-  edit: true, // 편집 모드 여부. 기본은 편집이고, 문서를 열 때마다 편집으로 초기화한다(읽기 전환은 토글/Ctrl+E)
+  edit: true, // 편집 모드 여부. 기본은 편집이고, 문서를 열 때마다 편집으로 초기화한다(읽기 전환은 토글/Ctrl+Alt+E)
 });
 
 // 마지막 에디터 내용을 외부에서 읽기 위한 훅 (Editor 가 등록)

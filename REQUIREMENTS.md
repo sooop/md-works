@@ -28,7 +28,7 @@ Milkdown(Crepe) + Svelte 5 로 만든 **글쓰기용 Markdown 에디터**. md-no
 
 | md-notes | md-works |
 |---|---|
-| 가져온 파일은 **읽기 모드**로 열기 | **폐기**. 모든 글을 편집 모드로 연다. 읽기 모드는 토글(`Ctrl+E`)로만. 우발 수정은 이력으로 되돌린다 |
+| 가져온 파일은 **읽기 모드**로 열기 | **폐기**. 모든 글을 편집 모드로 연다. 읽기 모드는 토글(`Ctrl+Alt+E`)로만. 우발 수정은 이력으로 되돌린다 |
 | 이력: IndexedDB `notes-history`, 문서당 최근 20개, 서버는 폴더에 이력 없음 | 이력은 `WorksStore`(`versions`)에 저장. 서버는 `.works/versions/` 사이드카. 개수 상한 대신 시간 구간 솎아내기 |
 | 코멘트: 답글 없음 | 스레드(messages 배열, 답글). 옛 코멘트는 글을 열 때 첫 메시지로 이관 |
 | IndexedDB `notes-*` | `works-*` (같은 origin 에서 md-notes 와 충돌 방지). 옛 글은 md-notes 의 zip 내보내기 → 가져오기로 옮긴다 |
@@ -66,13 +66,13 @@ Milkdown(Crepe) + Svelte 5 로 만든 **글쓰기용 Markdown 에디터**. md-no
 | 수식·표·이미지 | Crepe 기능 조합(Latex 는 제외해 KaTeX 미포함), 표 도구·표 뷰어, 이미지 라이트박스 |
 | docx 내보내기 | pandoc-wasm 워커 + 템플릿 선택(서버: 템플릿 폴더, 스탠드얼론: IndexedDB 보관) |
 | 검색 | 문서 안 / 파일 이름(초성) / 전체 본문. 바꾸기·이력 검색 제외 |
-| 테마 | Claude 풍 크림 기본, 라이트/다크, OS 추종 + 수동. Pretendard 는 시스템 설치 기준 |
+| 테마 | Claude 풍 크림 기본, 라이트/다크, OS 추종 + 수동. Pretendard Variable 은 시스템 설치 기준 |
 
 (수식·표 동작의 세부 검증은 이번 문서 작성에서 하지 않았다: 미검증.)
 
 ## 있으면 좋은 것 (Nice to Have)
 
-- 단축키: `Ctrl+S`·`Ctrl+O`(스탠드얼론)·`Ctrl+P`·`Ctrl+E`·`Ctrl+F` 등은 구현. `Ctrl+N` 새 글은 미구현.
+- 단축키: `Ctrl+S`·`Ctrl+O`(스탠드얼론)·`Ctrl+P`·`Ctrl+Alt+E`·`Ctrl+F` 등은 구현. `Ctrl+N` 새 글은 미구현.
 - 이미지 처리 중 로딩 표시, 큰 파일 경고, 사이드바 폭 조절.
 - 비어 있는 새 origin 에서 백업 복원 제안(plan 에 있으나 코드에서 확인하지 못함: 미검증).
 - 글감 원전 자동 채움(URL → 제목·발췌). 현재는 직접 입력만.

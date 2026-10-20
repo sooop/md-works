@@ -18,8 +18,8 @@
       toggleFocus();
       return;
     }
-    // Ctrl+E: 읽기 | 편집 전환 (README 에 있으나 코드에 구현이 없어 여기서 처리한다)
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'e' && doc.path) {
+    // Ctrl+Alt+E: 읽기 | 편집 전환. (Ctrl+E 는 에디터의 '인라인 코드' 서식 단축키라 겹치지 않게 Alt 를 더했다)
+    if ((e.ctrlKey || e.metaKey) && e.altKey && !e.shiftKey && e.key.toLowerCase() === 'e' && doc.path) {
       e.preventDefault();
       doc.edit = !doc.edit;
       return;
