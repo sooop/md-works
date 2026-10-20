@@ -2,7 +2,7 @@ import { highlightTree } from '@lezer/highlight';
 import { LanguageDescription } from '@codemirror/language';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { codeHighlightStyle, codeLanguages } from './codeLanguages';
-import { editorBridge } from './store.svelte';
+import { editorBridge, toast } from './store.svelte';
 
 // 인쇄용 코드 블록: CodeMirror 는 화면에 보이는 줄만 그리므로, 문서 상태의 원문으로 하이라이트된 pre > code 를 만든다.
 async function highlighted(code: string, lang: string): Promise<DocumentFragment> {
@@ -69,6 +69,19 @@ export async function buildPrintClone(view: EditorView, host: HTMLElement): Prom
   return () => clone.remove();
 }
 
+const HINT_KEY = 'works.printHint';
+/** 인쇄 창의 머리글·바닥글 옵션은 브라우저 설정이 우선이라 앱이 끌 수 없다 — 처음 한 번만 알려 준다 */
+function printHintOnce() {
+  try {
+    if (localStorage.getItem(HINT_KEY)) return;
+    localStorage.setItem(HINT_KEY, '1');
+  } catch { return; }
+  const ff = /firefox/i.test(navigator.userAgent);
+  toast(ff
+    ? "Firefox 는 문서의 머리글·쪽 번호를 지원하지 않아 인쇄 창의 '머리글/바닥글' 설정을 따릅니다. 깔끔하게 인쇄하려면 그 옵션을 끄세요."
+    : "인쇄 창의 '머리글 및 바닥글'을 켜면 브라우저의 날짜·주소가 문서의 머리글과 겹칠 수 있습니다. 문서의 머리글·쪽 번호만 쓰려면 그 옵션을 끄세요.");
+}
+
 /** 현재 문서 인쇄. 탭 제목(= PDF 저장 시 기본 파일명)에서 저장 안 됨 표시를 뺀다. */
 export async function printDoc() {
   const title = document.title;
@@ -80,6 +93,7 @@ export async function printDoc() {
     document.title = name;
     root.setProperty('--print-title', JSON.stringify(name));
     root.setProperty('--print-date', JSON.stringify(new Date().toLocaleDateString('ko-KR')));
+    printHintOnce();
     window.print();
   } finally {
     root.removeProperty('--print-title');

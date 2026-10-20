@@ -30,7 +30,8 @@ export function normalizeDesign(input: unknown): Design {
       dark: clampPalette(pal.dark, base.palettes.dark),
     },
   };
-  if (typeof src.presetId === 'string' && getPreset(src.presetId)) design.presetId = src.presetId;
+  // 내 테마('custom:…')는 이 기기에 저장된 것을 가리키는 표식이라 있는지 따지지 않고 보존한다
+  if (typeof src.presetId === 'string' && (getPreset(src.presetId) || /^custom:[\w-]{1,60}$/.test(src.presetId))) design.presetId = src.presetId;
   return design;
 }
 

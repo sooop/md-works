@@ -1,27 +1,43 @@
 <script lang="ts">
   import { tip } from '../tooltip.svelte';
-  import X from '@lucide/svelte/icons/x';
+  import Check from '@lucide/svelte/icons/check';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
+  import Pencil from '@lucide/svelte/icons/pencil';
+  import Save from '@lucide/svelte/icons/save';
+  import RefreshCw from '@lucide/svelte/icons/refresh-cw';
   import AlertTriangle from '@lucide/svelte/icons/triangle-alert';
   import { toast } from '../store.svelte';
-  import { design, setTypo, setColor, selectPreset, resetPalette, resetTypography, importDesign, undoImport, undoState } from '../design/state.svelte';
+  import { design, setTypo, setColor, selectPreset, resetPalette, resetTypography, importDesign, undoImport, undoState, customs, saveCustom, renameCustom, overwriteCustom, deleteCustom } from '../design/state.svelte';
+  import { CUSTOM_PREFIX } from '../design/custom';
+  import { dui } from '../design/ui.svelte';
+  import RenameInput from './RenameInput.svelte';
   import { TYPO_SPEC, PALETTE_KEYS, PALETTE_LABELS, type NumSpec, type TypoKey, type PaletteKey } from '../design/schema';
   import { PRESETS } from '../design/presets';
   import { contrastWarnings, contrastBlock, MIN_APPLY_CONTRAST, normalizeHex, onColor } from '../design/colors';
   import { buildFontFamily, FALLBACK_CODE } from '../design/fontStack';
   import { serializeDesign, parseDesign } from '../design/io';
 
-  let { onclose }: { onclose: () => void } = $props();
-
-  type Tab = 'font' | 'block' | 'color' | 'io';
-  const tabs: [Tab, string][] = [['font', '서체·간격'], ['block', '제목·블록'], ['color', '색상'], ['io', '이식']];
-  let tab = $state<Tab>('font');
+  type Tab = 'preset' | 'color' | 'font' | 'block' | 'io';
+  const tabs: [Tab, string][] = [['preset', '프리셋'], ['color', '색상'], ['font', '서체·간격'], ['block', '제목·블록'], ['io', '이식']];
+  let tab = $state<Tab>('preset');
+  let renamingId = $state('');
+  let saving = $state(false);
+  let newName = $state('');
+  const basic = PRESETS.filter((p) => p.group === 'basic');
+  const terminal = PRESETS.filter((p) => p.group === 'terminal');
+  function doSave() {
+    saveCustom(newName || '내 테마');
+    newName = '';
+    saving = false;
+  }
 
   // 색상 탭에서 편집할 모드: 현재 화면에 적용 중인 쪽으로 시작
-  let mode = $state<'light' | 'dark'>(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+  const mode = $derived(dui.mode);
+  const dark = $derived(mode === 'dark');
 
   // 한글 글쓰기 서체 후보 + (가능하면) 내 컴퓨터 폰트
   const FONT_HINTS = [
-    'Pretendard Variable', 'Noto Serif KR', 'Noto Sans KR', 'Nanum Myeongjo', 'Nanum Gothic', 'KoPub Batang', 'Malgun Gothic',
+    'Pretendard Variable', 'Jetendard', 'Noto Serif KR', 'Noto Sans KR', 'Nanum Myeongjo', 'Nanum Gothic', 'KoPub Batang', 'Malgun Gothic',
     'Batang', 'Georgia', 'Times New Roman', 'Consolas', 'Cascadia Mono',
   ];
   let localFonts = $state<string[]>([]);
@@ -134,28 +150,61 @@
   <label class="chk"><input type="checkbox" checked={t[k] as boolean} onchange={(e) => onBool(k, e)} /><span>{label}</span></label>
 {/snippet}
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') onclose(); }} />
-
-<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) onclose(); }}>
-  <div class="dialog design-panel" role="dialog" aria-modal="true" aria-label="편집기 디자인">
-    <header class="dp-head">
-      <h2>편집기 디자인</h2>
-      <button class="icon-btn" aria-label="닫기" onclick={onclose}><X size={18} /></button>
-    </header>
-
-    <div class="dp-tabs" role="tablist" aria-label="디자인 항목">
-      {#each tabs as [id, name]}
-        <button role="tab" aria-selected={tab === id} class:on={tab === id} onclick={() => (tab = id)}>{name}</button>
-      {/each}
-    </div>
+<div class="design-editor">
+  <div class="dp-tabs" role="tablist" aria-label="디자인 항목">
+    {#each tabs as [id, name]}
+      <button role="tab" aria-selected={tab === id} class:on={tab === id} onclick={() => (tab = id)}>{name}</button>
+    {/each}
+  </div>
 
     <datalist id="design-fonts">
       {#each fontOptions as f}<option value={f}></option>{/each}
     </datalist>
 
     <div class="dp-body">
-      {#if tab === 'font'}
+      {#if tab === 'preset'}
+        {#snippet card(id: string, name: string, c: import('../design/schema').Palette, active: boolean)}
+          <button class="pcard" class:on={active} onclick={() => selectPreset(id)} aria-pressed={active} aria-label={`프리셋 ${name}`}>
+            <span class="pc-sample" style:background={c.bg} style:color={c.text} style:border-color={c.border}>
+              <i style:background={c.primary}></i><i style:background={c.accent}></i><i style:background={c.accentSoft}></i><em>가나다 Aa</em>
+            </span>
+            <span class="pc-name">{name}{#if active}<Check size={13} />{/if}</span>
+          </button>
+        {/snippet}
+
+        <h3>기본</h3>
+        <div class="pgrid">{#each basic as p (p.id)}{@render card(p.id, p.name, dark ? p.dark : p.light, design.presetId === p.id)}{/each}</div>
+        <h3>터미널·에디터 테마</h3>
+        <div class="pgrid">{#each terminal as p (p.id)}{@render card(p.id, p.name, dark ? p.dark : p.light, design.presetId === p.id)}{/each}</div>
+
+        <h3>내 테마 <span class="sub">(이 기기에 저장 · 타이포 포함)</span></h3>
+        <div class="pgrid">
+          {#each customs as c (c.id)}
+            <div class="pcard-wrap">
+              {#if renamingId === c.id}
+                <RenameInput value={c.name} onCommit={(v) => { renameCustom(c.id, v); renamingId = ''; }} onCancel={() => (renamingId = '')} />
+              {:else}
+                {@render card(CUSTOM_PREFIX + c.id, c.name, dark ? c.dark : c.light, design.presetId === CUSTOM_PREFIX + c.id)}
+              {/if}
+              <span class="pc-ops">
+                <button class="icon-btn" aria-label="이름 변경" use:tip={'이름 변경'} onclick={() => (renamingId = c.id)}><Pencil size={13} /></button>
+                <button class="icon-btn" aria-label="지금 디자인으로 덮어쓰기" use:tip={'지금 디자인으로 덮어쓰기'} onclick={() => overwriteCustom(c.id)}><Save size={13} /></button>
+                <button class="icon-btn" aria-label="삭제" use:tip={'삭제'} onclick={() => deleteCustom(c.id)}><Trash2 size={13} /></button>
+              </span>
+            </div>
+          {/each}
+          {#if saving}
+            <div class="pcard-new">
+              <input type="text" bind:value={newName} placeholder="테마 이름" maxlength="40" aria-label="새 테마 이름" spellcheck="false"
+                onkeydown={(e) => { if (e.isComposing) return; if (e.key === 'Enter') doSave(); else if (e.key === 'Escape') { e.stopPropagation(); saving = false; } }} />
+              <button class="primary" onclick={doSave}>저장</button>
+            </div>
+          {:else}
+            <button class="pcard add" onclick={() => { saving = true; newName = ''; }}><Save size={16} /> 지금 디자인을 내 테마로 저장</button>
+          {/if}
+        </div>
+        {#if !customs.length && !saving}<p class="hint">색과 서체를 마음에 들게 고친 뒤 저장해 두면 여기서 한 번에 불러올 수 있습니다.</p>{/if}
+      {:else if tab === 'font'}
         {@render fontRow('bodyFont', '본문 서체', '비우면 기본(Pretendard Variable)')}
         {@render fontRow('headingFont', '제목 서체', '비우면 본문과 동일')}
         {#if canQueryFonts}
@@ -208,7 +257,7 @@
         {@render check('quoteItalic', '기울임')}
 
         <h3>코드</h3>
-        {@render fontRow('codeFont', '코드 블록 서체', '비우면 기본(Geist Mono 등)')}
+        {@render fontRow('codeFont', '코드 블록 서체', '비우면 기본(Jetendard)')}
         {@render numRow('codeScale', '크기 배율', '배')}
         <pre class="pv-code" style={codeStyle}>const 인사 = 'Hello, 세계';</pre>
 
@@ -218,18 +267,13 @@
         {@render numRow('cellPadX', '셀 좌·우 여백', 'px')}
       {:else if tab === 'color'}
         <div class="row">
-          <span class="lbl">프리셋</span>
-          <select aria-label="색상 프리셋" value={design.presetId ?? ''} onchange={(e) => selectPreset((e.currentTarget as HTMLSelectElement).value)}>
-            {#if !design.presetId}<option value="">(직접 설정)</option>{/if}
-            {#each PRESETS as p}<option value={p.id}>{p.name}</option>{/each}
-          </select>
-          <button onclick={resetPalette}>프리셋으로 되돌리기</button>
+          <button onclick={resetPalette}>프리셋 색으로 되돌리기</button>
         </div>
         <div class="row">
           <span class="lbl">편집 대상</span>
           <div class="seg" role="group" aria-label="편집할 팔레트">
-            <button class:active={mode === 'light'} onclick={() => { mode = 'light'; blocked = null; }}>라이트</button>
-            <button class:active={mode === 'dark'} onclick={() => { mode = 'dark'; blocked = null; }}>다크</button>
+            <button class:active={mode === 'light'} onclick={() => { dui.mode = 'light'; blocked = null; }}>라이트</button>
+            <button class:active={mode === 'dark'} onclick={() => { dui.mode = 'dark'; blocked = null; }}>다크</button>
           </div>
         </div>
         <p class="hint">테마(시스템/라이트/다크)에 따라 현재 적용 중인 쪽 팔레트가 쓰입니다. 나머지 색(보조 면, 호버, 선택, 진한 테두리 등)은 이 10색에서 계산됩니다.</p>
@@ -271,17 +315,27 @@
         </div>
       {/if}
     </div>
-  </div>
 </div>
 
 <style>
-  .design-panel { width: min(720px, calc(100vw - 24px)); max-height: calc(100vh - 32px); display: flex; flex-direction: column; padding: 16px; }
-  .dp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-  .dp-head h2 { margin: 0; }
+  .design-editor { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+  .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .pcard { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface); text-align: left; width: 100%; }
+  .pcard:hover { background: var(--hover); }
+  .pcard.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+  .pcard.add { align-items: center; justify-content: center; flex-direction: row; gap: 8px; color: var(--muted); border-style: dashed; min-height: 74px; }
+  .pc-sample { display: flex; align-items: center; gap: 5px; padding: 12px 10px; border-radius: 7px; border: 1px solid; }
+  .pc-sample i { width: 14px; height: 14px; border-radius: 50%; display: inline-block; flex: none; }
+  .pc-sample em { margin-left: auto; font-style: normal; font-size: 12.5px; font-weight: 600; }
+  .pc-name { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+  .pcard-wrap { position: relative; }
+  .pc-ops { position: absolute; top: 4px; right: 4px; display: none; gap: 0; background: var(--surface); border-radius: 6px; box-shadow: var(--shadow); }
+  .pcard-wrap:hover .pc-ops, .pcard-wrap:focus-within .pc-ops { display: flex; }
+  .pcard-new { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px dashed var(--accent); border-radius: 10px; }
   .dp-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); overflow-x: auto; flex: none; }
   .dp-tabs button { border: 0; background: transparent; border-radius: 6px 6px 0 0; border-bottom: 2px solid transparent; color: var(--muted); white-space: nowrap; }
   .dp-tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
-  .dp-body { overflow-y: auto; padding: 12px 2px 4px; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .dp-body { padding: 12px 2px 4px; display: flex; flex-direction: column; gap: 10px; }
   .dp-body h3 { margin: 10px 0 0; font-size: 14px; }
   .dp-body h3 .sub { font-size: 12px; font-weight: 400; color: var(--muted); }
   .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -290,7 +344,7 @@
   .row .n { width: 76px; }
   .row .unit { width: 24px; font-size: 12px; color: var(--muted); }
   .row .txt { flex: 1; min-width: 180px; }
-  .dp-body input[type='text'], .dp-body input[type='number'], .dp-body select {
+  .dp-body input[type='text'], .dp-body input[type='number'] {
     padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); width: auto; margin: 0;
   }
   .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; }
@@ -318,6 +372,5 @@
   .filebtn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
   @media (max-width: 720px) {
     .lbl { width: 100%; }
-    .design-panel { padding: 12px; }
   }
 </style>

@@ -5,7 +5,8 @@ import { Plugin } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { detectTable, toCsv, toTsv } from './tableCsv';
-import { downloadBlob, writeClipboard } from './utils';
+import { toHtml, toAscii, toMarkdown } from './tableFormats';
+import { downloadBlob, writeClipboard, writeClipboardHtml } from './utils';
 
 export interface TableToolsEnv {
   toast: (text: string, kind?: 'info' | 'error') => void;
@@ -14,6 +15,8 @@ export interface TableToolsEnv {
   docName: () => string;
   /** 표를 확대해서 보는 모달을 연다 */
   openViewer: (t: TableData) => void;
+  /** '복사' 단추의 기본 형식(설정) */
+  defaultFmt?: () => Fmt;
 }
 
 /** 문서 안 표 하나 — 헤더 행을 분리해 둔다(헤더가 꺼진 표는 header 가 열 번호 이름). */
@@ -22,6 +25,8 @@ export interface TableData {
   index: number;
   header: string[];
   rows: string[][];
+  /** 확대 보기에서 만든 상태(필터·정렬·열 순서)를 문서의 표에 반영한다. 읽기 전용이면 없다. 표를 못 찾으면 false */
+  apply?: (header: string[], rows: string[][]) => boolean;
 }
 
 const BLOCK_NO_PASTE = new Set(['code_block', 'table', 'table_cell', 'table_header']);
@@ -145,11 +150,32 @@ function toggleHeader(view: EditorView, table: PMNode, pos: number, env: TableTo
 export type Fmt = 'tsv' | 'csv';
 const serialize = (rows: string[][], fmt: Fmt) => (fmt === 'tsv' ? toTsv(rows) : toCsv(rows));
 
-export function copyTable(rows: string[][], fmt: Fmt, env: Pick<TableToolsEnv, 'toast'>) {
-  writeClipboard(serialize(rows, fmt)).then(
-    () => env.toast(`표를 ${fmt.toUpperCase()} 로 복사했습니다`),
+export type CopyKind = 'tsv' | 'csv' | 'html' | 'htmlsrc' | 'ascii' | 'markdown';
+/** 복사 형식 목록(메뉴 순서). desc 는 메뉴의 보조 설명 */
+export const COPY_KINDS: { kind: CopyKind; label: string; desc: string }[] = [
+  { kind: 'tsv', label: 'TSV 로 복사', desc: '탭 구분 — 엑셀·구글 시트에 그대로 붙여넣기' },
+  { kind: 'csv', label: 'CSV 로 복사', desc: '쉼표 구분' },
+  { kind: 'html', label: 'HTML 서식으로 복사', desc: '워드·메일 등에 표로 붙여넣기' },
+  { kind: 'htmlsrc', label: 'HTML 소스로 복사', desc: '<table> 태그 글자' },
+  { kind: 'ascii', label: '아스키 표로 복사', desc: '+---+ 로 그린 고정폭 글자 표' },
+  { kind: 'markdown', label: '마크다운 표로 복사', desc: '| a | b | 형식' },
+];
+const DONE: Record<CopyKind, string> = {
+  tsv: 'TSV 로', csv: 'CSV 로', html: 'HTML 서식으로', htmlsrc: 'HTML 소스로', ascii: '아스키 표로', markdown: '마크다운 표로',
+};
+
+export function copyAs(rows: string[][], kind: CopyKind, env: Pick<TableToolsEnv, 'toast'>) {
+  const job = kind === 'tsv' || kind === 'csv' ? writeClipboard(serialize(rows, kind))
+    : kind === 'html' ? writeClipboardHtml(toHtml(rows), toTsv(rows))
+    : writeClipboard(kind === 'htmlsrc' ? toHtml(rows) : kind === 'ascii' ? toAscii(rows) : toMarkdown(rows));
+  job.then(
+    () => env.toast(`표를 ${DONE[kind]} 복사했습니다`),
     (e) => env.toast(e instanceof Error ? e.message : String(e), 'error'),
   );
+}
+
+export function copyTable(rows: string[][], fmt: Fmt, env: Pick<TableToolsEnv, 'toast'>) {
+  copyAs(rows, fmt, env);
 }
 
 export function saveTable(rows: string[][], fmt: Fmt, index: number, env: Pick<TableToolsEnv, 'toast' | 'docName'>) {
@@ -158,6 +184,16 @@ export function saveTable(rows: string[][], fmt: Fmt, index: number, env: Pick<T
   const base = env.docName() || '표';
   downloadBlob(`${base}-표${index}.${fmt}`, new Blob([body], { type: `text/${fmt === 'csv' ? 'csv' : 'tab-separated-values'};charset=utf-8` }));
   env.toast(`${fmt.toUpperCase()} 파일을 내려받았습니다`);
+}
+
+/** 확대 보기에서 만든 머리글·본문 행을 문서의 표로 바꾼다(셀 서식은 일반 글자가 된다). 첫 행 헤더가 꺼진 표는 빈 헤더 행을 유지한다 */
+function applyRows(view: EditorView, block: HTMLElement, header: string[], rows: string[][]): boolean {
+  const t = findTable(view, block);
+  if (!t || !view.editable) return false;
+  const head = isHeaderOn(t.node) ? header : header.map(() => '');
+  const next = buildTable(view, [head, ...rows]);
+  view.dispatch(view.state.tr.replaceWith(t.pos, t.pos + t.node.nodeSize, next));
+  return true;
 }
 
 // ---- 호버 툴바 / 우클릭 메뉴 ----
@@ -175,13 +211,14 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
   let block: HTMLElement | null = null;
   let hideTimer: number | undefined;
 
-  const btn = (label: string, run: () => void, cls = '') => {
+  const btn = (label: string, run: () => void, cls = '', title = '') => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = cls;
     b.textContent = label;
+    if (title) b.title = title;
     b.addEventListener('mousedown', (e) => e.preventDefault()); // 에디터 선택·포커스 유지
-    b.addEventListener('click', () => { run(); hideMenu(); });
+    b.addEventListener('click', () => run());
     return b;
   };
 
@@ -189,13 +226,51 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
     const t = block && findTable(view, block);
     if (t) fn(t);
   };
-  const actions = (): [string, () => void][] => [
-    ['확대 보기', withTable((t) => env.openViewer(toTableData(t.node, t.index)))],
-    ['TSV 로 복사', withTable((t) => copyTable(tableRows(t.node), 'tsv', env))],
-    ['CSV 로 복사', withTable((t) => copyTable(tableRows(t.node), 'csv', env))],
-    ['CSV 파일로 저장', withTable((t) => saveTable(tableRows(t.node), 'csv', t.index, env))],
-    ['TSV 파일로 저장', withTable((t) => saveTable(tableRows(t.node), 'tsv', t.index, env))],
-  ];
+  const defaultFmt = (): Fmt => env.defaultFmt?.() ?? 'tsv';
+
+  const openZoom = withTable((t) => {
+    const data = toTableData(t.node, t.index);
+    const b = block!;
+    if (view.editable) data.apply = (header, rows) => applyRows(view, b, header, rows);
+    env.openViewer(data);
+  });
+
+  type Item = { label: string; run?: () => void; kind?: 'sep' | 'head' | 'check'; checked?: boolean; hint?: string };
+  /** ⋯ 메뉴와 우클릭 메뉴가 같은 항목을 쓴다 */
+  const items = (): Item[] => {
+    const t = block && findTable(view, block);
+    const list: Item[] = [
+      { label: '확대 보기', run: openZoom, hint: '필터·정렬·열 이동·통계' },
+      { label: '', kind: 'sep' },
+      { label: '복사', kind: 'head' },
+      ...COPY_KINDS.map((k): Item => ({ label: k.label, hint: k.kind === defaultFmt() ? '기본' : '', run: withTable((tt) => copyAs(tableRows(tt.node), k.kind, env)) })),
+      { label: '', kind: 'sep' },
+      { label: 'CSV 파일로 저장', run: withTable((tt) => saveTable(tableRows(tt.node), 'csv', tt.index, env)) },
+      { label: 'TSV 파일로 저장', run: withTable((tt) => saveTable(tableRows(tt.node), 'tsv', tt.index, env)) },
+    ];
+    if (view.editable && t) {
+      list.push({ label: '', kind: 'sep' }, {
+        label: '첫 행을 헤더로', kind: 'check', checked: isHeaderOn(t.node),
+        run: () => { const cur = block && findTable(view, block); if (cur) toggleHeader(view, cur.node, cur.pos, env); },
+      });
+    }
+    return list;
+  };
+
+  function showMenu(x: number, y: number) {
+    menu.replaceChildren(...items().map((it) => {
+      if (it.kind === 'sep') { const hr = document.createElement('hr'); return hr; }
+      if (it.kind === 'head') { const s = document.createElement('span'); s.className = 'tbl-menu-head'; s.textContent = it.label; return s; }
+      const b = btn(it.label, () => { hideMenu(); it.run?.(); });
+      if (it.kind === 'check') b.textContent = `${it.checked ? '✓ ' : '　'}${it.label}`;
+      if (it.hint) { const h = document.createElement('small'); h.textContent = it.hint; b.append(h); }
+      b.setAttribute('role', 'menuitem');
+      return b;
+    }));
+    menu.hidden = false;
+    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+  }
 
   function position() {
     if (!block || bar.hidden) return;
@@ -213,22 +288,16 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
     if (!t) return;
     block = b;
     bar.replaceChildren();
-    const [zoom, tsvCopy, csvCopy, csvSave] = actions();
-    bar.append(btn('확대', zoom[1]), btn('TSV 복사', tsvCopy[1]), btn('CSV 복사', csvCopy[1]), btn('CSV 저장', csvSave[1]));
-    if (view.editable) {
-      const label = document.createElement('label');
-      label.className = 'tbl-hdr';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = isHeaderOn(t.node);
-      cb.addEventListener('change', () => {
-        const cur = block && findTable(view, block);
-        if (cur) toggleHeader(view, cur.node, cur.pos, env);
-        requestAnimationFrame(() => { if (block) { const nt = findTable(view, block); if (nt) cb.checked = isHeaderOn(nt.node); } });
-      });
-      label.append(cb, document.createTextNode(' 첫 행 헤더'));
-      bar.append(label);
-    }
+    // 버튼은 셋뿐: 확대 · 복사(기본 형식) · ⋯(나머지 형식·저장·헤더 설정)
+    const more = btn('⋯', () => {
+      const r = more.getBoundingClientRect();
+      if (menu.hidden) showMenu(r.left, r.bottom + 4); else hideMenu();
+    }, 'tbl-more', '더 보기: 다른 형식으로 복사 · 파일로 저장 · 헤더');
+    bar.append(
+      btn('확대', openZoom, '', '확대 보기 (필터·정렬·통계)'),
+      btn('복사', withTable((tt) => copyAs(tableRows(tt.node), defaultFmt(), env)), '', `${defaultFmt().toUpperCase()} 로 복사`),
+      more,
+    );
     bar.hidden = false;
     position();
   }
@@ -249,12 +318,9 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
     if (!b) return;
     e.preventDefault();
     block = b;
-    menu.replaceChildren(...actions().map(([l, run]) => btn(l, run)));
-    menu.hidden = false;
-    menu.style.left = `${Math.min(e.clientX, innerWidth - menu.offsetWidth - 8)}px`;
-    menu.style.top = `${Math.min(e.clientY, innerHeight - menu.offsetHeight - 8)}px`;
+    showMenu(e.clientX, e.clientY);
   };
-  const onDocDown = (e: Event) => { if (!menu.hidden && !menu.contains(e.target as Node)) hideMenu(); };
+  const onDocDown = (e: Event) => { if (!menu.hidden && !menu.contains(e.target as Node) && !bar.contains(e.target as Node)) hideMenu(); };
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') hideMenu(); };
   const onScroll = () => { hideMenu(); position(); };
 

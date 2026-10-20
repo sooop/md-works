@@ -6,7 +6,7 @@ const GENERIC = new Set([
 
 /** 본문·제목용 폴백 (app.css 의 --font 뒷부분과 같다) */
 export const FALLBACK_TEXT = "-apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI', 'Noto Sans KR', 'Malgun Gothic', sans-serif";
-export const FALLBACK_CODE = "Consolas, 'Cascadia Mono', monospace";
+export const FALLBACK_CODE = "Jetendard, Consolas, 'Cascadia Mono', monospace";
 /** 입력 최대 길이와 폰트 이름 최대 개수 */
 export const FONT_INPUT_MAX = 200;
 const MAX_NAMES = 8;

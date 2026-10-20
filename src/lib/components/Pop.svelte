@@ -53,9 +53,9 @@
 
 <style>
   .pop-wrap { display: inline-flex; }
-  .pop-backdrop { position: fixed; inset: 0; z-index: 40; }
+  .pop-backdrop { position: fixed; inset: 0; z-index: 1500; }
   .pop-panel {
-    position: fixed; z-index: 41; box-sizing: border-box; padding: 6px; display: flex; flex-direction: column; gap: 2px;
+    position: fixed; z-index: 1501; box-sizing: border-box; padding: 6px; display: flex; flex-direction: column; gap: 2px;
     background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow);
     animation: pop-in 0.12s ease-out;
   }

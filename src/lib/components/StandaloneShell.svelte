@@ -23,6 +23,8 @@
   import { tip } from '../tooltip.svelte';
   import { openContextMenu } from '../contextmenu.svelte';
   import DocTree from './DocTree.svelte';
+  import CommandPalette from './CommandPalette.svelte';
+  import { buildAppCommands, docCommands, type AppCommandCtx } from '../commands/appCommands';
   import RightToggle from './RightToggle.svelte';
   import { buildTree } from '../docTree';
   import type { TreeCtl } from './treeCtl';
@@ -76,6 +78,26 @@
 
   const treeNodes = $derived(buildTree(lib.docs, lib.folders));
   const metaOf = (id: string) => lib.docs.find((d) => d.id === id);
+  // 명령 팔레트(Ctrl+K): 이 모드의 동작을 명령으로 잇는다
+  const paletteCtx: AppCommandCtx = {
+    server: false,
+    docs: () => lib.docs.map((d) => ({ id: d.id, label: stripExt(docFullPath(d.id) || d.name) })),
+    openDoc: (id) => void openDoc(id),
+    createDoc: () => void createDoc(lib.dir),
+    createFolder: () => void createFolder(lib.dir),
+    pasteDoc: () => { pasteOpen = true; },
+    save: () => void save(),
+    importFiles: openPicker,
+    history: () => { historyOpen = true; },
+    exportMd,
+    copyMd,
+    exportDocx: exportDocxCurrent,
+    print: () => void printDoc(),
+    settings: () => { settingsOpen = true; },
+    backup: () => { backupUi.open = true; },
+  };
+  const paletteCommands = buildAppCommands(paletteCtx);
+
   const treeCtl: TreeCtl = {
     isActive: (n) => doc.path === n.path,
     isDirty: (n) => doc.path === n.path && doc.dirty,
@@ -110,6 +132,7 @@
 
 <div class="shell">
   <SnippetShortcuts />
+  <CommandPalette commands={() => paletteCommands} docCommands={() => docCommands(paletteCtx)} />
   {#if !docked && !left.open && !viewport.mobile}
     <div class="left-edge" data-side="left" use:edgeHover={openLeft}></div>
   {/if}

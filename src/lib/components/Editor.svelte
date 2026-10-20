@@ -12,7 +12,13 @@
   import { table } from '@milkdown/crepe/feature/table';
   import { toolbar } from '@milkdown/crepe/feature/toolbar';
   import { editorViewCtx } from '@milkdown/kit/core';
-  import { editorBridge, doc, toast, askChoose, focusNext } from '../store.svelte';
+  import { callCommand } from '@milkdown/kit/utils';
+  import {
+    toggleStrongCommand, toggleEmphasisCommand, toggleInlineCodeCommand, wrapInHeadingCommand, wrapInBlockquoteCommand,
+    wrapInBulletListCommand, wrapInOrderedListCommand, createCodeBlockCommand, insertHrCommand, turnIntoTextCommand,
+  } from '@milkdown/kit/preset/commonmark';
+  import { toggleStrikethroughCommand, insertTableCommand } from '@milkdown/kit/preset/gfm';
+  import { editorBridge, doc, settings, toast, askChoose, focusNext, type EditorCommand } from '../store.svelte';
   import { stripExt } from '../utils';
   import { tablePaste, attachTableTools, type TableData } from '../tableTools';
   import { tableViewer } from '../tableViewer.svelte';
@@ -77,7 +83,7 @@
           inlineOnUpload: upload,
           proxyDomURL: resolveUrl,
         });
-      const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; } };
+      const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const) };
       c.editor.use(tablePaste(tableEnv)); // TSV/CSV 붙여넣기 → 표
       onlyDoubleTilde(c.editor); // 취소선은 ~~A~~ 만 인식하고 글자 그대로의 ~ 는 보존한다
       if (readonly) c.setReadonly(true);
@@ -100,6 +106,18 @@
             finder.ctl = ctl;
             unbind = bindComments(view, doc.path);
             editorBridge.focus = () => { if (!readonly) view.focus(); };
+            // 명령 팔레트의 서식 명령. 읽기 모드에서는 문서를 바꾸지 않는다
+            const run = (key: never, payload?: unknown) => c.editor.action(callCommand(key, payload as never));
+            const table: Record<EditorCommand, () => void> = {
+              bold: () => run(toggleStrongCommand.key as never), italic: () => run(toggleEmphasisCommand.key as never),
+              code: () => run(toggleInlineCodeCommand.key as never), strike: () => run(toggleStrikethroughCommand.key as never),
+              h1: () => run(wrapInHeadingCommand.key as never, 1), h2: () => run(wrapInHeadingCommand.key as never, 2), h3: () => run(wrapInHeadingCommand.key as never, 3),
+              paragraph: () => run(turnIntoTextCommand.key as never), quote: () => run(wrapInBlockquoteCommand.key as never),
+              bullet: () => run(wrapInBulletListCommand.key as never), ordered: () => run(wrapInOrderedListCommand.key as never),
+              codeblock: () => run(createCodeBlockCommand.key as never), hr: () => run(insertHrCommand.key as never),
+              table: () => run(insertTableCommand.key as never, { row: 3, col: 3 }),
+            };
+            editorBridge.command = (name) => { if (readonly) { toast('읽기 모드에서는 서식을 바꿀 수 없습니다'); return; } view.focus(); table[name](); };
             if (focusNext.on) { focusNext.on = false; editorBridge.focus(); } // 새로 만든 글: 바로 타이핑할 수 있게
           }
         }
@@ -109,7 +127,7 @@
       disposed = true;
       ready = false;
       builder = undefined;
-      if (!preview) editorBridge.focus = null;
+      if (!preview) { editorBridge.focus = null; editorBridge.command = null; }
       unbind?.();
       unbindTable?.();
       if (ctl) {

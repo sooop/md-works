@@ -4,6 +4,8 @@
   import Editor from './Editor.svelte';
   import Lightbox from './Lightbox.svelte';
   import DocTree from './DocTree.svelte';
+  import CommandPalette from './CommandPalette.svelte';
+  import { buildAppCommands, docCommands, type AppCommandCtx } from '../commands/appCommands';
   import RightToggle from './RightToggle.svelte';
   import type { TreeCtl } from './treeCtl.js';
   import DropOverlay from './DropOverlay.svelte';
@@ -76,6 +78,28 @@
       : '',
   );
 
+  // 명령 팔레트(Ctrl+K): 이 모드의 동작을 명령으로 잇는다
+  const flatDocs = (nodes: { type: string; path: string; children?: unknown[] }[]): string[] =>
+    nodes.flatMap((n) => (n.type === 'file' ? [n.path] : flatDocs((n.children ?? []) as never)));
+  const paletteCtx: AppCommandCtx = {
+    server: true,
+    docs: () => flatDocs(tree.nodes).map((p) => ({ id: p, label: stripExt(p) })),
+    openDoc: (id) => void openDoc(id),
+    createDoc: () => void createDoc(nav.dir),
+    createFolder: () => void createFolder(nav.dir),
+    pasteDoc: () => { pasteOpen = true; },
+    save: () => void save(),
+    history: () => { historyOpen = true; },
+    exportMd: exportMdCurrent,
+    copyMd: copyMdCurrent,
+    exportDocx: exportDocxCurrent,
+    print: () => void printDoc(),
+    images: (to) => void convertImages(to),
+    settings: () => { settingsOpen = true; },
+    backup: () => { backupUi.open = true; },
+  };
+  const paletteCommands = buildAppCommands(paletteCtx);
+
   const treeCtl: TreeCtl = {
     isActive: (n) => doc.path === n.path,
     isDirty: (n) => doc.path === n.path && doc.dirty,
@@ -113,6 +137,7 @@
 
 <div class="shell">
   <SnippetShortcuts />
+  <CommandPalette commands={() => paletteCommands} docCommands={() => docCommands(paletteCtx)} />
   {#if !docked && !left.open && !viewport.mobile}
     <div class="left-edge" data-side="left" use:edgeHover={openLeft}></div>
   {/if}

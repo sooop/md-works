@@ -16,6 +16,8 @@
   import FilePlus2 from '@lucide/svelte/icons/file-plus-2';
   import SettingsIcon from '@lucide/svelte/icons/settings';
   import DatabaseBackup from '@lucide/svelte/icons/database-backup';
+  import Command from '@lucide/svelte/icons/command';
+  import { openPalette } from '../commands/registry.svelte';
   import { tip } from '../tooltip.svelte';
   interface Props {
     /** 열린 문서가 있는가 — 없으면 문서 관련 항목(이력·내보내기·도구)을 숨긴다 */
@@ -66,6 +68,8 @@
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="backdrop" onclick={() => (open = false)}></div>
     <div class="popover menu-list" role="menu">
+      <button role="menuitem" class="mi" onclick={() => run(openPalette)}><Command size={16} /><span class="t">명령 팔레트</span><kbd>Ctrl+K</kbd></button>
+      <hr />
       {#if hasDoc}
         <button role="menuitem" class="mi" onclick={() => run(onHistory)}><History size={16} /><span class="t">이전 버전 (이력)</span></button>
 
@@ -121,6 +125,7 @@
   .mi:hover :global(svg) { color: var(--text); }
   .mi .t { flex: 1; min-width: 0; }
   .mi :global(.chev) { margin-left: auto; }
+  .mi kbd { font: inherit; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border-strong); color: var(--muted); }
   .subgroup { display: flex; flex-direction: column; gap: 1px; margin: 0 0 4px 14px; padding-left: 8px; border-left: 2px solid var(--border); }
   .subgroup .mi { padding: 5px 8px; font-size: 13px; }
   .ck { width: 15px; flex: none; color: var(--primary); display: inline-flex; }

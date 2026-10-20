@@ -25,10 +25,10 @@
   import { writing, setSpaces } from '../writing/state.svelte';
   import { backupUi, lastBackupAt, ago, hasUnbacked, isStale } from '../bundle/backupState.svelte';
   import { tip } from '../tooltip.svelte';
-  import DesignPanel from './DesignPanel.svelte';
+  import DesignEditor from './DesignEditor.svelte';
+  import DesignPreview from './DesignPreview.svelte';
 
   let { server = false, trigger = true, open = $bindable(false) }: { server?: boolean; trigger?: boolean; open?: boolean } = $props();
-  let designOpen = $state(false);
 
   const FONT = TYPO_SPEC.fontSize as NumSpec;
   const WIDTH = TYPO_SPEC.contentWidth as NumSpec;
@@ -51,6 +51,7 @@
     { id: 'fontSize', cat: 'view', text: '글자 크기 폰트 서체 크기 본문' },
     { id: 'width', cat: 'view', text: '본문 폭 너비 넓이 가로 창 폭' },
     { id: 'count', cat: 'write', text: '글자 수 공백 포함 제외 상태 표시줄 세기' },
+    { id: 'tablefmt', cat: 'write', text: '표 복사 형식 tsv csv 탭 쉼표 엑셀 기본 복사' },
     { id: 'image', cat: 'write', text: '이미지 삽입 방식 파일 assets base64 붙여넣기', server: true },
     { id: 'colors', cat: 'snippet', text: '글감 색 색상 라벨 필터 포스트잇' },
     { id: 'autosave', cat: 'save', text: '자동 저장 저장 입력 후', server: true },
@@ -66,6 +67,8 @@
   };
   const catShown = (c: Cat) => (needle ? rows.some((r) => r.cat === c && matches(r.id)) : active === c);
   const hitCount = $derived(needle ? rows.filter((r) => matches(r.id)).length : 0);
+  /** 디자인 분류가 보이는 동안만, 설정 창 옆에 미리보기 섬을 띄운다 */
+  const island = $derived(catShown('design'));
 
   const themes: { id: Theme; label: string; icon: typeof Sun }[] = [
     { id: 'system', label: '시스템', icon: MonitorCog },
@@ -80,6 +83,7 @@
   function setTheme(t: Theme) { settings.theme = t; applyTheme(); persistSettings(); }
   function setMode(m: ImageMode) { settings.imageMode = m; persistSettings(); }
   function toggleAutosave() { settings.autosave = !settings.autosave; persistSettings(); }
+  function setTableFmt(f: 'tsv' | 'csv') { settings.tableCopyFormat = f; persistSettings(); }
   function toggleColors() { settings.snippetColors = !settings.snippetColors; persistSettings(); }
 
   // 글자 크기·본문 폭은 디자인 설정('works.design')에 저장된다
@@ -90,7 +94,6 @@
     setTypo('fontSize', DEFAULT_TYPOGRAPHY.fontSize);
     setTypo('contentWidth', DEFAULT_TYPOGRAPHY.contentWidth);
   }
-  function openDesign() { open = false; designOpen = true; }
   function openBackup() { open = false; backupUi.open = true; }
 
   const backupLine = $derived(
@@ -108,13 +111,14 @@
   const dark = $derived(typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark');
 </script>
 
-<svelte:window onkeydown={(e) => { if (open && e.key === 'Escape' && !designOpen) { e.preventDefault(); open = false; } }} />
+<svelte:window onkeydown={(e) => { if (open && e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); open = false; } }} />
 
 {#if trigger}<button class="icon-btn" aria-label="설정" aria-expanded={open} onclick={() => (open = !open)}><SettingsIcon size={18} /></button>{/if}
 
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
+   <div class="sw-stage" class:island onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
     <div class="sw" role="dialog" aria-modal="true" aria-label="설정">
       <header class="sw-head">
         <h2><SettingsIcon size={18} /> 설정</h2>
@@ -186,6 +190,18 @@
                   <button class="sw-switch" role="switch" aria-checked={writing.spaces} aria-label="글자 수에 공백 포함" onclick={() => setSpaces(!writing.spaces)}><span></span></button>
                 </div>
               {/if}
+              {#if matches('tablefmt')}
+                <div class="srow col">
+                  <div class="s-text"><b>표 복사 기본 형식</b><small>표 위의 "복사" 단추와 확대 보기의 "복사"가 쓰는 형식. HTML·아스키·마크다운 등 다른 형식은 메뉴에서 고릅니다.</small></div>
+                  <div class="cards two" role="radiogroup" aria-label="표 복사 기본 형식">
+                    {#each [['tsv', 'TSV', '탭으로 구분 — 엑셀·구글 시트에 바로 붙여넣기'], ['csv', 'CSV', '쉼표로 구분 — 다른 프로그램으로 옮기기']] as [v, l, d] (v)}
+                      <button role="radio" aria-checked={settings.tableCopyFormat === v} class="card left" class:on={settings.tableCopyFormat === v} onclick={() => setTableFmt(v as 'tsv' | 'csv')}>
+                        <span class="ct"><b>{l}</b>{#if settings.tableCopyFormat === v}<Check size={14} class="ck" />{/if}</span><small>{d}</small>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
               {#if server && matches('image')}
                 <div class="srow col">
                   <div class="s-text"><b>이미지 삽입 방식</b><small>붙여넣거나 끌어다 놓은 이미지를 어떻게 저장할지.</small></div>
@@ -238,45 +254,29 @@
           {/if}
 
           {#if catShown('design')}
-            <section>
+            <section class="design-sec">
               <h3><Palette size={16} /> 디자인</h3>
-              {#if matches('preset')}
-                <div class="srow col">
-                  <div class="s-text"><b>프리셋</b><small>배경·글자·강조 색의 묶음. 고르면 바로 적용됩니다.</small></div>
-                  <div class="presets">
-                    {#each PRESETS as p (p.id)}
-                      {@const c = dark ? p.dark : p.light}
-                      <button class="preset" class:on={design.presetId === p.id} onclick={() => selectPreset(p.id)} aria-label={`프리셋 ${p.name}`} aria-pressed={design.presetId === p.id}>
-                        <span class="sw-sample" style:background={c.bg} style:color={c.text} style:border-color={c.border}>
-                          <i style:background={c.primary}></i><i style:background={c.accent}></i><i style:background={c.accentSoft}></i><em>가나다 Aa</em>
-                        </span>
-                        <span class="pn">{p.name}{#if design.presetId === p.id}<Check size={13} />{/if}</span>
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-              {#if matches('editor')}
-                <div class="srow">
-                  <div class="s-text"><b>디자인 편집기</b><small>서체·간격·제목·인용·코드·표와 색을 직접 고치고 파일로 내보내거나 가져옵니다.</small></div>
-                  <button class="primary-btn" onclick={openDesign}><Palette size={15} /> 열기</button>
-                </div>
-              {/if}
+              <DesignEditor />
             </section>
           {/if}
         </div>
       </div>
     </div>
+    {#if island}
+      <aside class="sw-island" aria-label="디자인 미리보기"><DesignPreview /></aside>
+    {/if}
+   </div>
   </div>
 {/if}
 
-{#if designOpen}
-  <DesignPanel onclose={() => (designOpen = false)} />
-{/if}
-
 <style>
+  .sw-stage { display: flex; align-items: center; justify-content: center; gap: 14px; width: 100%; height: 100%; padding: 20px 12px; box-sizing: border-box; }
+  .sw-island {
+    flex: 0 1 460px; min-width: 300px; height: min(640px, calc(100vh - 40px)); border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--border-strong); box-shadow: var(--shadow); background: var(--surface);
+  }
   .sw {
-    width: min(880px, calc(100vw - 24px)); height: min(640px, calc(100vh - 40px)); display: flex; flex-direction: column;
+    flex: 0 1 880px; min-width: 0; height: min(640px, calc(100vh - 40px)); display: flex; flex-direction: column;
     background: var(--bg); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;
   }
   .sw-head { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
@@ -326,15 +326,15 @@
   .primary-btn:hover { filter: brightness(1.08); background: var(--primary); }
   .linkish { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--muted); padding: 4px 6px; }
   .linkish:hover { color: var(--text); background: transparent; text-decoration: underline; }
-  .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
-  .preset { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface); text-align: left; }
-  .preset:hover { background: var(--hover); }
-  .preset.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-  .sw-sample { display: flex; align-items: center; gap: 5px; padding: 12px 10px; border-radius: 7px; border: 1px solid; }
-  .sw-sample i { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
-  .sw-sample em { margin-left: auto; font-style: normal; font-size: 12.5px; font-weight: 600; }
-  .pn { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+  /* 폭이 모자라면 미리보기 섬을 설정 창 아래로 내린다 */
+  @media (max-width: 1100px) {
+    .sw-stage.island { flex-direction: column; gap: 10px; }
+    .sw-stage.island .sw { flex: none; width: min(880px, 100%); height: calc(100vh - 40px - 210px - 10px); min-height: 300px; }
+    .sw-island { flex: none; width: min(880px, 100%); height: 210px; min-width: 0; }
+  }
   @media (max-width: 720px) {
+    .sw-stage { padding: 0; }
+    .sw-island { display: none; }
     .sw { width: 100vw; height: 100dvh; border-radius: 0; border: 0; }
     .sw-head { flex-wrap: wrap; gap: 8px; }
     .sw-search { order: 3; max-width: none; flex-basis: 100%; margin-left: 0; }

@@ -15,6 +15,7 @@ function loadSettings() {
     autosave: true,
     imageMode: 'file' as ImageMode,
     template: '', // 서버 버전의 docx 템플릿 파일명, 빈 값이면 기본 템플릿
+    tableCopyFormat: 'tsv' as 'tsv' | 'csv', // 표 '복사' 단추의 기본 형식(다른 형식은 메뉴에서)
     snippetColors: false, // 글감 색 지정·색 필터 같은 '고급' 기능을 쓸지(기본 꺼짐: 화면을 어지럽히지 않는다)
     version: SETTINGS_VERSION,
   };
@@ -65,10 +66,21 @@ export const doc = $state({
 
 // 마지막 에디터 내용을 외부에서 읽기 위한 훅 (Editor 가 등록)
 // preparePrint: 인쇄용 정적 사본(코드 하이라이트 포함)을 만들고 정리 함수를 돌려준다
-export const editorBridge: { getMarkdown: () => string; preparePrint: (() => Promise<() => void>) | null; focus: (() => void) | null } = {
+/** 명령 팔레트가 부르는 편집기 서식 명령 이름 */
+export type EditorCommand =
+  | 'bold' | 'italic' | 'code' | 'strike' | 'h1' | 'h2' | 'h3' | 'paragraph'
+  | 'quote' | 'bullet' | 'ordered' | 'codeblock' | 'hr' | 'table';
+
+export const editorBridge: {
+  getMarkdown: () => string;
+  preparePrint: (() => Promise<() => void>) | null;
+  focus: (() => void) | null;
+  command: ((name: EditorCommand) => void) | null;
+} = {
   getMarkdown: () => doc.content,
   preparePrint: null,
   focus: null,
+  command: null,
 };
 
 // '새로 만든 글'·'이름 변경 직후'에만 본문에 포커스를 준다(파일 목록을 키보드로 탐색 중이면 빼앗지 않는다).

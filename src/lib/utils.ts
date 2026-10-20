@@ -103,6 +103,19 @@ export async function writeClipboard(text: string) {
   }
 }
 
+/** 서식 있는 HTML 과 순수 텍스트를 함께 클립보드에 넣는다(붙여넣는 곳이 HTML 을 받으면 표로, 아니면 텍스트로). 지원하지 않으면 텍스트만 */
+export async function writeClipboardHtml(html: string, plain: string) {
+  try {
+    if (typeof ClipboardItem === 'undefined') throw new Error('no ClipboardItem');
+    await navigator.clipboard.write([new ClipboardItem({
+      'text/html': new Blob([html], { type: 'text/html' }),
+      'text/plain': new Blob([plain], { type: 'text/plain' }),
+    })]);
+  } catch {
+    await writeClipboard(plain);
+  }
+}
+
 // 파일명으로 쓸 수 없는 문자를 걷어낸다
 export function sanitizeName(s: string): string {
   return s
