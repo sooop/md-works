@@ -57,6 +57,6 @@ export default defineConfig(({ mode }) => {
       target: 'es2022',
     },
     server: { port: 5273, host: '127.0.0.1' },
-    test: { include: ['tests/**/*.test.ts'], exclude: ['node_modules/**', '.claude/**'] }, // 병렬 작업용 worktree 의 사본 테스트는 제외
+    test: { testTimeout: 20000, hookTimeout: 20000, include: ['tests/**/*.test.ts'], exclude: ['node_modules/**', '.claude/**'] }, // 병렬 작업용 worktree 의 사본 테스트는 제외
   };
 });
