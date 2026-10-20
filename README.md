@@ -20,6 +20,7 @@ npm run build
 node server.js [루트폴더] [--port 5273] [--templates 템플릿폴더]   # 또는 npm start
 ```
 
+- 정적 웹앱은 `npm run build:static` 후 `dist-static/` 폴더를 정적 호스팅(GitHub Pages, nginx 등)에 올린다. 스탠드얼론 단일 HTML 과 같은 기능(IndexedDB 저장)이며 파일이 여러 개이고 상대 경로(`./`)라 하위 경로에도 올릴 수 있다. `file://` 더블클릭으로는 열리지 않으므로 HTTP(S)로 제공한다.
 - 단일 HTML 은 `npm run build:html` 후 `dist-html/md-works.html` 을 더블클릭으로 연다(서버 불필요). 저장소 루트의 `index.html` 은 개발 서버용 진입점이다.
 - 개발: `NOTES_ROOT=<폴더> npm run dev`(Vite 개발 서버에 같은 API 가 붙는다, 포트 5273, `127.0.0.1`).
 - docx 변환용 pandoc 엔진은 서버가 `node_modules/pandoc-wasm` 의 wasm 을 직접 제공한다(`GET /api/pandoc.wasm`). 실행 환경에도 `node_modules` 가 필요하다.

@@ -8,6 +8,7 @@
     "build": "vite build",
     "start": "node server.js",
     "build:html": "vite build --mode html",
+    "build:static": "vite build --mode static",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run"
   },
