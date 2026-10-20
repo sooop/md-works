@@ -4,6 +4,9 @@ import { doc, toast, askPrompt, askConfirm, errMsg, withStatus, requestEditorFoc
 import { buildArchive, parseArchive } from './archive';
 import { downloadBlob, downloadText, writeClipboard, fileToDataUrl, replaceImages, sanitizeName, stripExt } from './utils';
 import { updatedAfterEdit } from './docUpdated';
+import { fullPath, splitPath, withParents, byName } from './docTree';
+import { followRename, expandFolder } from './docTree.svelte';
+import { searchComments } from './search/commentSearch';
 import { exportDocx, isImportable, readImport } from './docx-flow';
 import { buildMatcher, searchText } from '../../server/searchCore.js';
 import type { SearchResponse } from './search/types';
@@ -52,21 +55,38 @@ async function idb<T>(store: Store, mode: IDBTransactionMode, fn: (s: IDBObjectS
   });
 }
 
-interface Rec { id: string; name: string; content: string; updated: number }
+interface Rec { id: string; name: string; folder?: string; content: string; updated: number }
 interface Img { id: string; blob: Blob; created: number }
 /** 사이드바 툴팁용 수정 시각(없으면 0) */
 export const docUpdatedAt = (id: string): number => all.get(id)?.updated ?? 0;
 
-export interface DocMeta { id: string; name: string }
+export interface DocMeta { id: string; name: string; folder: string; updated: number }
+
+const folderOf = (r: Rec) => r.folder ?? '';
+const fullOf = (r: Rec) => fullPath(folderOf(r), r.name);
+/** 글의 '폴더/이름.md' (사이드바 툴팁용, 없으면 빈 문자열) */
+export const docFullPath = (id: string): string => { const r = all.get(id); return r ? fullOf(r) : ''; };
+
+// 빈 폴더도 목록에 남도록 폴더 이름을 따로 보관한다(kv 'folders'). 글이 있는 폴더는 글의 folder 로도 알 수 있다.
+const folderSet = new Set<string>();
+function allFolders(): string[] {
+  const out = new Set<string>();
+  for (const f of folderSet) for (const p of withParents(f)) out.add(p);
+  for (const r of all.values()) for (const p of withParents(folderOf(r))) out.add(p);
+  return [...out];
+}
+const saveFolders = () => idb('kv', 'readwrite', (s) => s.put([...folderSet], 'folders')).then(() => {}, () => { /* 무시 */ });
 
 const LAST_KEY = 'notes.lastDoc';
 const all = new Map<string, Rec>(); // 모든 문서(메모리 사본)
-export const lib = $state<{ docs: DocMeta[]; filter: string }>({ docs: [], filter: '' }); // filter: 사이드바 파일명 검색어
+export const lib = $state<{ docs: DocMeta[]; folders: string[]; filter: string; dir: string }>({ docs: [], folders: [], filter: '', dir: '' }); // filter: 사이드바 파일명 검색어, dir: 새 글이 만들어질 폴더
 
 function refreshList() {
   lib.docs = [...all.values()]
-    .map(({ id, name }) => ({ id, name }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    .map((r) => ({ id: r.id, name: r.name, folder: folderOf(r), updated: r.updated }))
+    .sort((a, b) => byName(fullPath(a.folder, a.name), fullPath(b.folder, b.name)));
+  lib.folders = allFolders().sort(byName);
+  if (lib.dir && !lib.folders.includes(lib.dir)) lib.dir = '';
 }
 
 let failed = false;
@@ -109,6 +129,8 @@ export async function init() {
     await navigator.storage?.persist?.(); // 브라우저가 임의로 비우지 않도록 요청(거절돼도 무시)
     const recs = await idb<Rec[]>('docs', 'readonly', (s) => s.getAll());
     for (const r of recs) all.set(r.id, r);
+    const saved = await idb<unknown>('kv', 'readonly', (s) => s.get('folders')).catch(() => []);
+    if (Array.isArray(saved)) for (const f of saved) if (typeof f === 'string' && f) folderSet.add(f);
     refreshList();
     const last = localStorage.getItem(LAST_KEY);
     if (last && all.has(last)) await openDoc(last);
@@ -176,14 +198,15 @@ export async function openDoc(id: string) {
   const rec = all.get(id);
   if (!rec) return;
   Object.assign(doc, { path: id, name: rec.name, content: rec.content, dirty: false, edit: true }); // 문서는 항상 편집 모드로 연다
+  lib.dir = folderOf(rec); // 새 글은 지금 보는 글의 폴더에 만든다
   doc.key++;
   void snapshot(id, rec.content).catch(() => { /* 무시 */ });
   try { localStorage.setItem(LAST_KEY, id); } catch { /* 무시 */ }
 }
 
 // 같은 이름이 있으면 '이름 (2).md' 처럼 번호를 붙인다
-function uniqueName(stem: string): string {
-  const names = new Set([...all.values()].map((r) => r.name.toLowerCase()));
+function uniqueName(stem: string, folder = ''): string {
+  const names = new Set([...all.values()].filter((r) => folderOf(r) === folder).map((r) => r.name.toLowerCase()));
   for (let i = 1; ; i++) {
     const name = i === 1 ? `${stem}.md` : `${stem} (${i}).md`;
     if (!names.has(name.toLowerCase())) return name;
@@ -191,10 +214,10 @@ function uniqueName(stem: string): string {
 }
 
 // edit: 열었을 때 편집 모드로 시작할지. 이제 모든 문서가 편집 모드로 열려 사실상 의미가 없다(호출부 호환용).
-async function createRec(stem: string, content: string, open = true, edit = false): Promise<Rec> {
-  const rec: Rec = { id: crypto.randomUUID(), name: uniqueName(stem), content, updated: Date.now() };
+async function createRec(stem: string, content: string, open = true, edit = false, folder = ''): Promise<Rec> {
+  const rec: Rec = { id: crypto.randomUUID(), name: uniqueName(stem, folder), ...(folder ? { folder } : {}), content, updated: Date.now() };
   await putDoc(rec);
-  await clearDocGone(rec.name).catch(() => { /* 무시 */ }); // 같은 이름으로 다시 만들면 삭제 묘비는 지운다
+  await clearDocGone(fullOf(rec)).catch(() => { /* 무시 */ }); // 같은 이름으로 다시 만들면 삭제 묘비는 지운다
   all.set(rec.id, rec);
   refreshList();
   if (open) { if (edit) requestEditorFocus(); await openDoc(rec.id); if (doc.path === rec.id && edit) doc.edit = true; }
@@ -203,10 +226,103 @@ async function createRec(stem: string, content: string, open = true, edit = fals
 
 const toStem = (name: string) => sanitizeName(name.replace(/\.(md|markdown|txt)$/i, '')) || '새 문서';
 
-export async function createDoc() {
+export async function createDoc(dir = lib.dir) {
   const name = await askPrompt('새 문서 이름', '새 문서');
   if (name === null) return;
-  try { await createRec(toStem(name), '', true, true); } catch { /* 토스트로 알렸다 */ }
+  try { await createRec(toStem(name), '', true, true, dir); expandFolder(dir); } catch { /* 토스트로 알렸다 */ }
+}
+
+// ---- 폴더 ----
+const inFolder = (r: Rec, path: string) => folderOf(r) === path || folderOf(r).startsWith(path + '/');
+const remap = (p: string, from: string, to: string) => (p === from || p.startsWith(from + '/') ? to + p.slice(from.length) : p);
+
+export async function createFolder(parent = lib.dir) {
+  const input = await askPrompt('새 폴더 이름', '새 폴더');
+  const name = input === null ? '' : sanitizeName(input);
+  if (!name) return;
+  const path = fullPath(parent, name);
+  if (allFolders().some((f) => f.toLowerCase() === path.toLowerCase())) { toast('같은 이름의 폴더가 있습니다', 'error'); return; }
+  folderSet.add(path);
+  await saveFolders();
+  refreshList();
+  expandFolder(parent);
+  lib.dir = path;
+}
+
+async function relocateFolder(from: string, to: string) {
+  if (allFolders().some((f) => f !== from && !f.startsWith(from + '/') && f.toLowerCase() === to.toLowerCase())) { toast('같은 이름의 폴더가 있습니다', 'error'); return; }
+  const affected = [...all.values()].filter((r) => inFolder(r, from));
+  const clash = affected.find((r) => [...all.values()].some((o) => !inFolder(o, from) && fullOf(o).toLowerCase() === fullPath(remap(folderOf(r), from, to), r.name).toLowerCase()));
+  if (clash) { toast('옮길 곳에 같은 이름의 문서가 있습니다', 'error'); return; }
+  if (doc.path) await flush();
+  try {
+    for (const r of affected) {
+      const old = fullOf(r);
+      r.folder = remap(folderOf(r), from, to) || undefined;
+      await putDoc(r);
+      await recordDocGone(old).catch(() => { /* 무시 */ }); // 번들은 글 이름이 경로라 옛 경로는 지운 글로 기록한다
+      await clearDocGone(fullOf(r)).catch(() => { /* 무시 */ });
+    }
+  } catch { /* putDoc 이 토스트로 알렸다 */ }
+  const next = [...folderSet].map((f) => remap(f, from, to));
+  folderSet.clear();
+  for (const f of next) folderSet.add(f);
+  await saveFolders();
+  lib.dir = remap(lib.dir, from, to);
+  followRename(from, to);
+  refreshList();
+}
+
+export async function renameFolder(path: string, input: string) {
+  const name = sanitizeName(input);
+  if (!name) return;
+  const to = fullPath(splitPath(path).folder, name);
+  if (to !== path) await relocateFolder(path, to);
+}
+
+/** 폴더를 다른 폴더(destParent) 안으로 옮긴다. 자기 자신·자기 하위로는 옮길 수 없다 */
+export async function moveFolder(path: string, destParent: string) {
+  const to = fullPath(destParent, splitPath(path).name);
+  if (to === path || destParent === path || destParent.startsWith(path + '/')) return;
+  await relocateFolder(path, to);
+  expandFolder(destParent);
+}
+
+export async function removeFolder(path: string) {
+  const docs = [...all.values()].filter((r) => inFolder(r, path));
+  const label = splitPath(path).name;
+  const what = docs.length ? `폴더 '${label}' 와 그 안의 문서 ${docs.length}개` : `빈 폴더 '${label}'`;
+  if (!(await askConfirm(`${what}를 삭제할까요? 되돌릴 수 없습니다.`, '삭제'))) return;
+  for (const r of docs) await removeDocCore(r.id);
+  for (const f of [...folderSet]) if (f === path || f.startsWith(path + '/')) folderSet.delete(f);
+  await saveFolders();
+  if (lib.dir === path || lib.dir.startsWith(path + '/')) lib.dir = splitPath(path).folder;
+  refreshList();
+}
+
+/** 글을 다른 폴더로 옮긴다('' = 최상위) */
+export async function moveDoc(id: string, dest: string) {
+  const rec = all.get(id);
+  if (!rec || folderOf(rec) === dest) return;
+  if ([...all.values()].some((r) => r.id !== id && folderOf(r) === dest && r.name.toLowerCase() === rec.name.toLowerCase())) {
+    toast('그 폴더에 같은 이름의 문서가 있습니다', 'error');
+    return;
+  }
+  if (rec.id === doc.path) await flush();
+  const old = fullOf(rec);
+  const prev = rec.folder;
+  rec.folder = dest || undefined;
+  try {
+    await putDoc(rec);
+  } catch {
+    rec.folder = prev;
+    return;
+  }
+  await recordDocGone(old).catch(() => { /* 무시 */ });
+  await clearDocGone(fullOf(rec)).catch(() => { /* 무시 */ });
+  followRename(old, fullOf(rec));
+  expandFolder(dest);
+  refreshList();
 }
 
 export async function renameDoc(meta: DocMeta) {
@@ -229,12 +345,13 @@ async function renameDocTo(id: string, input: string) {
   if (!rec) return;
   const name = `${toStem(input)}.md`;
   if (name === rec.name) return;
-  if ([...all.values()].some((r) => r.id !== rec.id && r.name.toLowerCase() === name.toLowerCase())) {
+  if ([...all.values()].some((r) => r.id !== rec.id && folderOf(r) === folderOf(rec) && r.name.toLowerCase() === name.toLowerCase())) {
     toast('같은 이름의 문서가 있습니다', 'error');
     return;
   }
   if (rec.id === doc.path) await flush();
   const prev = rec.name;
+  const prevFull = fullOf(rec);
   rec.name = name;
   try {
     await putDoc(rec);
@@ -242,14 +359,21 @@ async function renameDocTo(id: string, input: string) {
     rec.name = prev;
     return;
   }
-  await recordDocGone(prev).catch(() => { /* 무시 */ }); // 옛 이름은 '지운 글'로 기록한다
-  await clearDocGone(name).catch(() => { /* 무시 */ });
+  await recordDocGone(prevFull).catch(() => { /* 무시 */ }); // 옛 이름은 '지운 글'로 기록한다
+  await clearDocGone(fullOf(rec)).catch(() => { /* 무시 */ });
+  followRename(prevFull, fullOf(rec));
   if (rec.id === doc.path) { doc.name = name; editorBridge.focus?.(); } // 이름 변경 직후 본문으로 포커스 복귀
   refreshList();
 }
 
 export async function removeDoc(meta: DocMeta) {
   if (!(await askConfirm(`'${stripExt(meta.name)}' 문서를 삭제할까요? 되돌릴 수 없습니다.`, '삭제'))) return;
+  await removeDocCore(meta.id);
+}
+
+async function removeDocCore(id: string) {
+  const rec = all.get(id);
+  const meta = { id, name: rec ? fullOf(rec) : '' };
   try {
     await flushComments(); // 대기 중인 코멘트 저장이 삭제 뒤에 레코드를 되살리지 않도록
     await idb('docs', 'readwrite', (s) => s.delete(meta.id));
@@ -294,16 +418,18 @@ export async function searchLibrary(query: string, opts: { caseSensitive: boolea
   const results: SearchResponse['results'] = [];
   let count = 0;
   let truncated = false;
-  const recs = [...all.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const recs = [...all.values()].sort((a, b) => byName(fullOf(a), fullOf(b)));
   for (const r of recs) {
     if (count >= SEARCH_TOTAL) { truncated = true; break; }
     const hit = searchText(r.content, m.re, { maxMatches: Math.min(SEARCH_PER_FILE, SEARCH_TOTAL - count) });
     if (!hit.matches.length) continue;
     count += hit.matches.length;
     if (hit.truncated) truncated = true;
-    results.push({ id: r.id, label: stripExt(r.name), matches: hit.matches, more: hit.truncated });
+    results.push({ id: r.id, label: stripExt(fullOf(r)), matches: hit.matches, more: hit.truncated });
   }
-  return { results, count, truncated };
+  // 코멘트 본문도 같은 검색어로 찾는다(문서 본문 검색이 상한에 걸려도 코멘트는 따로 센다)
+  const comments = await searchComments(worksStore(), recs.map((r) => ({ id: r.id, label: stripExt(fullOf(r)) })), query, opts).catch(() => []);
+  return { results, count, truncated, comments };
 }
 
 // ---- 이미지 ----
@@ -500,8 +626,8 @@ export async function exportAll() {
         if (ts.length) byDoc.set(id, ts.map(threadToComment));
       }
       const docs = [...all.values()]
-        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-        .map((r) => ({ name: r.name, content: r.content, comments: byDoc.get(r.id) }));
+        .sort((a, b) => byName(fullOf(a), fullOf(b)))
+        .map((r) => ({ name: fullOf(r), content: r.content, comments: byDoc.get(r.id) }));
       const blob = await buildArchive(docs, loadImage);
       const d = new Date();
       const p = (n: number) => String(n).padStart(2, '0');

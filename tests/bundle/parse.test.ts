@@ -156,9 +156,9 @@ describe('가져오기는 검증 전에 아무것도 쓰지 않는다', () => {
     await expect(applyBundleWith(dev.host, evil)).rejects.toBeInstanceOf(BundleError);
     expect(await dev.names()).toEqual([]);
   });
-  it('이 보관소에서 같은 이름이 되는 두 글은 오류(스탠드얼론: 폴더 펼치기 충돌)', async () => {
+  it('이 보관소에서 같은 이름이 되는 두 글은 오류(스탠드얼론: 이름 다듬기 충돌)', async () => {
     const dev = standaloneDevice();
-    const b = withManifest({ 'a/b.md': '1', 'a - b.md': '2' });
+    const b = withManifest({ 'a/b.md': '1', 'a/ b.md': '2' });
     await expect(applyBundleWith(dev.host, b)).rejects.toThrow(/같은 이름/);
     expect(await dev.names()).toEqual([]);
   });

@@ -161,7 +161,7 @@ describe('왕복(내보내기 → 가져오기 후 동일)', () => {
     expect(again.docs.every((d) => d.action === 'same')).toBe(true);
   });
 
-  it('서버 → 스탠드얼론 → 서버: 폴더는 이름에 펼쳐지고 이미지는 보존된다', async () => {
+  it('서버 → 스탠드얼론 → 서버: 폴더는 유지되고 이미지는 보존된다', async () => {
     const a = await serverDevice();
     await a.putDoc('폴더/글.md', '# 글\n![x](assets/글/pic.png)', T + 100);
     await fs.mkdir(path.join(a.root, '폴더', 'assets', '글'), { recursive: true });
@@ -170,15 +170,16 @@ describe('왕복(내보내기 → 가져오기 후 동일)', () => {
     await a.store.put('snippets', snip('s1', { attachedDocs: ['폴더/글.md'] }));
     const s = standaloneDevice();
     await applyBundleWith(s.host, (await bytesOf(a)).bytes, {}, T + 200);
-    expect(await s.names()).toEqual(['폴더 - 글.md']);
-    expect(await s.doc('폴더 - 글.md')).toMatch(/!\[x\]\(idb:/);
-    expect((await s.versions('폴더 - 글.md')).map((v) => v.id)).toEqual(['v1']);
-    const k = (await s.key('폴더 - 글.md'))!;
+    expect(await s.names()).toEqual(['폴더/글.md']);
+    expect(await s.doc('폴더/글.md')).toMatch(/!\[x\]\(idb:/);
+    expect((await s.versions('폴더/글.md')).map((v) => v.id)).toEqual(['v1']);
+    const k = (await s.key('폴더/글.md'))!;
     expect((await s.store.get<Snippet>('snippets', 's1'))!.attachedDocs).toEqual([k]);
     const back = await serverDevice();
     await applyBundleWith(back.host, (await bytesOf(s)).bytes, {}, T + 300);
-    expect(await back.names()).toEqual(['폴더 - 글.md']);
-    expect(new Uint8Array(await fs.readFile(path.join(back.root, 'assets', '폴더 - 글', '1.png')))).toEqual(PNG);
-    expect(await back.doc('폴더 - 글.md')).toBe('# 글\n![x](<assets/폴더 - 글/1.png>)');
+    expect(await back.names()).toEqual(['폴더/글.md']);
+    // 이미지는 글이 있는 폴더 안의 assets/<글 이름>/ 에 놓이고 링크는 글 기준 상대 경로다
+    expect(new Uint8Array(await fs.readFile(path.join(back.root, '폴더', 'assets', '글', '1.png')))).toEqual(PNG);
+    expect(await back.doc('폴더/글.md')).toBe('# 글\n![x](assets/글/1.png)');
   });
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from '../tooltip.svelte';
   // 상단바 '백업' 버튼 + 모달: 상태 요약, 내보내기, 가져오기(미리보기·병합), 텔레그램, (서버 모드) 노트 폴더 백업.
   import { onMount } from 'svelte';
   import DatabaseBackup from '@lucide/svelte/icons/database-backup';
@@ -180,7 +181,7 @@
 <button
   class="icon-btn backup-btn"
   aria-label="백업"
-  title={dotOn ? '백업한 지 오래됐습니다 — 백업' : '백업 · 가져오기'}
+  use:tip={dotOn ? '백업한 지 오래됐습니다 — 백업' : '백업 · 가져오기'}
   onclick={() => (backupUi.open = true)}
 >
   <DatabaseBackup size={18} />{#if dotOn}<span class="dot-badge" aria-label="백업 필요"></span>{/if}

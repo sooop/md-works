@@ -1,14 +1,17 @@
 // 서버 버전용 WorksStore: 서버 API(`/api/works`)가 노트 폴더의 `.works/` 사이드카에 저장한다.
 import { PARTITIONED, type Coll, type WorksRecord } from './types';
 import type { WorksStore } from './store';
+import { trackNet } from '../netBusy.svelte';
 
 /** base: 테스트에서 서버 주소를 지정할 때만 쓴다(브라우저에서는 같은 출처의 빈 문자열) */
 export function createSidecarStore(base = ''): WorksStore {
-  async function call<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(base + path, init);
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error((j as { error?: string }).error ?? `요청 실패 (${res.status})`);
-    return j as T;
+  function call<T>(path: string, init?: RequestInit): Promise<T> {
+    return trackNet((async () => {
+      const res = await fetch(base + path, init);
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((j as { error?: string }).error ?? `요청 실패 (${res.status})`);
+      return j as T;
+    })());
   }
   const q = (coll: Coll, part?: string, id?: string) => {
     const p = new URLSearchParams({ coll });

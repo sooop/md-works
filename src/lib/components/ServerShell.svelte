@@ -3,7 +3,9 @@
   import { onMount } from 'svelte';
   import Editor from './Editor.svelte';
   import Lightbox from './Lightbox.svelte';
-  import TreeNode from './TreeNode.svelte';
+  import DocTree from './DocTree.svelte';
+  import RightToggle from './RightToggle.svelte';
+  import type { TreeCtl } from './treeCtl.js';
   import DropOverlay from './DropOverlay.svelte';
   import PasteModal from './PasteModal.svelte';
   import MoreMenu from './MoreMenu.svelte';
@@ -24,7 +26,6 @@
   import { tip } from '../tooltip.svelte';
   import { left, viewport, isDocked, toggleLeft, openLeft, closeLeft, togglePin, setLeftWidth, LEFT_W, rightPeek } from '../sidebar/state.svelte';
   import { edgeHover, peekPanel } from '../sidebar/peek';
-  import { right, toggleRight } from '../rightbar/state.svelte';
   import { backupUi, isStale } from '../bundle/backupState.svelte';
   import SnippetShortcuts from './SnippetShortcuts.svelte';
   import FindBar from './FindBar.svelte';
@@ -42,11 +43,11 @@
   import {
     tree, nav, templates, init, openDoc, save, onEditorChange, upload, resolveUrl, createDoc, createFolder,
     convertImages, createFromText, handleDrop, exportDocxCurrent, exportMdCurrent, copyMdCurrent, refreshTemplates, selectTemplate,
-    restoreVersion, searchFiles, renameCurrent,
+    restoreVersion, searchFiles, renameCurrent, renameNodeBy, removeNode, moveNode,
   } from '../server-mode.svelte';
   import { stripExt } from '../utils';
   import { ui, searchShortcut } from '../search/state.svelte';
-  import { filterTree } from '../search/nameMatch';
+  import { fmtDateTime } from '../utils';
 
   leftSheet.close = closeLeft;
   const docked = $derived(isDocked());
@@ -75,7 +76,19 @@
       : '',
   );
 
-  const visibleNodes = $derived(nav.filter.trim() ? filterTree(tree.nodes, nav.filter) : tree.nodes);
+  const treeCtl: TreeCtl = {
+    isActive: (n) => doc.path === n.path,
+    isDirty: (n) => doc.path === n.path && doc.dirty,
+    open: (n) => void openDoc(n.path),
+    selectedDir: () => nav.dir,
+    selectDir: (p) => { nav.dir = p; },
+    createDoc: (dir) => void createDoc(dir),
+    createFolder: (dir) => void createFolder(dir),
+    rename: (n, input) => renameNodeBy(n, input),
+    remove: (n) => removeNode(n),
+    move: (n, dest) => moveNode(n, dest),
+    tipLines: (n) => [n.path, ...(n.mtime ? [`수정 ${fmtDateTime(n.mtime)}`] : [])],
+  };
 
   onMount(() => { void init(); });
 
@@ -97,9 +110,6 @@
 </script>
 
 <svelte:window onkeydown={onKey} onbeforeunload={onBeforeUnload} />
-<svelte:head>
-  <title>{doc.dirty ? '● ' : ''}{doc.path ? stripExt(doc.name) : 'Notes'}</title>
-</svelte:head>
 
 <div class="shell">
   <SnippetShortcuts />
@@ -134,24 +144,7 @@
         <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} use:tip={{ title: '모든 문서에서 검색', kbd: 'Ctrl+Shift+F' }}>검색</button>
       </div>
       <div class="tabpane" hidden={ui.tab !== 'files'}>
-        <div class="filterbox">
-          <Search size={14} />
-          <input bind:value={nav.filter} placeholder="파일 이름 검색 (초성 가능)" aria-label="파일 이름 검색" spellcheck="false" />
-          {#if nav.filter}<button class="icon-btn" use:tip={'지우기'} aria-label="검색어 지우기" onclick={() => (nav.filter = '')}><X size={14} /></button>{/if}
-        </div>
-        <nav class="tree">
-          {#if visibleNodes.length}
-            <ul>
-              {#each visibleNodes as node (node.path)}
-                <TreeNode {node} />
-              {/each}
-            </ul>
-          {:else if nav.filter.trim()}
-            <p class="empty">'{nav.filter}' 와 일치하는 파일이 없습니다.</p>
-          {:else}
-            <p class="empty">문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx 파일을 끌어다 놓으세요.</p>
-          {/if}
-        </nav>
+        <DocTree nodes={tree.nodes} ctl={treeCtl} bind:filter={nav.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx 파일을 끌어다 놓으세요." />
       </div>
       <div class="tabpane" hidden={ui.tab !== 'search'}>
         <SearchPanel run={searchFiles} onOpen={openDoc} activeId={doc.path} />
@@ -166,19 +159,20 @@
   <main class="main">
     <div class="top-edge"></div>
     <header class="topbar">
-      <button class="icon-btn" class:on={docked || left.open} aria-label="사이드바 토글" use:tip={{ title: '파일 목록', lines: [left.pinned ? '누르면 고정을 풀고 숨깁니다' : '왼쪽 가장자리에 마우스를 대도 열립니다'] }} onclick={() => { toggleLeft(); if (left.open) closeRightOnMobile(); }}><PanelLeft size={18} /></button>
+      <button class="icon-btn" class:on={docked} aria-label="사이드바 토글" use:tip={{ title: '파일 목록', lines: [left.pinned ? '누르면 숨깁니다' : '누르면 본문 옆에 열립니다(고정). 왼쪽 가장자리에 마우스를 대도 잠깐 열립니다'] }} onclick={() => { toggleLeft(); if (left.open) closeRightOnMobile(); }}><PanelLeft size={18} /></button>
       <DocTitle title={doc.path ? stripExt(doc.name) : '문서를 선택하세요'} editable={!!doc.path} dirty={doc.dirty} onRename={renameCurrent} />
       <span class="spacer"></span>
       {#if doc.path}
         <ModeToggle />
-        <button class="icon-btn" class:attn={doc.dirty} disabled={!doc.dirty || doc.saving} aria-label="저장"
+        <!-- 자동 저장이 켜져 있으면(기본) 저장 단추는 필요 없다. Ctrl+S 는 항상 된다 -->
+        {#if !settings.autosave}
+          <button class="icon-btn" class:attn={doc.dirty} disabled={!doc.dirty || doc.saving} aria-label="저장"
           use:tip={{ title: doc.saving ? '저장 중…' : doc.dirty ? '저장' : '저장됨', kbd: 'Ctrl+S' }} onclick={save}><Save size={18} /></button>
+        {/if}
         <HistoryPanel docKey={doc.path} {resolveUrl} onRestore={restoreVersion} current={doc.content} bind:open={historyOpen} />
       {/if}
       <MoreMenu
           hasDoc={!!doc.path}
-          rightOpen={right.open}
-          onRight={toggleRight}
           onSettings={() => (settingsOpen = true)}
           onBackup={() => (backupUi.open = true)}
           backupStale={isStale()}
@@ -194,6 +188,7 @@
           onOpen={refreshTemplates}
           hint={templateHint}
         />
+      <RightToggle />
       <BackupDialog server trigger={false} />
       <Settings server trigger={false} bind:open={settingsOpen} />
     </header>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from '../tooltip.svelte';
   import { tick } from 'svelte';
 
   interface Props {
@@ -39,9 +40,9 @@
 {#if editing}
   <input class="doc-title-input" bind:this={input} bind:value onkeydown={onKey} onblur={commit} spellcheck="false" aria-label="문서 이름" />
 {:else}
-  <h1 class="doc-title" ondblclick={start} title={editable ? '더블 클릭하여 이름 변경' : undefined}>
+  <h1 class="doc-title" ondblclick={start} use:tip={editable ? '더블 클릭하여 이름 변경' : undefined}>
     {title}
-    {#if dirty}<span class="dot" title="저장 안 됨">●</span>{/if}
+    {#if dirty}<span class="dot" use:tip={'저장 안 됨'}>●</span>{/if}
   </h1>
 {/if}
 

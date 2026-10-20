@@ -20,6 +20,8 @@
   const lost = $derived(isLost(id));
   let open = $state(false);
   const expanded = $derived(!quote || open);
+  // 메시지가 하나뿐이면 메시지 줄과 스레드 줄이 같은 시각·같은 삭제 버튼을 두 번 보여 주므로 아래 한 줄로 합친다
+  const single = $derived((c?.messages.length ?? 0) === 1);
 
   let editing = $state(''); // 수정 중인 메시지 id
   let draft = $state('');
@@ -83,13 +85,18 @@
               </div>
             {:else}
               <p class="cm-text">{m.text}</p>
-              <div class="cm-meta">
-                <span use:tip={new Date(m.ts).toLocaleString('ko-KR')}>{relTime(m.ts)}</span>
-                <span class="cm-ops">
-                  <button class="icon-btn" use:tip={'수정'} aria-label="메시지 수정" onclick={() => void startEdit(m.id, m.text)}><Pencil size={13} /></button>
-                  <button class="icon-btn" use:tip={m.id === c.messages[0].id ? '삭제 (스레드 전체)' : '삭제'} aria-label="메시지 삭제" onclick={() => void removeMessage(id, m.id)}><Trash2 size={13} /></button>
-                </span>
-              </div>
+              {#if !single}
+                <div class="cm-meta">
+                  <span use:tip={new Date(m.ts).toLocaleString('ko-KR')}>{relTime(m.ts)}</span>
+                  <span class="cm-ops">
+                    <button class="icon-btn" use:tip={'수정'} aria-label="메시지 수정" onclick={() => void startEdit(m.id, m.text)}><Pencil size={13} /></button>
+                    <!-- 첫 메시지를 지우면 스레드 전체가 지워지므로 그 버튼은 아래 '스레드 삭제' 하나만 둔다 -->
+                    {#if m.id !== c.messages[0].id}
+                      <button class="icon-btn" use:tip={'삭제'} aria-label="메시지 삭제" onclick={() => void removeMessage(id, m.id)}><Trash2 size={13} /></button>
+                    {/if}
+                  </span>
+                </div>
+              {/if}
             {/if}
           </div>
         {/each}
@@ -102,12 +109,17 @@
     {/if}
     <div class="cm-meta cm-foot">
       <span use:tip={new Date(c.createdAt).toLocaleString('ko-KR')}>
-        {relTime(c.updatedAt)}{c.resolved ? ' · 해결됨' : ''}{#if c.messages.length > 1 && !expanded} · 답글 {c.messages.length - 1}개{/if}
+        {#if !expanded}
+          {relTime(c.updatedAt)}{c.resolved ? ' · 해결됨' : ''}{#if c.messages.length > 1} · 답글 {c.messages.length - 1}개{/if}
+        {:else if single}
+          {relTime(c.updatedAt)}{c.resolved ? ' · 해결됨' : ''}
+        {:else if c.resolved}해결됨{/if}
       </span>
       <span class="cm-ops">
         {#if quote}
           <button class="icon-btn" use:tip={open ? '접기' : '펼쳐서 답글 보기'} aria-label={open ? '접기' : '펼치기'} onclick={() => (open = !open)}>{#if open}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}</button>
         {/if}
+        {#if expanded && single && !editing}<button class="icon-btn" use:tip={'수정'} aria-label="메시지 수정" onclick={() => void startEdit(c.messages[0].id, c.messages[0].text)}><Pencil size={14} /></button>{/if}
         {#if expanded && !replying}<button class="icon-btn" use:tip={'답글 달기'} aria-label="답글 달기" onclick={() => void startReply()}><MessageSquarePlus size={14} /></button>{/if}
         {#if lost}<button class="icon-btn" use:tip={'지금 선택한 본문에 다시 붙이기'} aria-label="다시 붙이기" onclick={() => reattach(id)}><Link size={14} /></button>{/if}
         <button class="icon-btn" use:tip={{ title: '글감으로 보내기', lines: ['코멘트는 글감으로 바뀝니다'] }} aria-label="글감으로 보내기" onclick={() => void sendToSnippet(id)}><StickyNote size={14} /></button>

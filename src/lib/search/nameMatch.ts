@@ -74,3 +74,16 @@ export function filterTree<T extends { path: string; type: 'file' | 'dir'; child
   }
   return out;
 }
+
+/** 일치 구간을 표시한 조각들(하이라이트용): 일치가 없으면 통째로 한 조각 */
+export function highlight(text: string, query: string): { t: string; hit: boolean }[] {
+  const out: { t: string; hit: boolean }[] = [];
+  let pos = 0;
+  for (const [a, b] of matchRanges(text, query)) {
+    if (a > pos) out.push({ t: text.slice(pos, a), hit: false });
+    out.push({ t: text.slice(a, b), hit: true });
+    pos = b;
+  }
+  if (pos < text.length || !out.length) out.push({ t: text.slice(pos), hit: false });
+  return out;
+}

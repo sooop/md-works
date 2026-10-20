@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from '../tooltip.svelte';
   // 본문 이미지를 팝오버로 띄워 확대·이동해 본다. 읽기 모드는 클릭, 편집 모드는 더블클릭(단일 클릭은 이미지 선택용)으로 연다.
   import { tick } from 'svelte';
 
@@ -124,9 +125,9 @@
     />
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="lb-bar" onclick={(e) => e.stopPropagation()}>
-      <button type="button" aria-label="축소" title="축소 (-)" onclick={() => zoom(0.8)}>−</button>
-      <button type="button" class="pct" aria-label="원래 크기" title="맞춤 (0)" onclick={reset}>{Math.round(scale * 100)}%</button>
-      <button type="button" aria-label="확대" title="확대 (+)" onclick={() => zoom(1.25)}>+</button>
+      <button type="button" aria-label="축소" use:tip={'축소 (-)'} onclick={() => zoom(0.8)}>−</button>
+      <button type="button" class="pct" aria-label="원래 크기" use:tip={'맞춤 (0)'} onclick={reset}>{Math.round(scale * 100)}%</button>
+      <button type="button" aria-label="확대" use:tip={'확대 (+)'} onclick={() => zoom(1.25)}>+</button>
     </div>
     <button bind:this={closeBtn} type="button" class="lb-close" aria-label="닫기" onclick={close}>
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>

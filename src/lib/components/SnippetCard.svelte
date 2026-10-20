@@ -7,6 +7,10 @@
   import Link2 from '@lucide/svelte/icons/link-2';
   import BookOpen from '@lucide/svelte/icons/book-open';
   import Undo2 from '@lucide/svelte/icons/undo-2';
+  import Ellipsis from '@lucide/svelte/icons/ellipsis';
+  import Pencil from '@lucide/svelte/icons/pencil';
+  import Sparkles from '@lucide/svelte/icons/sparkles';
+  import Check from '@lucide/svelte/icons/check';
   import { doc, settings } from '../store.svelte';
   import { tip } from '../tooltip.svelte';
   import Pop from './Pop.svelte';
@@ -42,9 +46,13 @@
   /** 원전 배지에 보일 글자: 제목(@ 뒤 글자)이 있으면 그것, 없으면 주소의 도메인 */
   const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
   const badgeText = (label: string, url: string) => label || (url ? host(url) : '');
-  function startEdit() {
+  let editArea = $state<HTMLTextAreaElement>();
+  async function startEdit() {
     body = editableText(s); // 옛 원전 필드는 마커 줄로 풀어서 보여 준다
     editing = true;
+    await tick();
+    editArea?.focus();
+    editArea?.setSelectionRange(body.length, body.length); // 커서는 끝에
   }
   async function saveEdit() {
     if (!body.trim()) return;
@@ -57,12 +65,13 @@
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void saveEdit(); }
     else if (e.key === 'Escape') { e.stopPropagation(); editing = false; }
   }
-  let colorOpen = $state(false);
+  let menuOpen = $state(false);
+  let showSimilar = $state(false); // 메뉴의 '비슷한 글감 보기'
 
   // ---- 비슷한 글감 (펼쳤을 때) ----
   let similar = $state<Snippet[]>([]);
   $effect(() => {
-    if (!open || trashed) { similar = []; return; }
+    if (!showSimilar || trashed) { similar = []; return; }
     const cands = suggestCandidates(s, sn.active);
     const query = snippetText(s);
     let stale = false;
@@ -151,9 +160,12 @@
       />
     </label>
   {/if}
-  {#if attached && !trashed && !editing}<span class="sn-pin" aria-hidden="true"><Pin size={15} /></span>{/if}
+  {#if attached && !trashed && !editing}
+    <button class="sn-pin" aria-label="핀 뽑기 (이 글에서 떼기)" use:tip={{ title: '핀 뽑기', lines: ['눌러서 이 글에서 뺍니다(글감은 남습니다)'] }}
+      onclick={(e) => { e.stopPropagation(); void detachHere(s.id); }} ondblclick={(e) => e.stopPropagation()}><Pin size={15} /></button>
+  {/if}
   {#if editing}
-    <textarea class="sn-edit" bind:value={body} onkeydown={onEditKey} rows="4" aria-label="글감 내용" placeholder="Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소  ( # 제목 · @출처 · > 인용 )"></textarea>
+    <textarea class="sn-edit" bind:this={editArea} bind:value={body} onkeydown={onEditKey} rows="4" aria-label="글감 내용" placeholder="Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소  ( # 제목 · @출처 · > 인용 )"></textarea>
     <div class="sn-ops">
       <button class="primary" onclick={saveEdit} disabled={!body.trim()}>저장</button>
       <button onclick={() => (editing = false)}>취소</button>
@@ -174,37 +186,38 @@
     {/if}
     <div class="sn-meta">
       <span class="sn-date">{dateLabel}{#if s.attachedDocs.length}{' · 꽂힌 글 '}{s.attachedDocs.length}{/if}</span>
-      <span class="sn-ops">
-        {#if trashed}
-          <button use:tip={{ title: '복구', lines: ['원래 꽂혀 있던 글에 다시 꽂힙니다'] }} aria-label="복구" onclick={() => recoverSnippet(s.id)}><Undo2 size={14} /></button>
-          <button use:tip={'완전 삭제'} aria-label="완전 삭제" onclick={() => deleteForever(s.id)}><Trash2 size={14} /></button>
-        {:else}
-          {#if attached}
-            <button use:tip={{ title: '핀 떼기', lines: ['이 글에서만 빼고 글감은 남깁니다'] }} aria-label="이 글에서 핀 떼기" onclick={() => detachHere(s.id)}><PinOff size={14} /></button>
+      <Pop bind:open={menuOpen} label="글감 메뉴" width={230}>
+        {#snippet trigger({ toggle, open: o })}
+          <button class="sn-menubtn" class:on={o} aria-haspopup="dialog" aria-expanded={o} aria-label="글감 메뉴" use:tip={'메뉴'} onclick={toggle}><Ellipsis size={16} /></button>
+        {/snippet}
+        {#snippet children({ close })}
+          {#if trashed}
+            <button class="pop-row" onclick={() => { close(); void recoverSnippet(s.id); }}><Undo2 size={16} /><span class="txt"><b>복구</b><small>원래 꽂혀 있던 글에 다시 꽂힙니다</small></span></button>
+            <button class="pop-row danger" onclick={() => { close(); void deleteForever(s.id); }}><Trash2 size={16} /><span class="txt"><b>완전 삭제</b></span></button>
           {:else}
-            <button use:tip={doc.path ? '이 글에 핀 꽂기' : '문서를 열면 핀을 꽂을 수 있습니다'} aria-label="이 글에 핀 꽂기" disabled={!doc.path} onclick={() => attachHere(s.id)}><Pin size={14} /></button>
+            {#if attached}
+              <button class="pop-row" onclick={() => { close(); void detachHere(s.id); }}><PinOff size={16} /><span class="txt"><b>핀 뽑기</b><small>이 글에서만 빼고 글감은 남깁니다</small></span></button>
+            {:else}
+              <button class="pop-row" disabled={!doc.path} onclick={() => { close(); void attachHere(s.id); }}><Pin size={16} /><span class="txt"><b>이 글에 핀 꽂기</b>{#if !doc.path}<small>문서를 열면 꽂을 수 있습니다</small>{/if}</span></button>
+            {/if}
+            <button class="pop-row" onclick={() => { close(); void startEdit(); }}><Pencil size={16} /><span class="txt"><b>수정</b><small>카드를 더블 클릭해도 됩니다</small></span></button>
+            <button class="pop-row" class:on={showSimilar} onclick={() => { showSimilar = !showSimilar; close(); }}><Sparkles size={16} /><span class="txt"><b>비슷한 글감 {showSimilar ? '숨기기' : '보기'}</b></span>{#if showSimilar}<Check size={15} />{/if}</button>
+            {#if settings.snippetColors}
+              <span class="sn-poplabel">색 바꾸기</span>
+              <div class="sn-swatches">
+                {#each SNIPPET_COLORS as c}
+                  <button class="dot" class:on={s.color === c} style:--c={COLOR_HEX[c]} use:tip={c} aria-label={`색: ${c}`} aria-pressed={s.color === c} onclick={() => { void editSnippet(s.id, { color: c }); close(); }}></button>
+                {/each}
+              </div>
+            {/if}
+            <button class="pop-row danger" onclick={() => { close(); void discardSnippet(s.id); }}><Trash2 size={16} /><span class="txt"><b>삭제</b><small>휴지통으로 보냅니다</small></span></button>
           {/if}
-          <button use:tip={{ title: '삭제', lines: ['휴지통으로 보냅니다'] }} aria-label="휴지통으로" onclick={() => discardSnippet(s.id)}><Trash2 size={14} /></button>
-        {/if}
-      </span>
+        {/snippet}
+      </Pop>
     </div>
-    {#if open && !trashed}
-      {#if settings.snippetColors}
-        <Pop bind:open={colorOpen} label="글감 색" width={200}>
-          {#snippet trigger({ toggle })}
-            <button class="sn-colorbtn" aria-haspopup="dialog" aria-label="색 바꾸기" use:tip={`색: ${s.color}`} onclick={toggle}><Palette size={13} /> 색</button>
-          {/snippet}
-          {#snippet children({ close })}
-            <div class="sn-swatches">
-              {#each SNIPPET_COLORS as c}
-                <button class="dot" class:on={s.color === c} style:--c={COLOR_HEX[c]} use:tip={c} aria-label={`색: ${c}`} aria-pressed={s.color === c} onclick={() => { void editSnippet(s.id, { color: c }); close(); }}></button>
-              {/each}
-            </div>
-          {/snippet}
-        </Pop>
-      {/if}
+    {#if showSimilar && !trashed}
       <div class="sn-similar">
-        <h4>비슷한 글감</h4>
+        <h4>비슷한 글감 <button class="sn-similar-x" aria-label="비슷한 글감 닫기" use:tip={'닫기'} onclick={() => (showSimilar = false)}>✕</button></h4>
         {#if similar.length}
           <ul>
             {#each similar as x (x.id)}
@@ -247,7 +260,16 @@
   .sn-card.open { border-color: var(--sn); }
   .sn-card { position: relative; }
   /* 메모지를 글에 꽂아 둔 핀 */
-  .sn-pin { position: absolute; top: -6px; right: 8px; color: var(--danger); transform: rotate(18deg); pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25)); }
+  .sn-pin {
+    position: absolute; top: -8px; right: 6px; padding: 3px; border: 0; background: transparent; color: var(--danger); cursor: pointer;
+    transform: rotate(18deg); transition: transform 0.12s; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25)); border-radius: 50%;
+  }
+  .sn-pin:hover { transform: rotate(0deg) translateY(-3px) scale(1.12); background: transparent; }
+  .sn-menubtn { background: none; border: none; padding: 3px; border-radius: 4px; color: var(--muted); cursor: pointer; display: inline-flex; }
+  .sn-menubtn:hover, .sn-menubtn.on { background: var(--hover); color: var(--text); }
+  .sn-poplabel { font-size: 12px; color: var(--muted); padding: 2px 8px; }
+  .sn-similar-x { background: none; border: 0; padding: 0 4px; color: var(--muted); cursor: pointer; font-size: 11px; }
+  :global(.pop-row.danger) { color: var(--danger); }
   .sn-pin :global(svg) { fill: currentColor; }
   .sn-card.selected { outline: 2px solid var(--accent); outline-offset: -1px; background: color-mix(in srgb, var(--accent) 10%, color-mix(in srgb, var(--sn) 14%, var(--surface))); }
   .sn-card.dragging { opacity: 0.45; }
@@ -290,8 +312,6 @@
     width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--bg);
     border: 1px solid var(--border-strong); border-radius: 4px; padding: 4px 6px; resize: vertical;
   }
-  .sn-colorbtn { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--muted); cursor: pointer; }
-  .sn-colorbtn:hover { background: var(--hover); color: var(--text); }
   .sn-swatches { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 10px 8px; }
   .dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; background: var(--c); cursor: pointer; padding: 0; }
   .dot.on { border-color: var(--text); }

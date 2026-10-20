@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from '../tooltip.svelte';
   import { tick } from 'svelte';
   import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -56,17 +57,17 @@
       class:invalid={!!finder.error}
     />
     <button
-      class="toggle" class:on={searchOpts.caseSensitive} title="대소문자 구분" aria-label="대소문자 구분" aria-pressed={searchOpts.caseSensitive}
+      class="toggle" class:on={searchOpts.caseSensitive} use:tip={'대소문자 구분'} aria-label="대소문자 구분" aria-pressed={searchOpts.caseSensitive}
       onclick={() => { searchOpts.caseSensitive = !searchOpts.caseSensitive; persistSearchOpts(); }}
     >Aa</button>
     <button
-      class="toggle" class:on={searchOpts.regex} title="정규식" aria-label="정규식" aria-pressed={searchOpts.regex}
+      class="toggle" class:on={searchOpts.regex} use:tip={'정규식'} aria-label="정규식" aria-pressed={searchOpts.regex}
       onclick={() => { searchOpts.regex = !searchOpts.regex; persistSearchOpts(); }}
     >.*</button>
-    <span class="count" class:err={!!finder.error} title={finder.error}>{status}</span>
-    <button class="icon-btn" title="이전 (Shift+Enter)" aria-label="이전 일치" disabled={!finder.total} onclick={() => finder.ctl?.prev()}><ChevronUp size={16} /></button>
-    <button class="icon-btn" title="다음 (Enter)" aria-label="다음 일치" disabled={!finder.total} onclick={() => finder.ctl?.next()}><ChevronDown size={16} /></button>
-    <button class="icon-btn" title="닫기 (Esc)" aria-label="검색 닫기" onclick={close}><X size={16} /></button>
+    <span class="count" class:err={!!finder.error} use:tip={finder.error}>{status}</span>
+    <button class="icon-btn" use:tip={'이전 (Shift+Enter)'} aria-label="이전 일치" disabled={!finder.total} onclick={() => finder.ctl?.prev()}><ChevronUp size={16} /></button>
+    <button class="icon-btn" use:tip={'다음 (Enter)'} aria-label="다음 일치" disabled={!finder.total} onclick={() => finder.ctl?.next()}><ChevronDown size={16} /></button>
+    <button class="icon-btn" use:tip={'닫기 (Esc)'} aria-label="검색 닫기" onclick={close}><X size={16} /></button>
   </div>
   </div>
 {/if}

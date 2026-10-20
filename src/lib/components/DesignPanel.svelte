@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from '../tooltip.svelte';
   import X from '@lucide/svelte/icons/x';
   import AlertTriangle from '@lucide/svelte/icons/triangle-alert';
   import { toast } from '../store.svelte';
@@ -240,7 +241,7 @@
               <input type="color" value={palette[k]} oninput={(e) => tryColor(k, (e.currentTarget as HTMLInputElement).value)} aria-label={`${PALETTE_LABELS[k]} 색 선택`} />
               <input class="hex" type="text" value={palette[k]} onchange={(e) => onHex(k, e)} maxlength="7" spellcheck="false" aria-label={`${PALETTE_LABELS[k]} 16진수`} />
               {#if w}
-                <span class="warn" role="img" aria-label={`대비 부족: ${w.ratio.toFixed(2)} (기준 ${w.need})`} title={`대비 ${w.ratio.toFixed(2)} — 기준 ${w.need} 미달`}>
+                <span class="warn" role="img" aria-label={`대비 부족: ${w.ratio.toFixed(2)} (기준 ${w.need})`} use:tip={`대비 ${w.ratio.toFixed(2)} — 기준 ${w.need} 미달`}>
                   <AlertTriangle size={14} /> {w.ratio.toFixed(1)}:1
                 </span>
               {/if}

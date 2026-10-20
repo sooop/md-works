@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from '../tooltip.svelte';
   import Editor from './Editor.svelte';
   import { listVersions, setVersionName, type Version } from '../history';
   import { diffText, applyHunks, blocksOf, displayBlock, displaySegs, isEmptyBlock } from '../history/diff';
@@ -103,9 +104,9 @@
           <ul class="history-list">
             {#each versions as v (v.id)}
               <li>
-                <button class:active={v.id === selectedId} onclick={() => (selectedId = v.id)} title={new Date(v.ts).toLocaleString('ko-KR')}>
+                <button class:active={v.id === selectedId} onclick={() => (selectedId = v.id)} use:tip={new Date(v.ts).toLocaleString('ko-KR')}>
                   <span class="vtitle">
-                    {#if v.name}<span class="pin" title="이름을 붙인 버전">📌 {v.name}</span>{/if}
+                    {#if v.name}<span class="pin" use:tip={'이름을 붙인 버전'}>📌 {v.name}</span>{/if}
                     <span>{relTime(v.ts)}</span>
                   </span>
                   <span class="muted">{v.content.length.toLocaleString('ko-KR')}자</span>

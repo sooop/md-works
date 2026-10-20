@@ -701,3 +701,9 @@ input.invalid { color: #c0392b; }
 }
 @media (max-width: 720px) { .sb-resizer { display: none; } }
 .sidebar header .pin-btn.on { color: var(--accent); }
+
+/* ---- 본문 선택 색: 테마의 강조색을 투명하게 섞어 회색보다 뚜렷하게 보이게 한다(코멘트·글감 담기 대상이 눈에 띄도록) ---- */
+:root { --selection-bg: color-mix(in srgb, var(--accent) 38%, transparent); }
+:root[data-theme='dark'] { --selection-bg: color-mix(in srgb, var(--accent) 52%, transparent); }
+:root .milkdown .ProseMirror *::selection { background: var(--selection-bg); }
+:root .milkdown .ProseMirror *::-moz-selection { background: var(--selection-bg); }

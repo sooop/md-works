@@ -20,6 +20,9 @@ import { useBundleHost } from './bundle/host';
 import { createServerHost } from './bundle/hosts/server';
 import { design as designState, importDesign } from './design/state.svelte';
 import { serializeDesign } from './design';
+import { trackNet } from './netBusy.svelte';
+import { followRename, expandFolder } from './docTree.svelte';
+import { searchComments } from './search/commentSearch';
 
 // 새 문서를 만들 폴더(사이드바에서 선택한 폴더, 열린 문서의 폴더). 빈 문자열이면 루트.
 export const nav = $state({ dir: '', filter: '' }); // filter: 사이드바 파일명 검색어
@@ -43,11 +46,13 @@ class ApiError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
 
-async function call<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError(data.error ?? `요청 실패 (${res.status})`, res.status);
-  return data as T;
+function call<T>(url: string, init?: RequestInit): Promise<T> {
+  return trackNet((async () => {
+    const res = await fetch(url, init);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(data.error ?? `요청 실패 (${res.status})`, res.status);
+    return data as T;
+  })());
 }
 const jsonInit = (method: string, body: unknown): RequestInit => ({
   method,
@@ -127,7 +132,8 @@ async function loadDoc(path: string) {
   doc.dirty = false;
   doc.edit = true; // 문서는 항상 편집 모드로 연다
   doc.key++;
-  void snapshot(path, f.content).catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ });
+  const text = f.content;
+  setTimeout(() => { void snapshot(path, text).catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ }); }, 2500); // 급하지 않다: 바로 다음 클릭의 요청과 디스크를 다투지 않게 미룬다
   try { localStorage.setItem(LAST_KEY, path); } catch { /* 무시 */ }
 }
 
@@ -186,6 +192,8 @@ export async function restoreVersion(content: string) {
 }
 
 // ---- 본문 검색 ----
+const allDocPaths = (nodes: TreeNode[]): string[] => nodes.flatMap((n) => (n.type === 'file' ? [n.path] : allDocPaths(n.children ?? [])));
+
 export async function searchFiles(
   query: string,
   opts: { caseSensitive: boolean; regex: boolean },
@@ -196,10 +204,14 @@ export async function searchFiles(
     `/api/search?${params}`,
     { signal },
   );
+  // 코멘트는 노트 폴더의 사이드카에 있어서 클라이언트에서 문서마다 읽어 같은 검색어로 찾는다
+  const docs = allDocPaths(tree.nodes).map((p) => ({ id: p, label: stripExt(p) }));
+  const comments = await searchComments(worksStore(), docs, query, opts).catch(() => []);
   return {
     results: r.results.map((f) => ({ id: f.path, label: stripExt(f.path), matches: f.matches, more: f.more })),
     count: r.count,
     truncated: r.truncated,
+    comments,
   };
 }
 
@@ -278,8 +290,21 @@ async function renameNodeTo(node: TreeNode, name: string) {
   const isFile = node.type === 'file';
   const next = isFile ? (/\.md$/i.test(name) ? name : `${name}.md`) : name;
   if (next === node.name) return;
+  await relocate(node, joinPath(dirname(node.path), next));
+}
+
+/** 글·폴더를 다른 폴더(destDir, '' = 최상위) 안으로 옮긴다. 자기 자신·자기 하위로는 옮길 수 없다 */
+export async function moveNode(node: TreeNode, destDir: string) {
+  const to = joinPath(destDir, node.name);
+  if (to === node.path || destDir === node.path || destDir.startsWith(node.path + '/')) return;
+  await relocate(node, to);
+  expandFolder(destDir);
+}
+
+// 이름 바꾸기·옮기기의 공통 처리: 파일을 옮기고, 이력·글감 연결·묘비·열린 문서를 새 경로로 따라가게 한다
+async function relocate(node: TreeNode, to: string) {
+  const isFile = node.type === 'file';
   if (affects(node.path) && !(await guardDirty())) return;
-  const to = joinPath(dirname(node.path), next);
   const moved = docPaths(node).filter((p) => /\.md$/i.test(p));
   try {
     await flushComments(); // 대기 중인 코멘트 저장이 옮기기 전 경로에 파일을 다시 만들지 않도록
@@ -289,6 +314,7 @@ async function renameNodeTo(node: TreeNode, name: string) {
     for (const p of moved) await clearDocGone(to + p.slice(node.path.length)).catch(() => { /* 무시 */ });
     await moveHistory(node.path, to).catch(() => { /* 무시 */ });
     await (isFile ? reattachDoc(node.path, to) : reattachPrefix(node.path, to)).catch(() => { /* 무시 */ }); // 글감의 붙은 글 경로 갱신
+    followRename(node.path, to); // 직접 정렬 순서·접힘 상태도 새 경로를 따라간다
     const reopen = affects(node.path) ? to + doc.path.slice(node.path.length) : '';
     if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = to + nav.dir.slice(node.path.length);
     await refreshTree();

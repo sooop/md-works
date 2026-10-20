@@ -253,8 +253,8 @@ describe('스탠드얼론 id ↔ 이름', () => {
     await srv.store.put('versions', ver('v9', '고아.md', '고아 이력', T), '고아.md');
     const S = standaloneDevice();
     await applyBundleWith(S.host, await build(srv, T + 1), {}, T + 2);
-    expect(await S.names()).toEqual(['a - 글.md']); // 폴더는 이름에 펼쳐지고, 글 없는 사이드카는 글을 만들지 않는다
-    const k = (await S.key('a - 글.md'))!;
+    expect(await S.names()).toEqual(['a/글.md']); // 폴더는 그대로 유지되고, 글 없는 사이드카는 글을 만들지 않는다
+    const k = (await S.key('a/글.md'))!;
     expect((await S.store.list('versions', k)).map((v) => v.id)).toEqual(['v1']);
     expect((await S.store.list<Thread>('threads', k)).map((t) => t.docKey)).toEqual([k]);
     const s1 = (await S.store.get<Snippet>('snippets', 's1'))!;

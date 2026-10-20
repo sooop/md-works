@@ -44,10 +44,14 @@ export function createWorksFs(safe) {
   async function list(coll, part) {
     const p = check(coll, part);
     const d = await partDir(coll, p);
+    const names = (await readDir(d)).filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => e.name);
     const out = [];
-    for (const e of await readDir(d)) {
-      if (!e.isFile() || !e.name.endsWith('.json')) continue;
-      try { out.push(JSON.parse(await fs.readFile(`${d}/${e.name}`, 'utf8'))); } catch { /* 깨진 파일은 건너뛴다 */ }
+    // 파일이 많으면 하나씩 읽는 왕복이 지연의 대부분이라 16개씩 묶어 읽는다(순서는 유지)
+    for (let i = 0; i < names.length; i += 16) {
+      const batch = await Promise.all(names.slice(i, i + 16).map(async (n) => {
+        try { return JSON.parse(await fs.readFile(`${d}/${n}`, 'utf8')); } catch { return null; /* 깨진 파일은 건너뛴다 */ }
+      }));
+      for (const r of batch) if (r) out.push(r);
     }
     return out;
   }

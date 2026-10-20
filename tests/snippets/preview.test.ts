@@ -31,3 +31,11 @@ describe('preview', () => {
     expect(preview('가나다', '').map((p) => p.t).join('')).toBe('가나다');
   });
 });
+
+import { highlight } from '../../src/lib/search/nameMatch';
+describe('highlight', () => {
+  it('일치 구간을 나눈다', () => {
+    expect(highlight('회의록 정리', '의록')).toEqual([{ t: '회', hit: false }, { t: '의록', hit: true }, { t: ' 정리', hit: false }]);
+    expect(highlight('abc', '')).toEqual([{ t: 'abc', hit: false }]);
+  });
+});

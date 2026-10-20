@@ -33,6 +33,15 @@ export async function listSnippets(): Promise<Snippet[]> {
   return (await worksStore().list<Snippet>('snippets')).filter((s) => !s.deletedAt).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** 휴지통 안팎을 한 번의 읽기로 나눠 돌려준다(서버 모드에서는 읽기 한 번이 파일 수만큼의 디스크 접근이다) */
+export async function listSnippetsSplit(): Promise<{ active: Snippet[]; trashed: Snippet[] }> {
+  const all = await worksStore().list<Snippet>('snippets');
+  return {
+    active: all.filter((s) => !s.deletedAt).sort((a, b) => b.updatedAt - a.updatedAt),
+    trashed: all.filter((s) => s.deletedAt && !s.purged).sort((a, b) => b.deletedAt! - a.deletedAt!),
+  };
+}
+
 export async function listTrashedSnippets(): Promise<Snippet[]> {
   return (await worksStore().list<Snippet>('snippets')).filter((s) => s.deletedAt && !s.purged).sort((a, b) => b.deletedAt! - a.deletedAt!);
 }

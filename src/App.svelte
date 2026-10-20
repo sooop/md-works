@@ -5,6 +5,7 @@
   import TableViewer from './lib/components/TableViewer.svelte';
   import TooltipHost from './lib/components/TooltipHost.svelte';
   import ContextMenuHost from './lib/components/ContextMenuHost.svelte';
+  import BusyBar from './lib/components/BusyBar.svelte';
   import { settings, applyTheme } from './lib/store.svelte';
 
   let { Shell }: { Shell: Component } = $props();
@@ -24,3 +25,4 @@
 <TableViewer />
 <TooltipHost />
 <ContextMenuHost />
+<BusyBar />

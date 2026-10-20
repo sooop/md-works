@@ -4,7 +4,8 @@
 // 문서 DB(works-standalone)는 standalone-mode.svelte.ts 가 만든다. 여기서는 같은 DB 를 따로 열어 docs/images 스토어만 쓴다.
 import type { WorksStore } from '../../works/store';
 import type { Design } from '../../design';
-import { relinkImages } from '../../archive';
+import { relinkNested } from '../../archive';
+import { fullPath, splitPath } from '../../docTree';
 import { basename, dirname, isExternalSrc, joinPath, replaceImages, safeDecode, sanitizeName } from '../../utils';
 import { detachSnippetsFrom } from '../docRemoval';
 import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from '../host';
@@ -22,7 +23,8 @@ export interface StandaloneHostOptions {
   setImporting?: (on: boolean) => void;
 }
 
-interface Rec { id: string; name: string; content: string; updated: number }
+interface Rec { id: string; name: string; folder?: string; content: string; updated: number }
+const fullOf = (r: Rec) => fullPath(r.folder ?? '', r.name);
 interface Img { id: string; blob: Blob; created: number }
 
 const IMG_MIME: Record<string, string> = {
@@ -53,7 +55,14 @@ function openDb(name: string): Promise<IDBDatabase> {
   });
 }
 
-/** 번들의 글 경로를 스탠드얼론의 평평한 이름으로: 'dir/글.md' → 'dir - 글.md' (archive.ts 의 parseArchive 와 같은 규칙) */
+/** 번들의 글 경로를 '폴더/이름.md' 로 다듬는다(단일 모드도 폴더를 가진다). 구간마다 파일명에 못 쓰는 글자를 걷어낸다 */
+export function normalizePath(path: string): string {
+  const segs = path.split('/').map((s) => sanitizeName(s)).filter(Boolean);
+  const stem = (segs.pop() ?? '').replace(/\.(md|markdown|txt)$/i, '').trim();
+  return [...segs, `${stem || '새 문서'}.md`].join('/');
+}
+
+/** (옛 방식) 번들의 글 경로를 평평한 이름으로 합친다: 'dir/글.md' → 'dir - 글.md' (archive.ts 의 parseArchive 와 같은 규칙) */
 export function flattenName(path: string): string {
   const segs = path.split('/').filter(Boolean);
   const stem = (segs.pop() ?? '').replace(/\.(md|markdown|txt)$/i, '');
@@ -87,17 +96,17 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
 
     async prepare() {
       await opts.prepare?.();
-      lower = new Map((await allDocs()).map((r) => [r.name.toLowerCase(), r.name]));
+      lower = new Map((await allDocs()).map((r) => [fullOf(r).toLowerCase(), fullOf(r)]));
     },
     normalizeName(name) {
-      const flat = flattenName(name);
-      return lower.get(flat.toLowerCase()) ?? flat;
+      const p = normalizePath(name);
+      return lower.get(p.toLowerCase()) ?? p;
     },
     async listDocs(): Promise<HostDocInfo[]> {
-      return (await allDocs()).map((r) => ({ name: r.name, key: r.id, updatedAt: r.updated }));
+      return (await allDocs()).map((r) => ({ name: fullOf(r), key: r.id, updatedAt: r.updated }));
     },
     async deleteDoc(name) {
-      const rec = (await allDocs()).find((r) => r.name === name);
+      const rec = (await allDocs()).find((r) => fullOf(r) === name);
       if (!rec) return;
       const d = await db();
       const del = (store: 'docs' | 'comments') => new Promise<void>((resolve, reject) => {
@@ -117,11 +126,11 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
       const rec = await req<Rec | undefined>('docs', 'readonly', (s) => s.get(info.key));
       const raw = rec?.content ?? '';
       if (!raw.includes('idb:')) return { content: raw, assets: [], raw };
-      const { text, assets } = await relinkImages(info.name.replace(/\.md$/i, ''), raw, loadImage);
+      const { text, assets } = await relinkNested(info.name.replace(/\.md$/i, ''), raw, loadImage);
       return { content: text, assets, raw };
     },
     async textToBundle(stem, text) {
-      const { text: out, assets } = await relinkImages(stem, text, loadImage, true);
+      const { text: out, assets } = await relinkNested(stem, text, loadImage, true);
       return { text: out, assets: assets as BundleAsset[] };
     },
     beginImport(assets): ImportSession {
@@ -150,9 +159,10 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
           return r.text;
         },
         async putDoc(_src, name, content, updatedAt) {
-          byName ??= new Map((await allDocs()).map((r) => [r.name, r]));
+          byName ??= new Map((await allDocs()).map((r) => [fullOf(r), r]));
           const cur = byName.get(name);
-          const rec: Rec = cur ? { ...cur, content, updated: updatedAt } : { id: crypto.randomUUID(), name: basename(name), content, updated: updatedAt };
+          const { folder, name: leaf } = splitPath(name);
+          const rec: Rec = cur ? { ...cur, content, updated: updatedAt } : { id: crypto.randomUUID(), name: leaf, ...(folder ? { folder } : {}), content, updated: updatedAt };
           await req('docs', 'readwrite', (s) => s.put(rec));
           byName.set(name, rec);
           return rec.id;

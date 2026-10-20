@@ -52,6 +52,15 @@ export async function relinkImages(
   return { text, assets };
 }
 
+/** relinkImages 의 폴더 버전: stem 이 '폴더/이름' 이면 이미지는 그 폴더 안의 `assets/<이름>/` 에 둔다(링크는 글 기준 상대 경로) */
+export async function relinkNested(stem: string, content: string, loadImage: (id: string) => Promise<Blob | null>, stable = false): Promise<RelinkedText> {
+  const i = stem.lastIndexOf('/');
+  const r = await relinkImages(stem.slice(i + 1), content, loadImage, stable);
+  if (i < 0) return r;
+  const dir = stem.slice(0, i);
+  return { text: r.text, assets: r.assets.map((a) => ({ ...a, path: `${dir}/${a.path}` })) };
+}
+
 // 문서와 `idb:` 이미지를 zip 으로 묶는다. 이미지는 문서별 assets 폴더로 복사하고 링크를 상대 경로로 바꾼다.
 export async function buildArchive(
   docs: ArchiveDoc[],
@@ -60,7 +69,7 @@ export async function buildArchive(
   const files: Zippable = {};
   const enc = new TextEncoder();
   for (const d of docs) {
-    const { text, assets } = await relinkImages(stripExt(d.name), d.content, loadImage);
+    const { text, assets } = await relinkNested(stripExt(d.name), d.content, loadImage);
     for (const a of assets) files[a.path] = [a.data, { level: 0 }];
     files[d.name] = enc.encode(text);
     if (d.comments?.length) files[`${COMMENTS_DIR}${d.name}.json`] = enc.encode(JSON.stringify({ version: 1, comments: d.comments }, null, 2));

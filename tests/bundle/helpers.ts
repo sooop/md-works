@@ -66,19 +66,23 @@ export function standaloneDevice(extra: { design?: { current(): string; apply(d:
       r.onerror = () => reject(r.error);
     });
   };
-  const recs = () => tx<{ id: string; name: string; content: string; updated: number }[]>('docs', 'readonly', (s) => s.getAll());
+  // 단일 모드는 글을 folder + name 으로 보관하고, 번들·테스트의 글 이름은 '폴더/이름.md' 경로다
+  type R = { id: string; name: string; folder?: string; content: string; updated: number };
+  const full = (r: R) => (r.folder ? `${r.folder}/${r.name}` : r.name);
+  const recs = async () => (await tx<R[]>('docs', 'readonly', (s) => s.getAll())).map((r) => ({ ...r, path: full(r) }));
   const device: Device & { dbName: string; applied: number } = {
     host, store, dbName,
     get applied() { return dev.applied; },
     async putDoc(name, content, updated) {
-      const cur = (await recs()).find((r) => r.name === name);
+      const cur = (await recs()).find((r) => r.path === name);
       const id = cur?.id ?? crypto.randomUUID();
-      await tx('docs', 'readwrite', (s) => s.put({ id, name, content, updated }));
+      const i = name.lastIndexOf('/');
+      await tx('docs', 'readwrite', (s) => s.put({ id, name: name.slice(i + 1), ...(i >= 0 ? { folder: name.slice(0, i) } : {}), content, updated }));
       return id;
     },
-    async doc(name) { return (await recs()).find((r) => r.name === name)?.content; },
-    async key(name) { return (await recs()).find((r) => r.name === name)?.id; },
-    async names() { return (await recs()).map((r) => r.name).sort(); },
+    async doc(name) { return (await recs()).find((r) => r.path === name)?.content; },
+    async key(name) { return (await recs()).find((r) => r.path === name)?.id; },
+    async names() { return (await recs()).map((r) => r.path).sort(); },
     async versions(name) {
       const k = await device.key(name);
       if (!k) return [];

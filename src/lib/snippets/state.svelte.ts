@@ -1,7 +1,7 @@
 // 글감함 UI 상태와 동작. 저장은 works/snippets.ts → worksStore() 를 거친다.
 import { doc, toast, errMsg, askConfirm } from '../store.svelte';
 import {
-  createSnippet, listSnippets, listTrashedSnippets, updateSnippet, attachSnippet, detachSnippet, trashSnippet, restoreSnippet, purgeSnippet,
+  createSnippet, listSnippetsSplit, updateSnippet, attachSnippet, detachSnippet, trashSnippet, restoreSnippet, purgeSnippet,
   reorderSnippets, setSnippetColors, trashSnippets,
 } from '../works/snippets';
 import { assignOrders, moveBlock, shiftBlock } from '../works/snippetOrder';
@@ -33,14 +33,27 @@ export const sn = $state({
 // 오른쪽 사이드바가 열린 채 시작하면 화면이 저장소 등록보다 먼저 떠서 첫 읽기를 건너뛴다 — 등록되면 다시 읽는다
 onWorksReady(() => void reload());
 
-export async function reload() {
-  if (!hasWorksStore()) return; // 시작 직후엔 아직 저장소가 없다 — 글감 탭을 열 때 다시 읽는다
-  try {
-    [sn.active, sn.trashed] = await Promise.all([listSnippets(), listTrashedSnippets()]);
-    sn.loaded = true;
-  } catch (e) {
-    toast(`글감을 읽지 못했습니다: ${errMsg(e)}`, 'error');
-  }
+let inflight: Promise<void> | null = null;
+let again = false;
+export function reload(): Promise<void> {
+  if (!hasWorksStore()) return Promise.resolve(); // 시작 직후엔 아직 저장소가 없다 — 글감 탭을 열 때 다시 읽는다
+  if (inflight) { again = true; return inflight; } // 읽는 중에 또 부르면 끝난 뒤 한 번만 더 읽는다(요청이 쌓여 느려지지 않게)
+  inflight = (async () => {
+    try {
+      do {
+        again = false;
+        const r = await listSnippetsSplit();
+        sn.active = r.active;
+        sn.trashed = r.trashed;
+        sn.loaded = true;
+      } while (again);
+    } catch (e) {
+      toast(`글감을 읽지 못했습니다: ${errMsg(e)}`, 'error');
+    } finally {
+      inflight = null;
+    }
+  })();
+  return inflight;
 }
 
 /** 현재 화면에 보일 글감: 문구 검색이 있으면 관련도 순, 없으면 보기·색·검색어 필터 */

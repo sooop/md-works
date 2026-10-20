@@ -194,15 +194,15 @@ describe.each([['스탠드얼론', standaloneDevice], ['서버', serverDevice]] 
 });
 
 describe('서버 → 스탠드얼론 이름 변환', () => {
-  it('폴더 안의 글을 서버에서 지우면 스탠드얼론의 평평한 이름의 글이 삭제 후보가 된다', async () => {
+  it('폴더 안의 글을 서버에서 지우면 스탠드얼론의 같은 경로 글이 삭제 후보가 된다', async () => {
     const S = await serverDevice();
     const H = standaloneDevice();
     await S.putDoc('폴더/글.md', '본문', T);
     await applyBundleWith(H.host, await build(S, T + 1), {}, T + 2);
-    expect(await H.names()).toEqual(['폴더 - 글.md']);
+    expect(await H.names()).toEqual(['폴더/글.md']);
     await remove(S, '폴더/글.md', T + 100);
     const pre = await previewBundleWith(H.host, await build(S, T + 101), T + 102);
-    expect(pre.deletions).toEqual([{ name: '폴더 - 글.md', action: 'delete' }]);
+    expect(pre.deletions).toEqual([{ name: '폴더/글.md', action: 'delete' }]);
     await applyBundleWith(H.host, await build(S, T + 101), { applyDeletions: true }, T + 103);
     expect(await H.names()).toEqual([]);
   });

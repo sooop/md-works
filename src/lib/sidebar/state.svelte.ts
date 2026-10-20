@@ -34,10 +34,12 @@ export function setLeftWidth(w: number, save = true) { left.width = clampLeftWid
 export function togglePin() { left.pinned = !left.pinned; left.open = false; persist(); }
 export function openLeft() { left.open = true; }
 export function closeLeft() { left.open = false; }
-/** 상단 버튼: 고정 상태면 숨기고, 아니면 팝오버를 여닫는다 */
+/** 상단 버튼: 눌러서 연 것은 팝오버가 아니라 본문 옆 패널(고정)이다. 고정 상태에서 누르면 숨긴다(모바일은 시트를 여닫는다) */
 export function toggleLeft() {
-  if (!viewport.mobile && left.pinned) { left.pinned = false; left.open = false; persist(); }
-  else left.open = !left.open;
+  if (viewport.mobile) { left.open = !left.open; return; }
+  left.pinned = !left.pinned;
+  left.open = false;
+  persist();
 }
 /** 본문 옆에 붙어 있는가(핀 고정일 때만). 아니면 팝오버로 겹쳐 뜬다 */
 export const isDocked = (): boolean => !viewport.mobile && left.pinned;

@@ -162,16 +162,15 @@ export function createApi(rootInput, opts = {}) {
 
   async function buildTree(dirAbs) {
     const entries = await fs.readdir(dirAbs, { withFileTypes: true });
-    const out = [];
-    for (const e of entries) {
-      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
+    // 폴더·파일 상태 조회를 한꺼번에 시작한다(하나씩 기다리면 글이 많을 때 트리를 읽는 데 오래 걸린다)
+    const made = await Promise.all(entries.map(async (e) => {
+      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) return null;
       const abs = path.join(dirAbs, e.name);
-      if (e.isDirectory()) {
-        out.push({ name: e.name, path: rel(abs), type: 'dir', children: await buildTree(abs) });
-      } else if (e.isFile() && isMd(e.name)) {
-        out.push({ name: e.name, path: rel(abs), type: 'file', mtime: Math.round((await fs.stat(abs)).mtimeMs) });
-      }
-    }
+      if (e.isDirectory()) return { name: e.name, path: rel(abs), type: 'dir', children: await buildTree(abs) };
+      if (e.isFile() && isMd(e.name)) return { name: e.name, path: rel(abs), type: 'file', mtime: Math.round((await fs.stat(abs)).mtimeMs) };
+      return null;
+    }));
+    const out = made.filter(Boolean);
     out.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name, 'ko') : a.type === 'dir' ? -1 : 1));
     return out;
   }

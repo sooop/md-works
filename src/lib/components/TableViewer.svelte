@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tip } from '../tooltip.svelte';
   // 문서 안 표를 큰 모달의 읽기 전용 표로 보여 준다. 머리글을 누르면 그 열로 정렬(오름차순 → 내림차순 → 원래 순서).
   // 셀 안 서식(굵게·링크)은 일반 텍스트로 보인다. 정렬은 보기 전용이라 문서에 영향이 없다.
   import { tableViewer } from '../tableViewer.svelte';
@@ -48,7 +49,7 @@
             <tr>
               {#each table.header as h, i}
                 <th>
-                  <button type="button" onclick={() => toggleSort(i)} title="클릭하면 이 열로 정렬">
+                  <button type="button" onclick={() => toggleSort(i)} use:tip={'클릭하면 이 열로 정렬'}>
                     {h}{#if sort?.col === i}<span class="arrow">{sort.dir === 1 ? '▲' : '▼'}</span>{/if}
                   </button>
                 </th>

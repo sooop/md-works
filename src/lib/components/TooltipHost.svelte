@@ -28,7 +28,7 @@
 
 <style>
   .tip {
-    position: fixed; z-index: 100; max-width: min(320px, calc(100vw - 16px)); pointer-events: none;
+    position: fixed; z-index: 2000; max-width: min(320px, calc(100vw - 16px)); pointer-events: none;
     padding: 6px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45;
     background: var(--text); color: var(--bg); box-shadow: var(--shadow);
     animation: tip-in 0.12s ease-out;

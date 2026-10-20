@@ -5,8 +5,6 @@
   interface Props {
     /** 열린 문서가 있는가 — 없으면 문서 관련 항목(이력·내보내기·템플릿)을 숨긴다 */
     hasDoc: boolean;
-    rightOpen: boolean;
-    onRight: () => void;
     onSettings: () => void;
     onBackup: () => void;
     /** 백업한 지 오래됨 — 메뉴 아이콘에 점을 찍어 알린다 */
@@ -27,7 +25,7 @@
     hint?: string;
     actions?: { label: string; run: () => void }[];
   }
-  let { hasDoc, rightOpen, onRight, onSettings, onBackup, backupStale = false, onHistory, onDocx, onPrint, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
+  let { hasDoc, onSettings, onBackup, backupStale = false, onHistory, onDocx, onPrint, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
 
   let open = $state(false);
 
@@ -51,9 +49,6 @@
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="backdrop" onclick={() => (open = false)}></div>
     <div class="popover menu-list" role="menu">
-      <button role="menuitemcheckbox" aria-checked={rightOpen} onclick={() => run(onRight)}>
-        <span class="check">{#if rightOpen}<Check size={14} />{/if}</span>글감·코멘트 패널
-      </button>
       {#if hasDoc}
       <button role="menuitem" onclick={() => run(onHistory)}>이전 버전 보기 (이력)</button>
       {#if onImages}
