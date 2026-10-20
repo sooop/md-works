@@ -8,6 +8,7 @@ import { fullPath, splitPath, withParents, byName } from './docTree';
 import { followRename, expandFolder } from './docTree.svelte';
 import { searchComments } from './search/commentSearch';
 import { exportDocx, isImportable, readImport } from './docx-flow';
+import { IMPORT_ACCEPT, IMPORT_LABEL } from './pandoc/importFormats';
 import { buildMatcher, searchText } from '../../server/searchCore.js';
 import type { SearchResponse } from './search/types';
 import { snapshot, removeHistory, allContents } from './history';
@@ -575,7 +576,7 @@ export async function importFiles(files: File[]) {
   const zips = files.filter(isZip);
   const list = files.filter((f) => !isZip(f) && isImportable(f));
   if (!zips.length && !list.length) {
-    toast('.md / .txt / .docx / .zip 파일만 열 수 있습니다', 'error');
+    toast(`${IMPORT_LABEL} · .zip 파일만 열 수 있습니다`, 'error');
     return;
   }
   for (const f of zips) await importZip(f);
@@ -586,7 +587,7 @@ export function openPicker() {
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
-  input.accept = '.md,.markdown,.txt,.docx,.zip,text/markdown,text/plain,application/zip';
+  input.accept = `${IMPORT_ACCEPT},.zip,text/markdown,text/plain,application/zip`;
   input.onchange = () => { void importFiles([...(input.files ?? [])]); };
   input.click();
 }

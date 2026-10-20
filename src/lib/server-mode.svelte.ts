@@ -7,6 +7,7 @@ import {
   isExternalSrc, replaceImages, downloadText, writeClipboard,
 } from './utils';
 import { exportDocx, isImportable, readImport } from './docx-flow';
+import { IMPORT_LABEL } from './pandoc/importFormats';
 import { snapshot, moveHistory, removeHistory } from './history';
 import type { SearchResponse, FileHit } from './search/types';
 import { useBackend, flushComments } from './comments/store.svelte';
@@ -439,11 +440,11 @@ export async function createFromText(name: string, text: string) {
   }
 }
 
-// 파일 드롭: .md/.txt/.docx 를 새 문서로. 한 개면 이름을 확인하고, 여러 개면 원본 이름으로 만든다.
+// 파일 드롭: .md/.txt 및 pandoc 이 읽는 형식(docx·html·odt …)을 새 문서로. 한 개면 이름을 확인하고, 여러 개면 원본 이름으로 만든다.
 export async function handleDrop(files: File[]) {
   const list = files.filter(isImportable);
   if (!list.length) {
-    toast('.md / .txt / .docx 파일만 새 문서로 만들 수 있습니다', 'error');
+    toast(`${IMPORT_LABEL} 파일만 새 문서로 만들 수 있습니다`, 'error');
     return;
   }
   for (const file of list) {
@@ -455,7 +456,7 @@ export async function handleDrop(files: File[]) {
         if (!picked) return;
         stem = picked.replace(/\.md$/i, '');
       }
-      await createFromContent(stem, imp.content, { splitImages: imp.fromDocx });
+      await createFromContent(stem, imp.content, { splitImages: imp.converted });
     } catch (e) {
       toast(`'${file.name}': ${errMsg(e)}`, 'error');
     }

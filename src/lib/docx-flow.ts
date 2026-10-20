@@ -1,6 +1,7 @@
-// 두 모드가 공유하는 가져오기/내보내기 흐름 (.md/.txt/.docx 읽기, markdown → docx 내려받기)
+// 두 모드가 공유하는 가져오기/내보내기 흐름 (.md/.txt 및 pandoc 이 읽는 형식 가져오기, markdown → docx 내려받기)
 import { ensurePandoc } from './pandoc/client';
-import { docxToMarkdown, markdownToDocx, swapExt } from './pandoc/docx';
+import { docxToMarkdown, importToMarkdown, markdownToDocx, swapExt } from './pandoc/docx';
+import { pandocFormatOf } from './pandoc/importFormats';
 import { status, toast, withStatus } from './store.svelte';
 import { downloadBlob, stripExt } from './utils';
 
@@ -8,12 +9,14 @@ export interface ImportedDoc {
   /** 확장자가 .md 인 문서 이름 */
   name: string;
   content: string;
-  fromDocx: boolean;
+  /** pandoc 변환을 거쳤는지 (본문에 Base64 이미지가 들어 있을 수 있다) */
+  converted: boolean;
 }
 
 export const isDocxFile = (f: File) => /\.docx$/i.test(f.name);
 export const isTextDocFile = (f: File) => /\.(md|markdown|txt)$/i.test(f.name) || f.type === 'text/markdown';
-export const isImportable = (f: File) => isDocxFile(f) || isTextDocFile(f);
+export const isPandocFile = (f: File) => !!pandocFormatOf(f.name);
+export const isImportable = (f: File) => isTextDocFile(f) || isPandocFile(f);
 
 // pandoc 엔진 준비(스탠드얼론은 첫 사용 때 내려받기)를 진행 표시와 함께 기다린다
 async function prepareEngine(set: (t: string) => void) {
@@ -25,14 +28,15 @@ async function prepareEngine(set: (t: string) => void) {
 
 export async function readImport(file: File): Promise<ImportedDoc> {
   const stem = stripExt(file.name) || '새 문서';
-  if (!isDocxFile(file)) {
-    return { name: `${stem}.md`, content: await file.text(), fromDocx: false };
+  const fmt = pandocFormatOf(file.name);
+  if (!fmt) {
+    return { name: `${stem}.md`, content: await file.text(), converted: false };
   }
   return withStatus('pandoc 엔진을 준비하는 중…', async (set) => {
     await prepareEngine(set);
-    const r = await docxToMarkdown(file);
+    const r = fmt.from === 'docx' ? await docxToMarkdown(file) : await importToMarkdown(file, fmt.from);
     if (r.skippedImageCount > 0) toast(`브라우저가 표시할 수 없는 이미지 ${r.skippedImageCount}개는 제외했습니다`);
-    return { name: `${stem}.md`, content: r.markdown, fromDocx: true };
+    return { name: `${stem}.md`, content: r.markdown, converted: true };
   });
 }
 

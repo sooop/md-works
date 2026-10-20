@@ -1,5 +1,5 @@
 <script lang="ts">
-  // 창 전체에서 문서 파일(.md/.txt/.docx) 드롭을 받는다.
+  // 창 전체에서 문서 파일(.md/.txt 및 pandoc 이 읽는 형식) 드롭을 받는다.
   // 이미지 파일은 에디터의 자체 드롭 처리(이미지 삽입)에 맡긴다.
   export interface DropItem {
     file: File;
@@ -54,5 +54,5 @@
 <svelte:window ondragentercapture={enter} ondragleavecapture={leave} ondragovercapture={over} ondropcapture={drop} />
 
 {#if dragging}
-  <div class="drop-overlay">.md · .txt · .docx · .zip 파일을 (백업 .mwb · 조각 .mwb.001… 은 가져오기로) 여기에 놓아 새 문서 만들기</div>
+  <div class="drop-overlay">.md · .txt · .docx · .html · .odt · .epub 등 · .zip 파일을 (백업 .mwb · 조각 .mwb.001… 은 가져오기로) 여기에 놓아 새 문서 만들기</div>
 {/if}

@@ -169,7 +169,7 @@
         <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} use:tip={{ title: '모든 문서에서 검색', kbd: 'Ctrl+Shift+F' }}>검색</button>
       </div>
       <div class="tabpane" hidden={ui.tab !== 'files'}>
-        <DocTree nodes={tree.nodes} ctl={treeCtl} bind:filter={nav.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx 파일을 끌어다 놓으세요." />
+        <DocTree nodes={tree.nodes} ctl={treeCtl} bind:filter={nav.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx · .html · .odt · .epub 등의 파일을 끌어다 놓으세요." />
       </div>
       <div class="tabpane" hidden={ui.tab !== 'search'}>
         <SearchPanel run={searchFiles} onOpen={openDoc} activeId={doc.path} />

@@ -74,7 +74,15 @@ export async function inlineMedia(
 // "couldn't unpack docx container: not enough bytes"). 앱과 `tests/pandoc.test.ts`가
 // 같은 옵션을 쓰도록 빌더 함수로 분리해 둔다.
 export function buildDocxImportOptions(): Record<string, unknown> {
-  return { from: 'docx', to: 'gfm', wrap: 'none', 'input-files': ['in.docx'], 'extract-media': 'media' }
+  return { from: 'docx', to: 'gfm-raw_html', wrap: 'none', 'input-files': ['in.docx'], 'extract-media': 'media' }
+}
+
+/**
+ * docx 외 형식 가져오기 옵션. 결과의 raw HTML(`<div>`·`<span style>` 등)은 지운다(`gfm-raw_html`).
+ * 입력 파일은 확장자를 살려 `in.<ext>` 로 둔다(csv/tsv 처럼 이름으로 구분하는 읽기 대비).
+ */
+export function buildImportOptions(from: string, inputName: string): Record<string, unknown> {
+  return { from, to: 'gfm-raw_html', wrap: 'none', 'input-files': [inputName], 'extract-media': 'media' }
 }
 
 export function buildDocxExportOptions(): Record<string, unknown> {
@@ -90,6 +98,14 @@ export function buildDocxExportOptions(): Record<string, unknown> {
 // ── 가져오기: docx → markdown ────────────────────────────────────────────────
 export async function docxToMarkdown(file: File): Promise<DocxImportResult> {
   const result = await runPandoc(buildDocxImportOptions(), { 'in.docx': file })
+  const { markdown, skippedImageCount } = await inlineMedia(result.stdout, result.mediaFiles)
+  return { markdown, warningCount: result.warnings.length, skippedImageCount }
+}
+
+/** docx 이외 pandoc 입력 형식(html·odt·epub·rtf …)을 마크다운으로 바꾼다. */
+export async function importToMarkdown(file: File, from: string): Promise<DocxImportResult> {
+  const inputName = `in.${extOf(file.name) || from}`
+  const result = await runPandoc(buildImportOptions(from, inputName), { [inputName]: file })
   const { markdown, skippedImageCount } = await inlineMedia(result.stdout, result.mediaFiles)
   return { markdown, warningCount: result.warnings.length, skippedImageCount }
 }
