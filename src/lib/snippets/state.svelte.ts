@@ -7,7 +7,7 @@ import {
 import { assignOrders, moveBlock, shiftBlock } from '../works/snippetOrder';
 import { addRange, inListOrder, pruneSelection, toggleId } from './selection';
 import type { Snippet, SnippetColor, SnippetSource } from '../works/types';
-import { hasWorksStore } from '../works/store';
+import { hasWorksStore, onWorksReady } from '../works/store';
 import { openRight } from '../rightbar/state.svelte';
 import { filterSnippets, findByPhrase, type SnippetView } from './filter';
 
@@ -29,6 +29,9 @@ export const sn = $state({
   dragIds: [] as string[], // 끌고 있는 글감들(없으면 드래그 중 아님)
   dropIndex: -1, // 놓을 위치(보이는 목록 기준 삽입 인덱스, -1 = 없음)
 });
+
+// 오른쪽 사이드바가 열린 채 시작하면 화면이 저장소 등록보다 먼저 떠서 첫 읽기를 건너뛴다 — 등록되면 다시 읽는다
+onWorksReady(() => void reload());
 
 export async function reload() {
   if (!hasWorksStore()) return; // 시작 직후엔 아직 저장소가 없다 — 글감 탭을 열 때 다시 읽는다
@@ -90,7 +93,7 @@ export function selectRangeTo(id: string) {
   sn.selected = addRange(sn.selected, visibleIds(), sn.anchor, id);
   sn.anchor = id;
 }
-export const clearSelection = () => { sn.selected = []; };
+export const clearSelection = () => { sn.selected = []; sn.anchor = ''; }; // 해제하면 Shift 범위의 기준도 비운다(이전 클릭 기준으로 엉뚱한 범위가 잡히지 않게)
 export function setSelectMode(on: boolean) { sn.selectMode = on; }
 /** 보이는 목록에서 사라진 카드를 선택에서 뺀다 */
 export function pruneSelected() {

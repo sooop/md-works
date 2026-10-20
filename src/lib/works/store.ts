@@ -19,7 +19,16 @@ export interface WorksStore {
 
 let current: WorksStore | undefined;
 /** 셸이 시작할 때 모드에 맞는 구현을 등록한다 */
-export function useWorksStore(store: WorksStore) { current = trackWrites(store, () => writeListener?.()); }
+export function useWorksStore(store: WorksStore) {
+  current = trackWrites(store, () => writeListener?.());
+  const fns = [...readyFns];
+  readyFns.clear();
+  for (const fn of fns) fn();
+}
+// 저장소가 등록되기 전에 화면이 먼저 떠서 읽기를 건너뛴 쪽이, 등록되는 순간 다시 읽을 수 있게 한다.
+const readyFns = new Set<() => void>();
+/** 저장소가 이미 등록돼 있으면 바로, 아니면 등록되는 순간 한 번 호출한다 */
+export function onWorksReady(fn: () => void) { if (current) fn(); else readyFns.add(fn); }
 // 쓰기 감지(백업의 '마지막 변경 시각'). 어떤 쓰기든 성공하면 알린다.
 let writeListener: (() => void) | undefined;
 export function onWorksWrite(fn: () => void) { writeListener = fn; }
