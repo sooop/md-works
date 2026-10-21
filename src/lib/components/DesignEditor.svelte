@@ -217,7 +217,7 @@
         {#snippet ccard(id: string, name: string, t: { light: Record<HlKey, string>; dark: Record<HlKey, string> }, sub: string)}
           {@const active = codeSel.id === id}
           <button class="pcard" class:on={active} onclick={() => setCodeTheme(id)} aria-pressed={active} aria-label={`코드 테마 ${name}`}>
-            <CodeSample palette={hlOf(t)} bg={codePal.codeBg} fg={codePal.text} lines={4} />
+            <span class="swatch" style:background={codePal.codeBg}>{#each HL_KEYS as k}<i style:background={hlOf(t)[k]} title={HL_LABELS[k]}></i>{/each}</span>
             <span class="pc-name">{name}{#if sub}<span class="sub">{sub}</span>{/if}{#if active}<Check size={13} />{/if}</span>
           </button>
         {/snippet}
@@ -439,8 +439,10 @@
   .gen button { display: inline-flex; align-items: center; gap: 6px; }
   .fpw { flex: 1; min-width: 200px; max-width: 360px; }
   .pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-  .pcard { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface); text-align: left; width: 100%; }
+  .pcard { display: flex; flex-direction: column; align-items: stretch; min-width: 0; gap: 6px; padding: 8px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--surface); text-align: left; width: 100%; }
   .pcard:hover { background: var(--hover); }
+  .swatch { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px; border-radius: 6px; }
+  .swatch i { width: 14px; height: 14px; border-radius: 50%; }
   .pcard.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
   .pcard.add { align-items: center; justify-content: center; flex-direction: row; gap: 8px; color: var(--muted); border-style: dashed; min-height: 74px; }
   .pc-sample { display: flex; align-items: center; gap: 5px; padding: 12px 10px; border-radius: 7px; border: 1px solid; }

@@ -29,7 +29,7 @@
 {/each}</pre>
 
 <style>
-  .cs { margin: 0; padding: 8px 10px; border-radius: 6px; font-family: var(--ed-code-font, var(--font-code)); font-size: 12px; line-height: 1.55; overflow: hidden; white-space: pre; }
+  .cs { margin: 0; width: 100%; min-width: 0; box-sizing: border-box; align-self: stretch; text-align: left; padding: 8px 10px; border-radius: 6px; font-family: var(--ed-code-font, var(--font-code)); font-size: 12px; line-height: 1.55; overflow: hidden; white-space: pre; }
   .ln { display: block; }
   .it { font-style: italic; }
 </style>
