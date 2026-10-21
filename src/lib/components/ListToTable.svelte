@@ -1,7 +1,7 @@
 <script lang="ts">
   // JSON·YAML·마크다운 목록(과 CSV·TSV·GFM·아스키·HTML 표 글자)을 붙여넣어 표로 바꿔 커서 위치에 넣는 창.
   // 형식은 내용을 보고 자동으로 정한다. 읽을 수 없으면 오류만 보이고 삽입 단추가 꺼진다.
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import Switch from './Switch.svelte';
   import { importToGrid, type InputFormat, type ImportResult } from '../tableList';
   import { listImport } from '../tableListUi.svelte';
@@ -31,8 +31,11 @@
   $effect(() => {
     if (listImport.open) {
       const s = listImport.src;
-      text = s?.text ?? ''; live = text; html = undefined; headerText = ''; replaceOrig = false;
-      if (s) listImport.format = s.format; // 코드 블록 언어에 맞춘다
+      // 여는 순간에만 비운다. text 를 읽는 쓰기가 의존성이 되면 타이핑·붙여넣기마다 다시 비워진다
+      untrack(() => {
+        text = s?.text ?? ''; live = text; html = undefined; headerText = ''; replaceOrig = false;
+        if (s) listImport.format = s.format; // 코드 블록 언어에 맞춘다
+      });
       void tick().then(() => textEl?.focus());
     }
   });
