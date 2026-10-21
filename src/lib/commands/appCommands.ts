@@ -1,12 +1,13 @@
 // 명령 팔레트에 올릴 명령 목록. 모드(서버/단일)마다 다른 동작은 셸이 ctx 로 넘기고, 나머지(패널·집중 모드·테마·검색·서식)는 여기서 직접 잇는다.
 import type { Command } from './registry.svelte';
-import { doc, settings, persistSettings, applyTheme, editorBridge, type EditorCommand, type Theme } from '../store.svelte';
+import { doc, settings, persistSettings, applyTheme, editorBridge, toast, type EditorCommand, type Theme } from '../store.svelte';
 import { toggleFocus } from '../writing/state.svelte';
 import { ui } from '../search/state.svelte';
 import { toggleLeft, openLeft } from '../sidebar/state.svelte';
 import { toggleRight } from '../rightbar/state.svelte';
 import { sendSelection, findByEditorText } from '../snippets/state.svelte';
 import { startDraft } from '../comments/store.svelte';
+import { openListImport } from '../tableListUi.svelte';
 
 export interface AppCommandCtx {
   server: boolean;
@@ -97,6 +98,8 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     fmt('hr', '구분선', 'hr', undefined, 'horizontal rule divider'),
     fmt('table', '표 삽입 (3×3)', 'table', undefined, 'table'),
     fmt('footnote', '각주 삽입', 'footnote', undefined, 'footnote 각주 주석 미주'),
+    { id: 'fmt.tablelist', group: '서식', title: '목록·표 텍스트에서 표 만들기', keywords: 'table json yaml markdown list csv convert import 변환 표 목록 붙여넣기', when: canFormat, run: () => openListImport() },
+    { id: 'fmt.codetable', group: '서식', title: '코드 블록(JSON·YAML·마크다운)을 표로 변환', keywords: 'table code block json yaml convert 코드 표 변환', when: canFormat, run: () => { const s = editorBridge.codeSource?.(); if (s) openListImport(s); else toast('커서를 JSON·YAML·마크다운 코드 블록 안에 두세요'); } },
   ];
 
   // 글 열기: 목록에 항상 깔면 명령이 묻히므로 검색어를 넣었을 때 팔레트가 합쳐 보여 준다(docCommands)

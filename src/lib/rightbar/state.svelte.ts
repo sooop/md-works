@@ -11,7 +11,7 @@ export const clampRightWidth = (w: number, win = typeof innerWidth === 'number' 
   Math.round(Math.max(RIGHT_W.min, Math.min(w, RIGHT_W.max, Math.max(RIGHT_W.min, win * 0.6))));
 
 function load(): { open: boolean; tab: RightTab; width: number } {
-  let open = typeof innerWidth === 'number' && innerWidth >= 1200; // 좁은 화면에서는 기본으로 닫아 둔다
+  let open = false; // 처음에는 닫아 둔다(이후는 저장된 고정 여부를 따른다)
   let tab: RightTab = 'snippets';
   let width = RIGHT_W.def;
   try {

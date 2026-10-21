@@ -40,19 +40,23 @@ function renameStandalone(): Plugin {
   };
 }
 
-// mode: 'html' → 단일 HTML 스탠드얼론, 그 외 → 웹서버 버전(dist/ + server.js)
+// mode: 'html' → 단일 HTML 스탠드얼론, 'static' → 여러 파일의 정적 웹앱(스탠드얼론 셸, 정적 호스팅용),
+// 그 외 → 웹서버 버전(dist/ + server.js)
 export default defineConfig(({ mode }) => {
-  const html = mode === 'html';
+  const single = mode === 'html';
+  const stat = mode === 'static';
+  const html = single || stat; // 스탠드얼론 셸(IndexedDB)을 쓰는 모드
   const env = loadEnv(mode, process.cwd(), ''); // 접두사 '' → VITE_ 가 아닌 서버 설정도 읽는다
   return {
-    plugins: [svelte(), ...(html ? [viteSingleFile(), renameStandalone()] : [notesApi(env)])],
+    base: stat ? './' : '/', // 정적 호스팅은 하위 경로에 올려도 동작하도록 상대 경로로 둔다
+    plugins: [svelte(), ...(single ? [viteSingleFile(), renameStandalone()] : stat ? [] : [notesApi(env)])],
     resolve: {
       // pandoc-wasm 의 exports 가 하위 경로 import 를 막아, 환경 무관 코어를 직접 가리킨다
       alias: { 'pandoc-wasm-core': fileURLToPath(new URL('./node_modules/pandoc-wasm/src/core.js', import.meta.url)) },
     },
     define: { __MODE__: JSON.stringify(html ? 'html' : 'server') },
     build: {
-      outDir: html ? 'dist-html' : 'dist',
+      outDir: single ? 'dist-html' : stat ? 'dist-static' : 'dist',
       emptyOutDir: true,
       target: 'es2022',
     },

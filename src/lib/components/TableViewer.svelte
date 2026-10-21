@@ -14,6 +14,7 @@
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
   import Pop from './Pop.svelte';
   import { tableViewer } from '../tableViewer.svelte';
+  import { listExport, openListExport } from '../tableListUi.svelte';
   import { copyAs, saveTable, COPY_KINDS, type CopyKind, type Fmt } from '../tableTools';
   import { filterRows, sortRows, moveItem, computeStats, fmtNum } from '../tableOps';
   import { doc, toast, askConfirm, settings } from '../store.svelte';
@@ -106,7 +107,7 @@
   const close = () => { tableViewer.table = null; };
 
   function onKey(e: KeyboardEvent) {
-    if (!table) return;
+    if (!table || listExport.rows) return; // 위에 뜬 '목록으로' 창이 키를 받는다
     if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation();
       if (copyOpen) return; // 팝오버가 먼저 닫힌다
@@ -216,6 +217,8 @@
               <hr />
               <button class="pop-row" onclick={() => { save('csv'); pclose(); }}><span class="txt"><b>CSV 파일로 저장</b></span></button>
               <button class="pop-row" onclick={() => { save('tsv'); pclose(); }}><span class="txt"><b>TSV 파일로 저장</b></span></button>
+              <hr />
+              <button class="pop-row" onclick={() => { openListExport(allRows(), table!.index); pclose(); }}><span class="txt"><b>목록으로 내보내기…</b><small>JSON·YAML·마크다운 목록 — 지금 보이는 상태 그대로</small></span></button>
             {/snippet}
           </Pop>
         </span>

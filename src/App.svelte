@@ -3,6 +3,8 @@
   import Dialog from './lib/components/Dialog.svelte';
   import Toasts from './lib/components/Toasts.svelte';
   import TableViewer from './lib/components/TableViewer.svelte';
+  import ListToTable from './lib/components/ListToTable.svelte';
+  import TableToList from './lib/components/TableToList.svelte';
   import TooltipHost from './lib/components/TooltipHost.svelte';
   import ContextMenuHost from './lib/components/ContextMenuHost.svelte';
   import BusyBar from './lib/components/BusyBar.svelte';
@@ -23,6 +25,8 @@
 <Dialog />
 <Toasts />
 <TableViewer />
+<ListToTable />
+<TableToList />
 <TooltipHost />
 <ContextMenuHost />
 <BusyBar />
