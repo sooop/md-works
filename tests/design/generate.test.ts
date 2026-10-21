@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mulberry32, hexToHsl, hslToHex, hexToHsv, hsvToHex, varyPalette, randomTheme, blendOver } from '../../src/lib/design/generate';
+import { mulberry32, hexToHsl, hslToHex, hexToHsv, hsvToHex, varyPalette, randomTheme, blendOver, themeFromBase, SCHEMES } from '../../src/lib/design/generate';
 import { PRESETS } from '../../src/lib/design/presets';
 import { PALETTE_KEYS } from '../../src/lib/design/schema';
 import { contrastWarnings, contrastRatio, normalizeHex, hexToRgb } from '../../src/lib/design/colors';
@@ -83,5 +83,34 @@ describe('varyPalette', () => {
       return sum / n;
     };
     expect(avg('low')).toBeLessThan(avg('high'));
+  });
+});
+
+describe('themeFromBase', () => {
+  const bases = ['#faf9f5', '#ebe4d6', '#dfe8f5', '#262624', '#12141a', '#1e2a22', '#ffffff'];
+  it('밝은 배경은 라이트 팔레트의 bg 로, 어두운 배경은 다크 팔레트의 bg 로 그대로 쓴다', () => {
+    expect(themeFromBase('#ebe4d6', 'analogous', 0.5, mulberry32(1)).light.bg).toBe('#ebe4d6');
+    expect(themeFromBase('#12141a', 'analogous', 0.5, mulberry32(1)).dark.bg).toBe('#12141a');
+  });
+  it('모든 방향·여러 시드에서 가독성 기준을 지키고 색이 올바르다', () => {
+    for (const base of bases) for (const sc of SCHEMES) for (const rnd of [0, 0.5, 1]) for (let seed = 1; seed <= 20; seed++) {
+      const t = themeFromBase(base, sc.id, rnd, mulberry32(seed));
+      for (const mode of ['light', 'dark'] as const) {
+        const p = t[mode];
+        for (const k of PALETTE_KEYS) expect(normalizeHex(p[k]), `${base} ${sc.id} ${seed} ${mode} ${k}`).toBe(p[k]);
+        expect(contrastRatio(p.text, p.bg), `${base} ${sc.id} ${seed} ${mode} text`).toBeGreaterThanOrEqual(6.9);
+        expect(contrastRatio(p.muted, p.bg), `${base} ${sc.id} ${seed} ${mode} muted`).toBeGreaterThanOrEqual(4.4);
+      }
+    }
+  });
+  it('무작위 0 이면 시드와 무관하게 같은 결과(보색·단색은 방향이 하나)', () => {
+    const a = themeFromBase('#dfe8f5', 'complement', 0, mulberry32(1));
+    const b = themeFromBase('#dfe8f5', 'complement', 0, mulberry32(999));
+    expect(a).toEqual(b);
+  });
+  it('보색은 강조색 색조가 배경 색조의 반대쪽', () => {
+    const t = themeFromBase('#dfe8f5', 'complement', 0, mulberry32(3));
+    const d = Math.abs(((t.accentHue - t.hue - 180 + 540) % 360) - 180); // 180° 에서 벗어난 각도
+    expect(d).toBeLessThan(2);
   });
 });

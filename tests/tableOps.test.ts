@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseNumber, computeStats, matchesColumnFilter, filterRows, sortRows, moveItem } from '../src/lib/tableOps';
+import { parseNumber, computeStats, matchesColumnFilter, filterRows, sortRows, moveItem, transposeRows } from '../src/lib/tableOps';
 import { toHtml, toAscii, toMarkdown, textWidth } from '../src/lib/tableFormats';
 
 describe('parseNumber', () => {
@@ -83,5 +83,17 @@ describe('표 형식 변환', () => {
   });
   it('마크다운: 파이프 이스케이프', () => {
     expect(toMarkdown([['a|b', 'c'], ['1', '2']])).toBe('| a\\|b | c |\n| --- | --- |\n| 1 | 2 |');
+  });
+});
+
+describe('transposeRows', () => {
+  const t = [['이름', 'A', 'B'], ['x', '1', '2'], ['y', '3', '4']];
+  it('헤더가 켜진 표는 첫 열이 새 헤더가 되고 두 번 하면 원래대로', () => {
+    const r = transposeRows(t, true);
+    expect(r).toEqual([['이름', 'x', 'y'], ['A', '1', '3'], ['B', '2', '4']]);
+    expect(transposeRows(r, true)).toEqual(t);
+  });
+  it('헤더가 꺼진 표는 빈 헤더 행을 유지한다', () => {
+    expect(transposeRows([['', ''], ['1', '2'], ['3', '4']], false)).toEqual([['', ''], ['1', '3'], ['2', '4']]);
   });
 });

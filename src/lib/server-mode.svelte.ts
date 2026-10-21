@@ -440,7 +440,7 @@ export async function createFromText(name: string, text: string) {
   }
 }
 
-// 파일 드롭: .md/.txt 및 pandoc 이 읽는 형식(docx·html·odt …)을 새 문서로. 한 개면 이름을 확인하고, 여러 개면 원본 이름으로 만든다.
+// 파일 드롭: .md/.txt 및 pandoc 이 읽는 형식(docx·html·odt …)을 새 문서로. 이름은 묻지 않고 원본 파일 이름을 쓴다(같은 이름이 있으면 번호가 붙는다).
 export async function handleDrop(files: File[]) {
   const list = files.filter(isImportable);
   if (!list.length) {
@@ -450,13 +450,7 @@ export async function handleDrop(files: File[]) {
   for (const file of list) {
     try {
       const imp = await readImport(file);
-      let stem = stripExt(imp.name);
-      if (list.length === 1) {
-        const picked = await askName('새 문서 이름', stem);
-        if (!picked) return;
-        stem = picked.replace(/\.md$/i, '');
-      }
-      await createFromContent(stem, imp.content, { splitImages: imp.converted });
+      await createFromContent(stripExt(imp.name), imp.content, { splitImages: imp.converted });
     } catch (e) {
       toast(`'${file.name}': ${errMsg(e)}`, 'error');
     }

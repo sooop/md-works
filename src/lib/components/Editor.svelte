@@ -27,6 +27,10 @@
   import { finder } from '../search/state.svelte';
   import { codeLanguages, codeHighlight } from '../codeLanguages';
   import { onlyDoubleTilde } from '../gfmTilde';
+  import { attachCodePicker } from '../codePicker';
+  import { footnotes, insertFootnote, normalizeNow, attachFootnoteTips } from '../footnotes';
+  import { trimSelectionSpaces } from '../inlineCode';
+  import { notionHeading, notionHeadingBackspace } from '../headingNotion';
   import { buildPrintClone } from '../printCode';
   import { splitFrontmatter, joinFrontmatter, frontInner, frontOuter } from '../frontmatter';
 
@@ -50,6 +54,15 @@
     onChange(emit(builder?.getMarkdown() ?? ''));
   }
 
+  // Ctrl+E(인라인 코드): 에디터보다 먼저 받아 선택 영역 앞뒤 공백을 뺀 뒤 넘긴다
+  function attachCodeTrim(view: import('@milkdown/kit/prose/view').EditorView) {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e' && view.editable) trimSelectionSpaces(view);
+    };
+    view.dom.addEventListener('keydown', onKey, true);
+    return () => view.dom.removeEventListener('keydown', onKey, true);
+  }
+
   let host: HTMLDivElement;
   let builder: CrepeBuilder | undefined;
   let ready = $state(false);
@@ -65,6 +78,9 @@
     let ctl: ReturnType<typeof attachFinder> | undefined;
     let unbind: (() => void) | undefined;
     let unbindTable: (() => void) | undefined;
+    let unbindCode: (() => void) | undefined;
+    let unbindPicker: (() => void) | undefined;
+    let unbindTips: (() => void) | undefined;
     let disposed = false;
     untrack(() => {
       const c = new CrepeBuilder({ root: host, defaultValue: split.body })
@@ -86,15 +102,22 @@
       const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const) };
       c.editor.use(tablePaste(tableEnv)); // TSV/CSV 붙여넣기 → 표
       onlyDoubleTilde(c.editor); // 취소선은 ~~A~~ 만 인식하고 글자 그대로의 ~ 는 보존한다
+      footnotes(c.editor); // 각주: 정의는 문서 끝에 모으고 등장 순서로 번호
+      notionHeading(c.editor); // 제목: ## 입력은 level 설정, 맨 앞 Backspace 는 문단으로
       if (readonly) c.setReadonly(true);
       c.on((l) => l.markdownUpdated((_ctx, md, prev) => { if (md !== prev) onChange(emit(md)); }));
       c.create().then(() => {
         if (disposed) void c.destroy();
         else {
           crepe = c;
+          notionHeadingBackspace(c.editor);
+          if (!readonly) normalizeNow(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           builder = c;
           ready = true;
           unbindTable = attachTableTools(c.editor.action((ctx) => ctx.get(editorViewCtx)), tableEnv); // 표 → TSV/CSV 복사·저장
+          unbindPicker = attachCodePicker(host);
+          unbindTips = attachFootnoteTips(c.editor.action((ctx) => ctx.get(editorViewCtx)));
+          unbindCode = attachCodeTrim(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           if (!preview) {
             editorBridge.getMarkdown = () => emit(c.getMarkdown());
             const pv = c.editor.action((ctx) => ctx.get(editorViewCtx));
@@ -110,12 +133,13 @@
             const run = (key: never, payload?: unknown) => c.editor.action(callCommand(key, payload as never));
             const table: Record<EditorCommand, () => void> = {
               bold: () => run(toggleStrongCommand.key as never), italic: () => run(toggleEmphasisCommand.key as never),
-              code: () => run(toggleInlineCodeCommand.key as never), strike: () => run(toggleStrikethroughCommand.key as never),
+              code: () => { trimSelectionSpaces(view); run(toggleInlineCodeCommand.key as never); }, strike: () => run(toggleStrikethroughCommand.key as never),
               h1: () => run(wrapInHeadingCommand.key as never, 1), h2: () => run(wrapInHeadingCommand.key as never, 2), h3: () => run(wrapInHeadingCommand.key as never, 3),
               paragraph: () => run(turnIntoTextCommand.key as never), quote: () => run(wrapInBlockquoteCommand.key as never),
               bullet: () => run(wrapInBulletListCommand.key as never), ordered: () => run(wrapInOrderedListCommand.key as never),
               codeblock: () => run(createCodeBlockCommand.key as never), hr: () => run(insertHrCommand.key as never),
               table: () => run(insertTableCommand.key as never, { row: 3, col: 3 }),
+              footnote: () => { insertFootnote(view); },
             };
             editorBridge.command = (name) => { if (readonly) { toast('읽기 모드에서는 서식을 바꿀 수 없습니다'); return; } view.focus(); table[name](); };
             if (focusNext.on) { focusNext.on = false; editorBridge.focus(); } // 새로 만든 글: 바로 타이핑할 수 있게
@@ -130,6 +154,9 @@
       if (!preview) { editorBridge.focus = null; editorBridge.command = null; }
       unbind?.();
       unbindTable?.();
+      unbindCode?.();
+      unbindPicker?.();
+      unbindTips?.();
       if (ctl) {
         ctl.destroy();
         if (finder.ctl === ctl) { finder.ctl = null; finder.total = 0; finder.current = -1; finder.error = ''; }

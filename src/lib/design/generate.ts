@@ -2,7 +2,7 @@
 // - varyPalette: 지금 팔레트의 색조·채도·밝기를 조금씩 흔든다(분위기는 유지, 약간의 변화)
 // - randomTheme: 하나의 색조(+조화 규칙)에서 라이트·다크 한 쌍을 새로 만든다. 눈이 편하도록 바탕 채도는 낮게 둔다.
 import { PALETTE_KEYS, type Palette, type PaletteKey } from './schema';
-import { hexToRgb, rgbToHex, contrastRatio, onColor, normalizeHex } from './colors';
+import { hexToRgb, rgbToHex, contrastRatio, luminance, onColor, normalizeHex } from './colors';
 
 export type Rng = () => number;
 
@@ -164,6 +164,71 @@ export function randomTheme(rng: Rng): RandomTheme {
     quote: hsl(hue, baseSat, 32 + rng() * 5),
     codeBg: hsl(hue, baseSat * 0.9, 9 + rng() * 4),
   };
+  return { light: fixPalette(light, 'light'), dark: fixPalette(dark, 'dark'), hue, accentHue };
+}
+
+
+// ---- 배경색에서 만들기 ----
+// 배경색이 분위기를 가장 크게 좌우하므로, 고른 배경색을 그대로 쓰고 강조색의 색조를 '조화 방향'에 따라 정한다.
+// 무작위 정도(0~1)는 강조색 색조·채도와 면 밝기의 흔들림 폭이다.
+export type Scheme = 'mono' | 'analogous' | 'complement' | 'split' | 'triad';
+export const SCHEMES: { id: Scheme; name: string; desc: string }[] = [
+  { id: 'mono', name: '단색', desc: '배경과 같은 색조로 통일 — 차분하고 한 덩어리로 보입니다' },
+  { id: 'analogous', name: '유사색', desc: '이웃한 색조(±30°)를 강조색으로 — 부드럽고 자연스럽습니다' },
+  { id: 'complement', name: '보색', desc: '반대 색조(180°)를 강조색으로 — 가장 또렷한 대비' },
+  { id: 'split', name: '분열 보색', desc: '보색의 양옆(150°·210°) — 대비는 있되 덜 거칩니다' },
+  { id: 'triad', name: '삼각', desc: '120°·240° 떨어진 색조 — 활기 있고 균형 잡힌 조합' },
+];
+const OFFSETS: Record<Scheme, number[]> = { mono: [0], analogous: [-30, 30], complement: [180], split: [150, 210], triad: [120, 240] };
+
+const BASE_LIGHT_LUM = 0.18; // 흰 글자와 검정 글자의 대비가 같아지는 상대휘도 근처: 이보다 밝으면 라이트 바탕으로 본다
+
+/** 고른 배경색(base)에서 라이트·다크 한 쌍을 만든다. base 는 밝기에 따라 라이트 또는 다크 팔레트의 bg 로 그대로 쓴다 */
+export function themeFromBase(base: string, scheme: Scheme, randomness: number, rng: Rng): RandomTheme {
+  const r = clamp(randomness, 0, 1);
+  const jit = (amt: number) => (rng() * 2 - 1) * amt * r;
+  const [hue, rawSat] = hexToHsl(base);
+  const baseIsLight = luminance(base) > BASE_LIGHT_LUM;
+  const offsets = OFFSETS[scheme];
+  const off = offsets[Math.floor(rng() * offsets.length)];
+  const accentHue = (hue + off + jit(scheme === 'mono' ? 10 : 28) + 360) % 360;
+  const sat = clamp(rawSat, 3, 30);
+  const accSat = clamp(52 + jit(16), 30, 78);
+
+  const lightSide = (bg?: string): Palette => {
+    const L = bg ? hexToHsl(bg)[2] : 92 + jit(2);
+    const bgHex = bg ?? hsl(hue, sat, L);
+    return {
+      bg: bgHex,
+      surface: hsl(hue, sat, L - 5 + jit(1)),
+      text: hsl(hue, 14 + jit(5), 16 + jit(4)),
+      muted: hsl(hue, 10 + jit(4), 38 + jit(4)),
+      border: hsl(hue, sat, L - 13 + jit(2)),
+      primary: hsl(accentHue, accSat, 36 + jit(4)),
+      accent: hsl(accentHue, accSat, 50 + jit(5)),
+      accentSoft: hsl(accentHue, 40 + jit(8), clamp(L - 7 + jit(2), 70, 92)),
+      quote: hsl(hue, sat, L - 22 + jit(3)),
+      codeBg: hsl(hue, sat, L - 5 + jit(1)),
+    };
+  };
+  const darkSide = (bg?: string): Palette => {
+    const L = bg ? hexToHsl(bg)[2] : 12 + jit(2);
+    const bgHex = bg ?? hsl(hue, sat * 0.9, L);
+    return {
+      bg: bgHex,
+      surface: hsl(hue, sat * 0.9, L + 4 + jit(1)),
+      text: hsl(hue, 8 + jit(4), 85 + jit(3)),
+      muted: hsl(hue, 8 + jit(4), 64 + jit(4)),
+      border: hsl(hue, sat * 0.9, L + 12 + jit(2)),
+      primary: hsl(accentHue, accSat, 70 + jit(4)),
+      accent: hsl(accentHue, accSat, 62 + jit(4)),
+      accentSoft: hsl(accentHue, 28 + jit(8), clamp(L + 11 + jit(2), 14, 34)),
+      quote: hsl(hue, sat, L + 20 + jit(3)),
+      codeBg: hsl(hue, sat * 0.9, Math.max(3, L - 3 + jit(1))),
+    };
+  };
+  const light = baseIsLight ? lightSide(base) : lightSide();
+  const dark = baseIsLight ? darkSide() : darkSide(base);
   return { light: fixPalette(light, 'light'), dark: fixPalette(dark, 'dark'), hue, accentHue };
 }
 

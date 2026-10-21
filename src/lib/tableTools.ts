@@ -5,6 +5,7 @@ import { Plugin } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { detectTable, toCsv, toTsv } from './tableCsv';
+import { transposeRows } from './tableOps';
 import { toHtml, toAscii, toMarkdown } from './tableFormats';
 import { downloadBlob, writeClipboard, writeClipboardHtml } from './utils';
 
@@ -147,6 +148,14 @@ function toggleHeader(view: EditorView, table: PMNode, pos: number, env: TableTo
   view.dispatch(view.state.tr.replaceWith(pos, pos + table.nodeSize, table.type.create(table.attrs, Fragment.from(next))));
 }
 
+/** 행·열 바꾸기. 열 정렬(좌/중/우)과 셀 서식은 사라진다 */
+function transposeTable(view: EditorView, table: PMNode, pos: number, env: TableToolsEnv) {
+  const rows = tableRows(table);
+  const next = transposeRows(rows, isHeaderOn(table));
+  if (next.length < 1 || next[0].length < 1 || (next.length < 2 && !isHeaderOn(table))) { env.toast('바꿀 내용이 없습니다', 'error'); return; }
+  view.dispatch(view.state.tr.replaceWith(pos, pos + table.nodeSize, buildTable(view, next)));
+}
+
 export type Fmt = 'tsv' | 'csv';
 const serialize = (rows: string[][], fmt: Fmt) => (fmt === 'tsv' ? toTsv(rows) : toCsv(rows));
 
@@ -250,6 +259,9 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
     ];
     if (view.editable && t) {
       list.push({ label: '', kind: 'sep' }, {
+        label: '행·열 바꾸기', hint: '전치',
+        run: () => { const cur = block && findTable(view, block); if (cur) transposeTable(view, cur.node, cur.pos, env); },
+      }, {
         label: '첫 행을 헤더로', kind: 'check', checked: isHeaderOn(t.node),
         run: () => { const cur = block && findTable(view, block); if (cur) toggleHeader(view, cur.node, cur.pos, env); },
       });

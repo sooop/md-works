@@ -121,6 +121,17 @@ const languageList: LanguageDescription[] = [
     load: () => import('@codemirror/lang-cpp').then((m) => m.cpp()),
   }),
   LanguageDescription.of({
+    name: 'Objective-C',
+    alias: ['objc', 'obj-c', 'objectivec', 'objective-c'],
+    extensions: ['m', 'mm'],
+    load: () => import('@codemirror/legacy-modes/mode/clike').then((m) => stream(m.objectiveC)),
+  }),
+  LanguageDescription.of({
+    name: 'Swift',
+    extensions: ['swift'],
+    load: () => import('@codemirror/legacy-modes/mode/swift').then((m) => stream(m.swift)),
+  }),
+  LanguageDescription.of({
     name: 'Shell',
     alias: ['bash', 'sh', 'zsh', 'shell'],
     extensions: ['sh', 'bash', 'zsh'],
@@ -184,3 +195,32 @@ export const codeHighlightStyle = HighlightStyle.define([
     { tag: t.escape, color: v('number') },
 ]);
 export const codeHighlight = syntaxHighlighting(codeHighlightStyle);
+
+// ---- 최근 고른 언어 5개를 선택기 목록 맨 위(현재 언어 바로 아래)에 둔다 ----
+// Milkdown 선택기는 이 배열의 순서대로 목록을 만들고 현재 언어만 맨 앞으로 올리므로, 배열 순서를 제자리에서 바꾼다.
+const RECENT_KEY = 'md-works.recentCodeLangs';
+const RECENT_MAX = 5;
+
+function loadRecent(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) ?? '[]');
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, RECENT_MAX) : [];
+  } catch { return []; }
+}
+
+let recent = loadRecent();
+const baseOrder = codeLanguages.map((l) => l.name);
+
+function applyRecentOrder() {
+  const rank = (name: string) => { const i = recent.indexOf(name); return i < 0 ? recent.length + baseOrder.indexOf(name) : i; };
+  codeLanguages.sort((a, b) => rank(a.name) - rank(b.name));
+}
+applyRecentOrder();
+
+/** 선택기에서 언어를 골랐을 때 부른다(이름은 data-language 값) */
+export function noteLanguage(name: string) {
+  if (!baseOrder.includes(name)) return;
+  recent = [name, ...recent.filter((n) => n !== name)].slice(0, RECENT_MAX);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch { /* 저장 불가 */ }
+  applyRecentOrder();
+}

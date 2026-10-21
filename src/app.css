@@ -716,3 +716,42 @@ input.invalid { color: #c0392b; }
 :root[data-theme='dark'] { --selection-bg: color-mix(in srgb, var(--accent) 52%, transparent); }
 :root .milkdown .ProseMirror *::selection { background: var(--selection-bg); }
 :root .milkdown .ProseMirror *::-moz-selection { background: var(--selection-bg); }
+
+/* 각주: 번호는 라벨이 아니라 등장 순서(정의는 문서 끝에서 같은 순서로 정렬된다). 번호를 누르면 본문 ↔ 정의로 이동 */
+:root .milkdown .ProseMirror { counter-reset: fnref fndef; }
+.milkdown .ProseMirror sup[data-type="footnote_reference"] {
+  counter-increment: fnref; font-size: 0; cursor: pointer; user-select: none;
+}
+.milkdown .ProseMirror sup[data-type="footnote_reference"]::after {
+  content: counter(fnref); font-size: 0.75rem; vertical-align: super; line-height: 0; color: var(--accent, #3b82f6); font-weight: 600; padding: 0 1px;
+}
+.milkdown .ProseMirror dl[data-type="footnote_definition"] {
+  counter-increment: fndef; display: flex; gap: 0.5em; margin: 0; padding: 2px 0; font-size: 0.9em; color: var(--muted);
+}
+.milkdown .ProseMirror dl[data-type="footnote_definition"] > dt {
+  font-size: 0; cursor: pointer; user-select: none; flex: none;
+}
+.milkdown .ProseMirror dl[data-type="footnote_definition"] > dt::before {
+  content: counter(fndef) "."; font-size: 1rem; font-variant-numeric: tabular-nums; color: var(--accent, #3b82f6); font-weight: 600;
+}
+.milkdown .ProseMirror dl[data-type="footnote_definition"] > dt::after { content: "↩"; font-size: 0.8rem; margin-left: 0.3em; }
+.milkdown .ProseMirror dl[data-type="footnote_definition"] > dd { margin: 0; flex: 1; min-width: 0; }
+.milkdown .ProseMirror dl[data-type="footnote_definition"] > dd p { padding: 0; }
+.milkdown .ProseMirror dl.fn-first { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--border-strong, currentColor); }
+@media print { .milkdown .ProseMirror dl[data-type="footnote_definition"] > dt::after { content: none; } }
+
+/* 코드 블록 언어 선택기: 키보드 포커스·Enter 로 고를 항목 표시 */
+.milkdown .language-picker .language-list-item:focus-visible,
+.milkdown .language-picker .language-list-item.kb-target { background: var(--accent-soft); outline: none; }
+.milkdown .language-picker .language-list-item:focus-visible { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* 각주 말풍선: 본문 각주 번호에 마우스를 올리면 정의 내용을 보여 준다 */
+.fn-tip {
+  position: fixed; z-index: 60; max-width: min(360px, calc(100vw - 16px)); padding: 8px 10px; border-radius: 8px;
+  background: var(--surface); color: var(--text); border: 1px solid var(--border-strong); box-shadow: var(--shadow);
+  font-size: 13px; line-height: 1.5; cursor: pointer;
+}
+.fn-tip[hidden] { display: none; }
+.fn-tip-body { display: -webkit-box; -webkit-line-clamp: 8; line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; word-break: break-word; }
+.fn-tip-body.empty { color: var(--muted); }
+.fn-tip small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }

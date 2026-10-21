@@ -5,8 +5,9 @@ import { getPreset } from './presets';
 import type { Design, PaletteKey, TypoKey, Typography } from './schema';
 import { clampTypography } from './schema';
 import { normalizeHex } from './colors';
-import { varyPalette, randomTheme, mulberry32, type VaryStrength } from './generate';
+import { varyPalette, randomTheme, themeFromBase, mulberry32, type VaryStrength, type Scheme } from './generate';
 import type { Palette } from './schema';
+import { refreshCodeTheme } from './codeTheme.svelte';
 import { loadCustom, persistCustom, newCustomId, CUSTOM_PREFIX, isCustomId, type CustomTheme } from './custom';
 
 export const design: Design = $state(loadDesign());
@@ -16,12 +17,14 @@ export const undoState: { prev: Design | null } = $state({ prev: null });
 
 function commit() {
   applyDesign(design);
+  refreshCodeTheme(design.presetId); // 'auto' 선택이면 프리셋에 짝지은 코드 테마가 따라온다
   saveDesign(design);
 }
 
 /** 앱 시작 시 한 번 호출해 저장된 디자인을 적용한다 */
 export function applyStoredDesign() {
   applyDesign(design);
+  refreshCodeTheme(design.presetId);
 }
 
 function replace(next: Design) {
@@ -147,5 +150,13 @@ export function varyColors(strength: VaryStrength, seed: number) {
 /** 시드에서 완전히 새로운 라이트·다크 테마를 만든다 */
 export function randomizeColors(seed: number) {
   const t = randomTheme(mulberry32(seed));
+  applyGenerated(t.light, t.dark);
+}
+
+/** 고른 배경색을 기준으로 조화 방향(scheme)과 무작위 정도(0~1)에 따라 라이트·다크 팔레트를 만든다 */
+export function generateFromBase(base: string, scheme: Scheme, randomness: number, seed: number) {
+  const hex = normalizeHex(base);
+  if (!hex) return;
+  const t = themeFromBase(hex, scheme, randomness, mulberry32(seed));
   applyGenerated(t.light, t.dark);
 }

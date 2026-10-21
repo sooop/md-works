@@ -96,6 +96,7 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     fmt('codeblock', '코드 블록', 'codeblock', undefined, 'code block'),
     fmt('hr', '구분선', 'hr', undefined, 'horizontal rule divider'),
     fmt('table', '표 삽입 (3×3)', 'table', undefined, 'table'),
+    fmt('footnote', '각주 삽입', 'footnote', undefined, 'footnote 각주 주석 미주'),
   ];
 
   // 글 열기: 목록에 항상 깔면 명령이 묻히므로 검색어를 넣었을 때 팔레트가 합쳐 보여 준다(docCommands)

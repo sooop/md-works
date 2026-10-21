@@ -8,11 +8,16 @@
   import { design } from '../design/state.svelte';
   import { derivePalette } from '../design/colors';
   import { tip } from '../tooltip.svelte';
+  import CodeSample from './CodeSample.svelte';
+  import { codeSel, customCode, currentCodeTheme } from '../design/codeTheme.svelte';
 
   import { dui } from '../design/ui.svelte';
 
   const mode = $derived(dui.mode);
   const onmode = (m: 'light' | 'dark') => { dui.mode = m; };
+
+  // 코드 테마: 편집 중인 모드의 색으로 견본을 그린다(고른 테마·디자인 프리셋이 바뀌면 다시 계산)
+  const codePal = $derived((codeSel.id, design.presetId, customCode.length, currentCodeTheme())[mode]);
 
   const vars = $derived.by(() => {
     const v = derivePalette(design.palettes[mode], mode);
@@ -43,7 +48,7 @@
           <h2>둘째 제목</h2>
           <blockquote><p>인용문은 이렇게 보입니다. 왼쪽 선의 굵기와 색을 바꿔 보세요.</p></blockquote>
           <ul><li>목록 항목 하나</li><li>목록 항목 둘</li></ul>
-          <pre class="dpv-code"><code>const 인사 = 'Hello, 세계';</code></pre>
+          <div class="dpv-code"><CodeSample palette={codePal} bg="transparent" fg="inherit" lines={5} /></div>
           <div class="milkdown-table-block"><table><tbody>
             <tr><th>항목</th><th>값</th></tr>
             <tr><td>첫째</td><td>1</td></tr>

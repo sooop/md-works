@@ -107,3 +107,15 @@ export function moveItem<T>(list: T[], from: number, to: number): T[] {
   next.splice(to, 0, x);
   return next;
 }
+
+/**
+ * 표의 행·열을 바꾼다. rows 는 헤더 행을 포함한 전체 행.
+ * 헤더가 켜진 표는 첫 열이 새 헤더가 된다. 헤더가 꺼진 표(첫 행이 빈 헤더)는 그 빈 행을 빼고 본문만 바꾼 뒤 빈 헤더 행을 다시 앞에 둔다.
+ * 짧은 행은 빈 칸으로 채운다.
+ */
+export function transposeRows(rows: string[][], headerOn: boolean): string[][] {
+  const body = headerOn ? rows : rows.slice(1);
+  const width = Math.max(0, ...body.map((r) => r.length));
+  const t = Array.from({ length: width }, (_, c) => body.map((r) => r[c] ?? ''));
+  return headerOn ? t : [body.map(() => ''), ...t];
+}

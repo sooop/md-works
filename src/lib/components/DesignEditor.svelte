@@ -14,21 +14,30 @@
   import FontPicker from './FontPicker.svelte';
   import Dices from '@lucide/svelte/icons/dices';
   import Undo2 from '@lucide/svelte/icons/undo-2';
-  import { varyColors, randomizeColors } from '../design/state.svelte';
-  import type { VaryStrength } from '../design/generate';
+  import { varyColors, randomizeColors, generateFromBase } from '../design/state.svelte';
+  import { SCHEMES, type VaryStrength, type Scheme } from '../design/generate';
   import RenameInput from './RenameInput.svelte';
   import { TYPO_SPEC, PALETTE_KEYS, PALETTE_LABELS, type NumSpec, type TypoKey, type PaletteKey } from '../design/schema';
   import { PRESETS } from '../design/presets';
   import { contrastWarnings, contrastBlock, MIN_APPLY_CONTRAST, normalizeHex, onColor } from '../design/colors';
   import { buildFontFamily, FALLBACK_CODE } from '../design/fontStack';
   import { serializeDesign, parseDesign } from '../design/io';
+  import CodeSample from './CodeSample.svelte';
+  import { CODE_THEMES, HL_KEYS, HL_LABELS, type HlKey } from '../design/codeThemes';
+  import { codeSel, customCode, AUTO, setCodeTheme, duplicateCodeTheme, setCodeColor, renameCodeTheme, deleteCodeTheme, currentCodeTheme } from '../design/codeTheme.svelte';
+  import { contrastRatio } from '../design/colors';
 
-  type Tab = 'preset' | 'color' | 'font' | 'block' | 'io';
-  const tabs: [Tab, string][] = [['preset', '프리셋'], ['color', '색상'], ['font', '서체·간격'], ['block', '제목·블록'], ['io', '이식']];
+  type Tab = 'preset' | 'color' | 'code' | 'font' | 'block' | 'io';
+  const tabs: [Tab, string][] = [['preset', '프리셋'], ['color', '색상'], ['code', '코드 테마'], ['font', '서체·간격'], ['block', '제목·블록'], ['io', '이식']];
   let tab = $state<Tab>('preset');
   let renamingId = $state('');
   let strength = $state<VaryStrength>('mid');
   let seed = $state(0);
+  // 배경색에서 만들기: 기준 배경색·조화 방향·무작위 정도
+  let baseColor = $state(design.palettes[dui.mode].bg);
+  let scheme = $state<Scheme>('analogous');
+  let randomness = $state(40);
+  const schemeDesc = $derived(SCHEMES.find((x) => x.id === scheme)?.desc ?? '');
   const newSeed = () => 1 + Math.floor(Math.random() * 999_999);
   let saving = $state(false);
   let newName = $state('');
@@ -97,6 +106,19 @@
     const hex = normalizeHex(el.value);
     if (hex && !tryColor(k, hex)) return; // 보류: 입력한 값을 그대로 둔다
     el.value = design.palettes[mode][k];
+  }
+
+  // 코드 테마 탭
+  let renamingCode = $state(false);
+  const curCode = $derived((codeSel.id, design.presetId, customCode.length, currentCodeTheme()));
+  const selCustom = $derived(customCode.find((c) => c.id === codeSel.id));
+  const codePal = $derived(design.palettes[mode]);
+  const hlOf = (t: { light: Record<HlKey, string>; dark: Record<HlKey, string> }) => (dark ? t.dark : t.light);
+  function onCodeHex(k: HlKey, e: Event) {
+    const el = e.currentTarget as HTMLInputElement;
+    const hex = normalizeHex(el.value);
+    if (hex && selCustom) setCodeColor(selCustom.id, mode, k, hex);
+    el.value = selCustom ? selCustom[mode][k] : '';
   }
 
   function doExport() {
@@ -191,6 +213,67 @@
           {/if}
         </div>
         {#if !customs.length && !saving}<p class="hint">색과 서체를 마음에 들게 고친 뒤 저장해 두면 여기서 한 번에 불러올 수 있습니다.</p>{/if}
+      {:else if tab === 'code'}
+        {#snippet ccard(id: string, name: string, t: { light: Record<HlKey, string>; dark: Record<HlKey, string> }, sub: string)}
+          {@const active = codeSel.id === id}
+          <button class="pcard" class:on={active} onclick={() => setCodeTheme(id)} aria-pressed={active} aria-label={`코드 테마 ${name}`}>
+            <CodeSample palette={hlOf(t)} bg={codePal.codeBg} fg={codePal.text} lines={4} />
+            <span class="pc-name">{name}{#if sub}<span class="sub">{sub}</span>{/if}{#if active}<Check size={13} />{/if}</span>
+          </button>
+        {/snippet}
+
+        <p class="hint">코드 블록의 문법 색입니다. <b>자동</b>은 디자인 프리셋에 짝지은 테마를 따라가고(Dracula 프리셋이면 Dracula), 직접 고르면 프리셋을 바꿔도 그대로 유지됩니다. 이 기기에는 고른 테마와 만든 테마만 저장됩니다.</p>
+        <div class="pgrid">
+          {@render ccard(AUTO, '자동', curCode, `현재: ${curCode.name}`)}
+          {#each CODE_THEMES as t (t.id)}{@render ccard(t.id, t.name, t, '')}{/each}
+        </div>
+
+        <h3>내 코드 테마</h3>
+        <div class="pgrid">
+          {#each customCode as c (c.id)}
+            {@render ccard(c.id, c.name, c, '')}
+          {/each}
+          <button class="pcard add" onclick={() => duplicateCodeTheme(codeSel.id)}><Save size={16} /> 지금 테마를 복제해 편집</button>
+        </div>
+
+        {#if selCustom}
+          <h3>
+            {#if renamingCode}
+              <RenameInput value={selCustom.name} onCommit={(v) => { renameCodeTheme(selCustom.id, v); renamingCode = false; }} onCancel={() => (renamingCode = false)} />
+            {:else}
+              {selCustom.name}
+              <button class="icon-btn" aria-label="이름 변경" use:tip={'이름 변경'} onclick={() => (renamingCode = true)}><Pencil size={13} /></button>
+              <button class="icon-btn" aria-label="삭제" use:tip={'삭제'} onclick={() => deleteCodeTheme(selCustom.id)}><Trash2 size={13} /></button>
+            {/if}
+          </h3>
+          <div class="row">
+            <span class="lbl">편집 대상</span>
+            <div class="seg" role="group" aria-label="편집할 팔레트">
+              <button class:active={mode === 'light'} onclick={() => (dui.mode = 'light')}>라이트</button>
+              <button class:active={mode === 'dark'} onclick={() => (dui.mode = 'dark')}>다크</button>
+            </div>
+          </div>
+          <div class="colors">
+            {#each HL_KEYS as k}
+              {@const ratio = contrastRatio(selCustom[mode][k], codePal.codeBg)}
+              <div class="crow">
+                <span class="lbl">{HL_LABELS[k]}</span>
+                <ColorPicker value={selCustom[mode][k]} bg={codePal.codeBg} label={HL_LABELS[k]} mixable={false} against={codePal.codeBg}
+                  onpick={(hex) => { setCodeColor(selCustom.id, mode, k, hex); return true; }} />
+                <input class="hex" type="text" value={selCustom[mode][k]} onchange={(e) => onCodeHex(k, e)} maxlength="7" spellcheck="false" aria-label={`${HL_LABELS[k]} 16진수`} />
+                {#if ratio < (k === 'comment' ? 2.5 : 3)}
+                  <span class="warn" role="img" aria-label={`코드 배경과 대비 부족: ${ratio.toFixed(2)}`} use:tip={`코드 배경과 대비 ${ratio.toFixed(2)} — 읽기 어려울 수 있습니다`}>
+                    <AlertTriangle size={14} /> {ratio.toFixed(1)}:1
+                  </span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          <CodeSample palette={selCustom[mode]} bg={codePal.codeBg} fg={codePal.text} />
+          <p class="hint">코드 배경색은 색상 탭의 '코드 배경'이고, 글자 대비는 그 배경 기준으로 계산합니다. 인쇄할 때는 읽기 쉬운 고정 색을 씁니다.</p>
+        {:else}
+          <p class="hint">색을 직접 고치려면 '지금 테마를 복제해 편집'을 누르세요. 내장 테마는 그대로 보존됩니다.</p>
+        {/if}
       {:else if tab === 'font'}
         {@render fontRow('bodyFont', '본문 서체', '비우면 기본(Pretendard Variable)')}
         {@render fontRow('headingFont', '제목 서체', '비우면 본문과 동일')}
@@ -250,6 +333,35 @@
         {@render numRow('cellPadY', '셀 위·아래 여백', 'px')}
         {@render numRow('cellPadX', '셀 좌·우 여백', 'px')}
       {:else if tab === 'color'}
+        <div class="gen" role="group" aria-label="배경색에서 만들기">
+          <div class="gen-row">
+            <span class="lbl">기준 배경색</span>
+            <ColorPicker value={baseColor} bg={baseColor} label="기준 배경색" mixable={false} onpick={(hex) => { baseColor = hex; return true; }} />
+            <input class="hex" type="text" value={baseColor} maxlength="7" spellcheck="false" aria-label="기준 배경색 16진수"
+              onchange={(e) => { const el = e.currentTarget as HTMLInputElement; const hex = normalizeHex(el.value); if (hex) baseColor = hex; el.value = baseColor; }} />
+            <button onclick={() => (baseColor = palette.bg)} use:tip={'지금 적용 중인 배경색을 기준으로'}>지금 배경색</button>
+          </div>
+          <div class="gen-row">
+            <span class="lbl">조화 방향</span>
+            <div class="seg" role="group" aria-label="조화 방향">
+              {#each SCHEMES as sc}
+                <button class:active={scheme === sc.id} onclick={() => (scheme = sc.id)}>{sc.name}</button>
+              {/each}
+            </div>
+          </div>
+          <p class="hint">{schemeDesc}</p>
+          <div class="gen-row">
+            <span class="lbl">무작위 정도</span>
+            <input type="range" min="0" max="100" step="5" bind:value={randomness} aria-label="무작위 정도" style="flex:1;min-width:120px;accent-color:var(--primary)" />
+            <span class="unit">{randomness}%</span>
+          </div>
+          <div class="gen-row">
+            <button class="primary" onclick={() => { seed = newSeed(); generateFromBase(baseColor, scheme, randomness / 100, seed); blocked = null; }}
+              use:tip={{ title: '배경색 기준으로 팔레트 만들기', lines: ['밝은 배경은 라이트, 어두운 배경은 다크 팔레트의 배경으로 그대로 쓰고', '반대쪽 모드는 같은 색조로 만듭니다', '마음에 들 때까지 반복해 눌러 보세요'] }}><Dices size={14} /> 만들기</button>
+            <button onclick={undoImport} disabled={!undoState.prev}><Undo2 size={14} /> 직전으로</button>
+            {#if seed}<small class="hint">시드 #{seed}</small>{/if}
+          </div>
+        </div>
         <div class="gen" role="group" aria-label="색 만들기">
           <div class="gen-row">
             <span class="lbl">변주</span>

@@ -69,7 +69,7 @@ export const doc = $state({
 /** 명령 팔레트가 부르는 편집기 서식 명령 이름 */
 export type EditorCommand =
   | 'bold' | 'italic' | 'code' | 'strike' | 'h1' | 'h2' | 'h3' | 'paragraph'
-  | 'quote' | 'bullet' | 'ordered' | 'codeblock' | 'hr' | 'table';
+  | 'quote' | 'bullet' | 'ordered' | 'codeblock' | 'hr' | 'table' | 'footnote';
 
 export const editorBridge: {
   getMarkdown: () => string;
