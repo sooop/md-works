@@ -11,17 +11,18 @@
   import { placeholder } from '@milkdown/crepe/feature/placeholder';
   import { table } from '@milkdown/crepe/feature/table';
   import { toolbar } from '@milkdown/crepe/feature/toolbar';
-  import { editorViewCtx } from '@milkdown/kit/core';
+  import { editorViewCtx, commandsCtx } from '@milkdown/kit/core';
   import { callCommand } from '@milkdown/kit/utils';
   import {
-    toggleStrongCommand, toggleEmphasisCommand, toggleInlineCodeCommand, wrapInHeadingCommand, wrapInBlockquoteCommand,
+    clearTextInCurrentBlockCommand, toggleStrongCommand, toggleEmphasisCommand, toggleInlineCodeCommand, wrapInHeadingCommand, wrapInBlockquoteCommand,
     wrapInBulletListCommand, wrapInOrderedListCommand, createCodeBlockCommand, insertHrCommand, turnIntoTextCommand,
   } from '@milkdown/kit/preset/commonmark';
   import { toggleStrikethroughCommand, insertTableCommand } from '@milkdown/kit/preset/gfm';
   import { editorBridge, doc, settings, toast, askChoose, focusNext, type EditorCommand } from '../store.svelte';
   import { stripExt } from '../utils';
-  import { tablePaste, attachTableTools, type TableData } from '../tableTools';
+  import { tablePaste, attachTableTools, insertGridAtCursor, insertCodeAtCursor, codeSourceAt, type CodeSource, type TableData } from '../tableTools';
   import { tableViewer } from '../tableViewer.svelte';
+  import { openListImport, openListExport } from '../tableListUi.svelte';
   import { attachFinder } from '../search/pmSearch';
   import { bindComments } from '../comments/store.svelte';
   import { finder } from '../search/state.svelte';
@@ -50,6 +51,9 @@
     onChange(emit(builder?.getMarkdown() ?? ''));
   }
 
+  // lucide 'list-tree' 아이콘 윤곽(Crepe 메뉴 아이콘은 SVG 문자열)
+  const LIST_TABLE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h13"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="M3 5h.01"/><path d="M3 12h.01"/><path d="M3 19h.01"/></svg>';
+
   let host: HTMLDivElement;
   let builder: CrepeBuilder | undefined;
   let ready = $state(false);
@@ -71,7 +75,17 @@
         .addFeature(cursor)
         .addFeature(listItem)
         .addFeature(linkTooltip)
-        .addFeature(blockEdit)
+        .addFeature(blockEdit, {
+          // '/' 메뉴: Table 바로 아래에 '목록·표 텍스트에서 표 만들기'(JSON·YAML·마크다운 목록·CSV 등)
+          buildMenu: (b) => b.getGroup('advanced').addItem('table-from-list', {
+            label: 'Table from list',
+            icon: LIST_TABLE_ICON,
+            onRun: (ctx) => {
+              ctx.get(commandsCtx).call(clearTextInCurrentBlockCommand.key); // 입력한 '/…' 글자를 지운다
+              openListImport();
+            },
+          }),
+        })
         .addFeature(toolbar)
         .addFeature(codeMirror, { languages: codeLanguages, theme: codeHighlight })
         .addFeature(table)
@@ -83,7 +97,7 @@
           inlineOnUpload: upload,
           proxyDomURL: resolveUrl,
         });
-      const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const) };
+      const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const), openExport: openListExport, openFromCode: (src: CodeSource) => openListImport(src) };
       c.editor.use(tablePaste(tableEnv)); // TSV/CSV 붙여넣기 → 표
       onlyDoubleTilde(c.editor); // 취소선은 ~~A~~ 만 인식하고 글자 그대로의 ~ 는 보존한다
       if (readonly) c.setReadonly(true);
@@ -118,6 +132,11 @@
               table: () => run(insertTableCommand.key as never, { row: 3, col: 3 }),
             };
             editorBridge.command = (name) => { if (readonly) { toast('읽기 모드에서는 서식을 바꿀 수 없습니다'); return; } view.focus(); table[name](); };
+            // 표·목록 변환 창이 만든 결과를 커서 위치에 넣는다
+            const insertable = () => { if (readonly) { toast('읽기 모드에서는 문서를 바꿀 수 없습니다', 'error'); return false; } return true; };
+            editorBridge.insertTable = (rows) => { if (!insertable()) return false; insertGridAtCursor(view, rows); return true; };
+            editorBridge.insertCode = (lang, text) => { if (!insertable()) return false; insertCodeAtCursor(view, lang, text); return true; };
+            editorBridge.codeSource = () => codeSourceAt(view, view.state.selection.from);
             if (focusNext.on) { focusNext.on = false; editorBridge.focus(); } // 새로 만든 글: 바로 타이핑할 수 있게
           }
         }
@@ -127,7 +146,7 @@
       disposed = true;
       ready = false;
       builder = undefined;
-      if (!preview) { editorBridge.focus = null; editorBridge.command = null; }
+      if (!preview) { editorBridge.focus = null; editorBridge.command = null; editorBridge.insertTable = null; editorBridge.insertCode = null; editorBridge.codeSource = null; }
       unbind?.();
       unbindTable?.();
       if (ctl) {

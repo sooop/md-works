@@ -76,11 +76,19 @@ export const editorBridge: {
   preparePrint: (() => Promise<() => void>) | null;
   focus: (() => void) | null;
   command: ((name: EditorCommand) => void) | null;
+  /** 변환기가 만든 표(첫 행이 머리글)·코드 블록을 커서 위치에 넣는다. 읽기 모드이거나 에디터가 없으면 false */
+  insertTable: ((rows: string[][]) => boolean) | null;
+  insertCode: ((language: string, text: string) => boolean) | null;
+  /** 커서가 있는 코드 블록의 변환 정보(JSON·YAML·마크다운·언어 없음만). 없으면 null */
+  codeSource: (() => import('./tableTools').CodeSource | null) | null;
 } = {
   getMarkdown: () => doc.content,
   preparePrint: null,
   focus: null,
   command: null,
+  insertTable: null,
+  insertCode: null,
+  codeSource: null,
 };
 
 // '새로 만든 글'·'이름 변경 직후'에만 본문에 포커스를 준다(파일 목록을 키보드로 탐색 중이면 빼앗지 않는다).

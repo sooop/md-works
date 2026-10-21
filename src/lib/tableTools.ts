@@ -17,6 +17,10 @@ export interface TableToolsEnv {
   openViewer: (t: TableData) => void;
   /** '복사' 단추의 기본 형식(설정) */
   defaultFmt?: () => Fmt;
+  /** 표를 JSON·YAML·마크다운 목록으로 바꾸는 변환 창을 연다(첫 행이 머리글인 행들, 문서 안 몇 번째 표인지) */
+  openExport?: (rows: string[][], index: number) => void;
+  /** 코드 블록의 내용을 표로 바꾸는 변환 창을 연다 */
+  openFromCode?: (src: CodeSource) => void;
 }
 
 /** 문서 안 표 하나 — 헤더 행을 분리해 둔다(헤더가 꺼진 표는 header 가 열 번호 이름). */
@@ -52,6 +56,81 @@ function buildTable(view: EditorView, rows: string[][]): PMNode {
 function insertTable(view: EditorView, rows: string[][]) {
   view.dispatch(view.state.tr.replaceSelectionWith(buildTable(view, rows)).scrollIntoView());
   view.focus();
+}
+
+/** 커서 위치에 블록을 넣는다. 코드 블록·표 안이면 그 블록 바로 뒤에 넣는다(안에는 블록을 넣을 수 없다) */
+function insertBlock(view: EditorView, node: PMNode) {
+  const { $from } = view.state.selection;
+  let outer = 0;
+  for (let d = 1; d <= $from.depth; d++) if (BLOCK_NO_PASTE.has($from.node(d).type.name)) { outer = d; break; }
+  const tr = view.state.tr;
+  if (outer) tr.insert($from.after(outer), node);
+  else tr.replaceSelectionWith(node);
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+}
+
+/** 변환기에서 만든 표(첫 행이 머리글)를 커서 위치에 넣는다 */
+export function insertGridAtCursor(view: EditorView, rows: string[][]) {
+  insertBlock(view, buildTable(view, rows));
+}
+
+/** 코드 블록 하나가 '표로 변환' 창에 넘기는 정보 */
+export interface CodeSource {
+  text: string;
+  /** 코드 블록 언어에서 정한 입력 형식(모르면 auto) */
+  format: 'auto' | 'json' | 'yaml' | 'md';
+  /** 코드 블록 바로 뒤에 표를 넣는다. 블록이 사라졌으면 false */
+  insertAfter: (rows: string[][]) => boolean;
+  /** 코드 블록을 표로 바꾼다. 블록이 사라졌거나 내용이 달라졌으면 false */
+  replace: (rows: string[][]) => boolean;
+}
+
+const CODE_FORMAT: Record<string, CodeSource['format']> = { json: 'json', jsonc: 'json', yaml: 'yaml', yml: 'yaml', markdown: 'md', md: 'md' };
+
+/** pos 가 코드 블록 안(또는 그 시작)이면 변환 정보를 만든다. JSON·YAML·마크다운 코드이거나 언어가 없는 블록만 대상 */
+export function codeSourceAt(view: EditorView, pos: number): CodeSource | null {
+  let $pos;
+  try { $pos = view.state.doc.resolve(pos); } catch { return null; }
+  let node: PMNode | null = null;
+  let start = 0;
+  for (let d = $pos.depth; d > 0; d--) {
+    if ($pos.node(d).type.name === 'code_block') { node = $pos.node(d); start = $pos.before(d); break; }
+  }
+  if (!node && $pos.nodeAfter?.type.name === 'code_block') { node = $pos.nodeAfter; start = pos; }
+  if (!node) return null;
+  const lang = String(node.attrs.language ?? '').trim().toLowerCase();
+  const format = CODE_FORMAT[lang] ?? (lang === '' || lang === 'text' || lang === 'txt' ? 'auto' : null);
+  if (!format) return null;
+  const text = node.textContent;
+  const live = (): PMNode | null => {
+    const cur = view.state.doc.nodeAt(start);
+    return cur && cur.type.name === 'code_block' && cur.textContent === text ? cur : null;
+  };
+  return {
+    text,
+    format,
+    insertAfter(rows) {
+      const cur = live();
+      if (!cur || !view.editable) return false;
+      view.dispatch(view.state.tr.insert(start + cur.nodeSize, buildTable(view, rows)).scrollIntoView());
+      view.focus();
+      return true;
+    },
+    replace(rows) {
+      const cur = live();
+      if (!cur || !view.editable) return false;
+      view.dispatch(view.state.tr.replaceWith(start, start + cur.nodeSize, buildTable(view, rows)).scrollIntoView());
+      view.focus();
+      return true;
+    },
+  };
+}
+
+/** 변환기에서 만든 목록 텍스트를 코드 블록으로 넣는다 */
+export function insertCodeAtCursor(view: EditorView, language: string, text: string) {
+  const { schema } = view.state;
+  insertBlock(view, schema.nodes.code_block.create({ language }, text ? schema.text(text) : undefined));
 }
 
 export const tablePaste = (env: TableToolsEnv) =>
@@ -248,6 +327,9 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
       { label: 'CSV 파일로 저장', run: withTable((tt) => saveTable(tableRows(tt.node), 'csv', tt.index, env)) },
       { label: 'TSV 파일로 저장', run: withTable((tt) => saveTable(tableRows(tt.node), 'tsv', tt.index, env)) },
     ];
+    if (env.openExport) {
+      list.push({ label: '', kind: 'sep' }, { label: '목록으로 내보내기…', hint: 'JSON·YAML·마크다운', run: withTable((tt) => env.openExport!(tableRows(tt.node), tt.index)) });
+    }
     if (view.editable && t) {
       list.push({ label: '', kind: 'sep' }, {
         label: '첫 행을 헤더로', kind: 'check', checked: isHeaderOn(t.node),
@@ -257,8 +339,8 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
     return list;
   };
 
-  function showMenu(x: number, y: number) {
-    menu.replaceChildren(...items().map((it) => {
+  function showMenu(x: number, y: number, list: Item[] = items()) {
+    menu.replaceChildren(...list.map((it) => {
       if (it.kind === 'sep') { const hr = document.createElement('hr'); return hr; }
       if (it.kind === 'head') { const s = document.createElement('span'); s.className = 'tbl-menu-head'; s.textContent = it.label; return s; }
       const b = btn(it.label, () => { hideMenu(); it.run?.(); });
@@ -315,7 +397,19 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
   const onContext = (e: MouseEvent) => {
     if (e.shiftKey) return; // Shift+우클릭: 브라우저 기본 메뉴
     const b = (e.target as HTMLElement).closest<HTMLElement>('.milkdown-table-block');
-    if (!b) return;
+    if (!b) {
+      // 코드 블록(JSON·YAML·마크다운 등): '표로 변환…'
+      const cb = (e.target as HTMLElement).closest<HTMLElement>('.milkdown-code-block');
+      if (!cb || !env.openFromCode || !view.editable) return;
+      let pos: number;
+      try { pos = view.posAtDOM(cb, 0); } catch { return; }
+      const src = codeSourceAt(view, pos);
+      if (!src) return;
+      e.preventDefault();
+      block = null;
+      showMenu(e.clientX, e.clientY, [{ label: '표로 변환…', hint: src.format === 'auto' ? '' : src.format.toUpperCase(), run: () => env.openFromCode!(src) }]);
+      return;
+    }
     e.preventDefault();
     block = b;
     showMenu(e.clientX, e.clientY);
