@@ -17,6 +17,8 @@
   import HistoryPanel from './HistoryPanel.svelte';
   import ModeToggle from './ModeToggle.svelte';
   import DocTitle from './DocTitle.svelte';
+  import PathBadges from './PathBadges.svelte';
+  import { revealFolder } from '../docTree.svelte';
   import CommentLayer from './CommentLayer.svelte';
   import RightSidebar from './RightSidebar.svelte';
   import { closeRightOnMobile, leftSheet } from '../rightbar/state.svelte';
@@ -47,7 +49,7 @@
     convertImages, createFromText, handleDrop, exportDocxCurrent, exportMdCurrent, copyMdCurrent, refreshTemplates, selectTemplate,
     restoreVersion, searchFiles, renameCurrent, renameNodeBy, removeNode, moveNode,
   } from '../server-mode.svelte';
-  import { stripExt } from '../utils';
+  import { stripExt, dirname } from '../utils';
   import { ui, searchShortcut } from '../search/state.svelte';
   import { fmtDateTime } from '../utils';
 
@@ -103,6 +105,8 @@
   const treeCtl: TreeCtl = {
     isActive: (n) => doc.path === n.path,
     isDirty: (n) => doc.path === n.path && doc.dirty,
+    activePath: () => doc.path,
+    activeDir: () => (doc.path ? dirname(doc.path) : ''),
     open: (n) => void openDoc(n.path),
     selectedDir: () => nav.dir,
     selectDir: (p) => { nav.dir = p; },
@@ -113,6 +117,14 @@
     move: (n, dest) => moveNode(n, dest),
     tipLines: (n) => [n.path, ...(n.mtime ? [`수정 ${fmtDateTime(n.mtime)}`] : [])],
   };
+
+  /** 제목 줄의 경로 배지를 눌렀을 때: 그 폴더를 고르고(새 문서가 만들어질 곳), 목록을 열어 그 위치를 보여 준다 */
+  function pickCrumb(path: string) {
+    nav.dir = path;
+    ui.tab = 'files';
+    openLeft();
+    revealFolder(path);
+  }
 
   onMount(() => { void init(); });
 
@@ -185,6 +197,7 @@
     <div class="top-edge"></div>
     <header class="topbar">
       <button class="icon-btn" class:on={docked} aria-label="사이드바 토글" use:tip={{ title: '파일 목록', lines: [left.pinned ? '누르면 숨깁니다' : '누르면 본문 옆에 열립니다(고정). 왼쪽 가장자리에 마우스를 대도 잠깐 열립니다'] }} onclick={() => { toggleLeft(); if (left.open) closeRightOnMobile(); }}><PanelLeft size={18} /></button>
+      {#if doc.path}<PathBadges folder={dirname(doc.path)} onPick={pickCrumb} />{/if}
       <DocTitle title={doc.path ? stripExt(doc.name) : '문서를 선택하세요'} editable={!!doc.path} dirty={doc.dirty} onRename={renameCurrent} />
       <span class="spacer"></span>
       {#if doc.path}

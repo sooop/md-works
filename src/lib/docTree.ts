@@ -54,12 +54,11 @@ export function latest(node: DocNode): number {
   return Math.max(0, ...(node.children ?? []).map(latest));
 }
 
-/** 같은 폴더 안의 항목을 정렬한다(폴더가 항상 먼저). 직접 순서에 없는 항목은 이름순으로 뒤에 붙는다 */
+/** 같은 폴더 안의 항목을 정렬한다. 이름순·수정일순은 폴더가 항상 먼저이고, 직접 순서는 글과 폴더를 섞을 수 있다.
+ *  직접 순서에 없는 항목은 폴더 먼저·이름순으로 뒤에 붙는다 */
 export function sortSiblings(nodes: DocNode[], mode: SortMode, order: string[] = []): DocNode[] {
   const rank = new Map(order.map((n, i) => [n, i]));
   const cmp = (a: DocNode, b: DocNode): number => {
-    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-    if (mode === 'mtime') return latest(b) - latest(a) || byName(a.name, b.name);
     if (mode === 'manual') {
       const ra = rank.get(a.name);
       const rb = rank.get(b.name);
@@ -67,6 +66,8 @@ export function sortSiblings(nodes: DocNode[], mode: SortMode, order: string[] =
       if (ra !== undefined) return -1;
       if (rb !== undefined) return 1;
     }
+    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+    if (mode === 'mtime') return latest(b) - latest(a) || byName(a.name, b.name);
     return byName(a.name, b.name);
   };
   return [...nodes].sort(cmp);

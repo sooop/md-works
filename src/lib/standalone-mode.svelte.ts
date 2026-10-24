@@ -205,9 +205,14 @@ export async function openDoc(id: string) {
   try { localStorage.setItem(LAST_KEY, id); } catch { /* 무시 */ }
 }
 
-// 같은 이름이 있으면 '이름 (2).md' 처럼 번호를 붙인다
+/** 그 폴더 바로 아래의 하위 폴더 이름(소문자). 글 전체 이름('x.md')과 같은 폴더 이름이 겹치지 않게 검사할 때 쓴다 */
+const subFolderNames = (folder: string) => new Set(allFolders().filter((f) => splitPath(f).folder === folder).map((f) => splitPath(f).name.toLowerCase()));
+/** 그 폴더 바로 아래의 글 이름(소문자) */
+const docNamesIn = (folder: string, skipId = '') => new Set([...all.values()].filter((r) => r.id !== skipId && folderOf(r) === folder).map((r) => r.name.toLowerCase()));
+
+// 같은 이름이 있으면 '이름 (2).md' 처럼 번호를 붙인다(같은 계층의 폴더 이름과도 겹치지 않게)
 function uniqueName(stem: string, folder = ''): string {
-  const names = new Set([...all.values()].filter((r) => folderOf(r) === folder).map((r) => r.name.toLowerCase()));
+  const names = new Set([...docNamesIn(folder), ...subFolderNames(folder)]);
   for (let i = 1; ; i++) {
     const name = i === 1 ? `${stem}.md` : `${stem} (${i}).md`;
     if (!names.has(name.toLowerCase())) return name;
@@ -243,6 +248,7 @@ export async function createFolder(parent = lib.dir) {
   if (!name) return;
   const path = fullPath(parent, name);
   if (allFolders().some((f) => f.toLowerCase() === path.toLowerCase())) { toast('같은 이름의 폴더가 있습니다', 'error'); return; }
+  if (docNamesIn(parent).has(name.toLowerCase())) { toast('같은 이름의 문서가 있습니다', 'error'); return; }
   folderSet.add(path);
   await saveFolders();
   refreshList();
@@ -252,8 +258,10 @@ export async function createFolder(parent = lib.dir) {
 
 async function relocateFolder(from: string, to: string) {
   if (allFolders().some((f) => f !== from && !f.startsWith(from + '/') && f.toLowerCase() === to.toLowerCase())) { toast('같은 이름의 폴더가 있습니다', 'error'); return; }
+  const dest = splitPath(to);
+  if (docNamesIn(dest.folder).has(dest.name.toLowerCase())) { toast('같은 위치에 같은 이름의 문서가 있습니다', 'error'); return; }
   const affected = [...all.values()].filter((r) => inFolder(r, from));
-  const clash = affected.find((r) => [...all.values()].some((o) => !inFolder(o, from) && fullOf(o).toLowerCase() === fullPath(remap(folderOf(r), from, to), r.name).toLowerCase()));
+  const clash =affected.find((r) => [...all.values()].some((o) => !inFolder(o, from) && fullOf(o).toLowerCase() === fullPath(remap(folderOf(r), from, to), r.name).toLowerCase()));
   if (clash) { toast('옮길 곳에 같은 이름의 문서가 있습니다', 'error'); return; }
   if (doc.path) await flush();
   try {
@@ -309,6 +317,7 @@ export async function moveDoc(id: string, dest: string) {
     toast('그 폴더에 같은 이름의 문서가 있습니다', 'error');
     return;
   }
+  if (subFolderNames(dest).has(rec.name.toLowerCase())) { toast('그 폴더에 같은 이름의 폴더가 있습니다', 'error'); return; }
   if (rec.id === doc.path) await flush();
   const old = fullOf(rec);
   const prev = rec.folder;
@@ -350,6 +359,7 @@ async function renameDocTo(id: string, input: string) {
     toast('같은 이름의 문서가 있습니다', 'error');
     return;
   }
+  if (subFolderNames(folderOf(rec)).has(name.toLowerCase())) { toast('같은 이름의 폴더가 있습니다', 'error'); return; }
   if (rec.id === doc.path) await flush();
   const prev = rec.name;
   const prevFull = fullOf(rec);

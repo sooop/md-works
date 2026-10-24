@@ -1,6 +1,6 @@
 <script lang="ts">
   // 글 목록: 파일명 찾기 + 정렬 기준 선택 + 폴더 트리. 서버 모드와 단일 모드가 같이 쓰고, 모드별 동작은 ctl 로 받는다.
-  import { setContext } from 'svelte';
+  import { setContext, tick, untrack } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import X from '@lucide/svelte/icons/x';
   import ArrowDownAZ from '@lucide/svelte/icons/arrow-down-a-z';
@@ -14,7 +14,7 @@
   import { matchName } from '../search/nameMatch';
   import { stripExt } from '../utils';
   import { sortTree, ordersOf, splitPath, type DocNode, type SortMode } from '../docTree';
-  import { treeUi, setSort, setOrders, SORT_LABEL } from '../docTree.svelte';
+  import { treeUi, setSort, setOrders, SORT_LABEL, treeNav, onActiveChange } from '../docTree.svelte';
   import { TREE_CTL, dndUi, type DragState, type DropPos, type TreeCtl } from './treeCtl';
 
   interface Props {
@@ -75,6 +75,42 @@
     return out;
   }
   const view = $derived(filter.trim() ? filterNodes(sorted, filter) : sorted);
+
+  // 스크롤 고정(sticky)되는 폴더 행이 쌓이는 높이를 맞추려고 실제 행 높이를 잰다
+  let rowH = $state(28);
+  $effect(() => {
+    void view;
+    void tick().then(() => {
+      const h = navEl?.querySelector<HTMLElement>('.row')?.offsetHeight;
+      if (h) rowH = h;
+    });
+  });
+
+  // 열린 글이 바뀌면 트리가 따라간다(트리 밖에서 열었을 때만 상위 폴더를 펼친다. 규칙은 onActiveChange)
+  $effect(() => {
+    const path = ctl.activePath();
+    const dir = ctl.activeDir();
+    untrack(() => onActiveChange(path, dir));
+  });
+
+  /** 예약된 항목(폴더 또는 글)이 이미 잘 보이면 그대로 두고, 아니면 위에서 1/3 쯤에 오도록 스크롤한다 */
+  function scrollToPath(path: string) {
+    if (!navEl) return;
+    const row = [...navEl.querySelectorAll<HTMLElement>('.row[data-path]')].find((r) => r.dataset.path === path);
+    if (!row) return;
+    const n = navEl.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    const stuck = 4 * rowH; // 위에 고정되는 폴더 행 몫
+    if (r.top >= n.top + stuck && r.bottom <= n.bottom) return;
+    const top = r.top - n.top + navEl.scrollTop;
+    navEl.scrollTo({ top: Math.max(0, top - n.height / 3), behavior: 'smooth' });
+  }
+  $effect(() => {
+    const target = treeNav.pending;
+    void view; // 폴더를 펼친 뒤 행이 그려진 다음에 찾는다
+    if (target === null || !navEl) return;
+    void tick().then(() => { scrollToPath(target); treeNav.pending = null; });
+  });
 
   /** dir 폴더 안에서 지금 보이는 형제 이름 순서 */
   function siblings(dir: string): string[] {
@@ -137,7 +173,7 @@
   </Pop>
 </div>
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<nav class="tree" bind:this={navEl} style:position="relative" ondragover={onRootOver} ondrop={onRootDrop}
+<nav class="tree" bind:this={navEl} style:position="relative" style:--row-h="{rowH}px" ondragover={onRootOver} ondrop={onRootDrop}
   ondragleave={(e) => { if (!navEl?.contains(e.relatedTarget as Node | null)) dndUi.indicate(null, ''); }}>
   <div class="drop-ind" bind:this={indEl} style:display="none" aria-hidden="true"></div>
   {#if view.length}

@@ -195,7 +195,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   border-bottom: 1px solid var(--border);
 }
 .sidebar .root { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree { flex: 1; overflow: auto; padding: 6px 4px 16px; }
+.tree { flex: 1; overflow: auto; padding: 6px 4px 16px; --band: color-mix(in srgb, var(--surface) 55%, var(--accent-soft)); }
 .tree ul { list-style: none; margin: 0; padding: 0; }
 .tree .empty { color: var(--muted); padding: 12px; font-size: 13px; }
 .row { display: flex; align-items: center; border-radius: 6px; padding-right: 4px; }

@@ -31,6 +31,16 @@ describe('sortTree', () => {
     const t = sortTree(buildTree(docs, []), 'manual', { '': ['라.md'] });
     expect(t.filter((n) => n.type === 'file').map((n) => n.name)).toEqual(['라.md', '가.md']);
   });
+  it('직접 순서: 글과 폴더를 섞을 수 있고, 목록에 없는 항목은 폴더 먼저로 뒤에 붙는다', () => {
+    const d = [{ id: '1', name: '가.md', folder: '', updated: 0 }, { id: '2', name: '나.md', folder: '', updated: 0 }];
+    const t = sortTree(buildTree(d, ['폴더', '새 폴더']), 'manual', { '': ['가.md', '폴더', '나.md'] });
+    expect(t.map((n) => n.name)).toEqual(['가.md', '폴더', '나.md', '새 폴더']);
+  });
+  it('이름순에서는 직접 순서가 있어도 폴더가 먼저', () => {
+    const d = [{ id: '1', name: '가.md', folder: '', updated: 0 }];
+    const t = sortTree(buildTree(d, ['폴더']), 'name', { '': ['가.md', '폴더'] });
+    expect(t.map((n) => n.name)).toEqual(['폴더', '가.md']);
+  });
 });
 
 describe('reorder', () => {

@@ -4,6 +4,9 @@ import type { DocNode } from '../docTree';
 export interface TreeCtl {
   isActive(node: DocNode): boolean;
   isDirty(node: DocNode): boolean;
+  /** 지금 열린 글의 키(없으면 '')와 그 글이 든 폴더 경로 */
+  activePath(): string;
+  activeDir(): string;
   open(node: DocNode): void;
   /** 새 글이 만들어질 폴더 */
   selectedDir(): string;

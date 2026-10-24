@@ -12,7 +12,7 @@
   import { tip } from '../tooltip.svelte';
   import { openContextMenu } from '../contextmenu.svelte';
   import { highlight } from '../search/nameMatch';
-  import { isCollapsed, toggleFolder, expandFolder, treeUi, moveInOrder, setSort } from '../docTree.svelte';
+  import { isCollapsed, toggleFolder, expandFolder, treeUi, treeNav, moveInOrder, setSort } from '../docTree.svelte';
   import { splitPath, type DocNode } from '../docTree';
   import { TREE_CTL, dndUi, type DragState, type TreeCtl } from './treeCtl';
   import RenameInput from './RenameInput.svelte';
@@ -24,8 +24,10 @@
     drag: DragState;
     /** dir 폴더 안에서 지금 화면에 보이는 형제 이름 순서(직접 정렬에서 끼워 넣을 위치를 구한다) */
     siblings: (dir: string) => string[];
+    /** 같은 폴더의 마지막 항목인지(연결선이 'ㄴ' 자로 끝난다) */
+    last?: boolean;
   }
-  let { node, depth = 0, filter = '', drag, siblings }: Props = $props();
+  let { node, depth = 0, filter = '', drag, siblings, last = false }: Props = $props();
   const ctl = getContext<TreeCtl>(TREE_CTL);
 
   let renaming = $state(false);
@@ -38,6 +40,13 @@
     { label: '이름 변경', run: () => { renaming = true; }, sep: node.type === 'dir' },
     { label: '삭제…', run: () => ctl.remove(node), danger: true, sep: true },
   ]);
+
+  // 트리에서 직접 연 글은 열린 글이 바뀌어도 접어 둔 폴더를 다시 펼치지 않는다(DocTree 의 onActiveChange)
+  const openFile = () => { treeNav.fromTree = node.path; ctl.open(node); };
+  /** 이 폴더가 선택돼 있으면 그 아래 항목 전체를 '현재 범위'로 묶어 보인다 */
+  const scope = $derived(node.type === 'dir' && ctl.selectedDir() === node.path);
+  /** 펼친 폴더 행은 스크롤해도 위에 남긴다(깊이 3단계까지 쌓는다) */
+  const stick = $derived(node.type === 'dir' && open && !!node.children?.length && depth < 4);
 
   // Enter·Space 로 누른 것과 같게(div 라서 직접 처리한다). 이름 바꾸는 입력에서 온 키는 건드리지 않는다
   function key(e: KeyboardEvent, run: () => void) {
@@ -78,9 +87,9 @@
     const srcDir0 = src.dir ?? splitPath(src.path).folder;
     // 안내 줄은 위치가 선만으로 알 수 없는 경우에만 쓴다(같은 문장이면 다시 대입해도 화면은 바뀌지 않는다)
     if (pos === 'into') drag.hint = `'${node.name}' 폴더 안으로 옮깁니다`;
-    else if (src.type === node.type) drag.hint = dest !== srcDir0 ? `${where}로 옮깁니다` : '';
     else if (dest !== srcDir0) drag.hint = `${where}로 옮깁니다`;
-    else drag.hint = '글과 폴더는 서로 순서를 바꿀 수 없습니다(폴더가 먼저)';
+    else if (src.type !== node.type && !manual) drag.hint = '글과 폴더를 섞으려면 정렬을 직접 정렬로 바꾸세요';
+    else drag.hint = '';
     // 접힌 폴더 위에 잠깐 머물면 펼친다
     clearTimeout(hoverTimer);
     if (node.type === 'dir' && pos === 'into' && isCollapsed(node.path)) hoverTimer = setTimeout(() => expandFolder(node.path), 700);
@@ -98,9 +107,9 @@
     if (isSelfOrChild(src, dest)) return;
     const srcDir = src.dir ?? splitPath(src.path).folder;
     if (dest !== srcDir) await ctl.move(src, dest);
-    // 같은 종류끼리 형제 사이에 끼워 넣는다(글·폴더 구분은 목록이 폴더를 먼저 두므로 종류가 다르면 순서를 건드리지 않는다).
+    // 형제 사이에 끼워 넣는다. 직접 정렬은 글과 폴더를 섞을 수 있고, 이름순·수정일순은 폴더가 먼저라 종류가 다르면 순서를 건드리지 않는다.
     // 이름순·수정일순에서 놓았으면 그 자리의 순서를 기준으로 삼아 '직접 정렬'로 바꾼다
-    if (!into && src.type === node.type) {
+    if (!into && (manual || src.type === node.type)) {
       if (!manual) dndUi.seedOrders(); // 모든 폴더의 보이던 순서를 직접 순서의 출발점으로(확인 없이 조용히)
       const current = siblings(dest); // 놓기 직전 화면에 보이던 순서
       const sib = current.filter((n) => n !== src.name);
@@ -112,13 +121,16 @@
   }
 </script>
 
-<li>
+<li class:child={depth > 0} class:last style:--p={depth - 1}>
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="row"
     class:active={node.type === 'file' && ctl.isActive(node)}
     class:selected={node.type === 'dir' && ctl.selectedDir() === node.path}
     class:dragging={drag.node?.path === node.path}
+    class:stick
+    data-path={node.path}
+    style:--d={depth}
     style:padding-left="{8 + depth * 14}px"
     oncontextmenu={(e) => openContextMenu(e, menuItems)}
     draggable={!renaming}
@@ -143,7 +155,7 @@
         <span class="label">{#each parts as p}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}</span>
       </div>
     {:else}
-      <div class="name" role="button" tabindex="0" ondblclick={() => (renaming = true)} onclick={() => ctl.open(node)} onkeydown={(e) => key(e, () => ctl.open(node))}
+      <div class="name" role="button" tabindex="0" ondblclick={() => (renaming = true)} onclick={openFile} onkeydown={(e) => key(e, openFile)}
         use:tip={{ title: shownName, lines: [...ctl.tipLines(node), '더블 클릭: 이름 변경 · 우클릭: 메뉴 · 끌어서 옮기기'] }}>
         <span class="twisty"></span>
         <FileText size={15} class="ico" />
@@ -159,9 +171,9 @@
     {/if}
   </div>
   {#if node.type === 'dir' && open && node.children?.length}
-    <ul>
-      {#each node.children as child (child.path)}
-        <TreeNode node={child} depth={depth + 1} {filter} {drag} {siblings} />
+    <ul class="kids" class:scope style:--d={depth}>
+      {#each node.children as child, i (child.path)}
+        <TreeNode node={child} depth={depth + 1} {filter} {drag} {siblings} last={i === node.children.length - 1} />
       {/each}
     </ul>
   {/if}
@@ -172,5 +184,25 @@
   .name { cursor: pointer; user-select: none; }
   .name:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
   .row.dragging { opacity: 0.45; }
+  /* 열린 글: 회색 대신 강조색 배경 + 왼쪽 막대 + 굵은 글씨로 범위 띠 안에서도 눈에 띄게 한다 */
+  .row.active { background: color-mix(in srgb, var(--accent) 26%, var(--surface)); box-shadow: inset 3px 0 0 var(--accent); }
+  .row.active .label { font-weight: 600; color: var(--text); }
+
+  /* 들여쓰기 연결선: 부모 폴더의 펼침 화살표 아래로 세로선을 내리고, 항목마다 가로로 꺾어 붙인다(├). 같은 폴더의 마지막 항목에서는
+   * 세로선이 행 가운데에서 끝나 범위의 끝을 알린다(└). 행은 position:relative 라 배경이 선을 덮으므로 선을 행 위(z-index 1)에 그린다.
+   * 선은 자식 글자 왼쪽 여백에 있어 글자를 가리지 않는다 */
+  li { position: relative; }
+  li.child::before, li.child::after { content: ''; position: absolute; z-index: 1; pointer-events: none; background: var(--guide, var(--border)); }
+  li.child::before { left: calc(19px + var(--p, 0) * 14px); top: 0; bottom: 0; width: 1px; }
+  li.child.last::before { bottom: auto; height: calc(var(--row-h, 28px) / 2); }
+  li.child::after { left: calc(19px + var(--p, 0) * 14px); top: calc(var(--row-h, 28px) / 2); width: 7px; height: 1px; }
+  .kids { position: relative; }
+  /* 선택한 폴더의 하위 범위: 새 문서가 만들어질 곳이 어디까지인지 띠와 강조색 연결선으로 보여 준다(아래 단계 폴더까지 이어진다) */
+  .kids.scope { --stick-bg: var(--band); --guide: color-mix(in srgb, var(--accent) 65%, transparent); background: var(--band); border-radius: 6px; }
+
+  /* 스크롤하면 펼친 폴더 이름이 위에 남는다. 위 단계 폴더 아래에 쌓이도록 단계 × 행 높이만큼 내려 붙인다 */
+  .row.stick { position: sticky; top: calc(var(--d) * var(--row-h, 28px)); z-index: calc(20 - var(--d)); background: var(--stick-bg, var(--surface)); }
+  .row.stick:hover, .row.stick:focus-within { background: var(--hover); }
+  .row.stick.selected { background: var(--accent-soft); }
   .label :global(mark) { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; border-radius: 2px; padding: 0; }
 </style>
