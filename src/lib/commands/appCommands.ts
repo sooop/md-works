@@ -99,6 +99,7 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     fmt('table', '표 삽입 (3×3)', 'table', undefined, 'table'),
     fmt('footnote', '각주 삽입', 'footnote', undefined, 'footnote 각주 주석 미주'),
     { id: 'fmt.tablelist', group: '서식', title: '목록·표 텍스트에서 표 만들기', keywords: 'table json yaml markdown list csv convert import 변환 표 목록 붙여넣기', when: canFormat, run: () => openListImport() },
+    { id: 'fmt.seltable', group: '서식', title: '선택한 목록·텍스트를 표로 변환', keywords: 'table selection convert list markdown 선택 영역 목록 표 테이블 변환', when: canFormat, run: () => { const s = editorBridge.selectionSource?.(); if (s) openListImport(s); else toast('표로 바꿀 본문을 먼저 선택하세요(코드 블록·표 제외)'); } },
     { id: 'fmt.codetable', group: '서식', title: '코드 블록(JSON·YAML·마크다운)을 표로 변환', keywords: 'table code block json yaml convert 코드 표 변환', when: canFormat, run: () => { const s = editorBridge.codeSource?.(); if (s) openListImport(s); else toast('커서를 JSON·YAML·마크다운 코드 블록 안에 두세요'); } },
   ];
 

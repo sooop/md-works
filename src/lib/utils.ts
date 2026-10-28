@@ -149,3 +149,21 @@ export function relTime(ts: number): string {
 /** 'YYYY. M. D. 오후 3:04' 처럼 날짜·시각을 한 줄로 */
 export const fmtDateTime = (ts: number): string =>
   new Date(ts).toLocaleString('ko-KR', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+
+/** 마크다운 복사용: 빈 문단이 남기는 `<br />` 줄(과 뒤따르는 빈 줄 하나)을 지운다. 코드 펜스 안은 그대로. 문서 저장본은 건드리지 않는다 */
+export function stripEmptyBlocks(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let fence = '';
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const f = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (f) { if (!fence) fence = f[1][0]; else if (f[1][0] === fence) fence = ''; }
+    if (!fence && /^\s*<br\s*\/?>\s*$/i.test(line)) {
+      if (lines[i + 1] !== undefined && lines[i + 1].trim() === '') i++;
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
+}

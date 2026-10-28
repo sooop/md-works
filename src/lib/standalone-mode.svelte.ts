@@ -2,7 +2,7 @@
 // 디스크 파일과는 연동하지 않는다(열기/드롭/붙여넣기는 가져오기, .md/.docx 는 내보내기).
 import { doc, toast, askPrompt, askConfirm, errMsg, withStatus, requestEditorFocus, editorBridge } from './store.svelte';
 import { buildArchive, parseArchive } from './archive';
-import { downloadBlob, downloadText, writeClipboard, fileToDataUrl, replaceImages, sanitizeName, stripExt } from './utils';
+import { downloadBlob, downloadText, writeClipboard, stripEmptyBlocks, fileToDataUrl, replaceImages, sanitizeName, stripExt } from './utils';
 import { updatedAfterEdit } from './docUpdated';
 import { fullPath, splitPath, withParents, byName } from './docTree';
 import { followRename, expandFolder } from './docTree.svelte';
@@ -616,7 +616,7 @@ export async function exportMd() {
 export async function copyMd() {
   if (!doc.path) return;
   try {
-    await writeClipboard(doc.content);
+    await writeClipboard(stripEmptyBlocks(doc.content));
     toast('마크다운 텍스트를 클립보드에 복사했습니다');
   } catch (e) {
     toast(`복사 실패: ${errMsg(e)}`, 'error');

@@ -4,7 +4,7 @@ import {
 } from './store.svelte';
 import {
   basename, dirname, joinPath, safeDecode, stripExt, fileToDataUrl, imageExt,
-  isExternalSrc, replaceImages, downloadText, writeClipboard,
+  isExternalSrc, replaceImages, downloadText, writeClipboard, stripEmptyBlocks,
 } from './utils';
 import { exportDocx, isImportable, readImport } from './docx-flow';
 import { IMPORT_LABEL } from './pandoc/importFormats';
@@ -499,7 +499,7 @@ export async function exportMdCurrent() {
 export async function copyMdCurrent() {
   if (!doc.path) return;
   try {
-    await writeClipboard(doc.content);
+    await writeClipboard(stripEmptyBlocks(doc.content));
     toast('마크다운 텍스트를 클립보드에 복사했습니다');
   } catch (e) {
     toast(`복사 실패: ${errMsg(e)}`, 'error');

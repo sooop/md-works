@@ -81,6 +81,8 @@ export const editorBridge: {
   insertCode: ((language: string, text: string) => boolean) | null;
   /** 커서가 있는 코드 블록의 변환 정보(JSON·YAML·마크다운·언어 없음만). 없으면 null */
   codeSource: (() => import('./tableTools').CodeSource | null) | null;
+  /** 본문에서 선택한 블록들의 변환 정보(선택이 없거나 코드·표를 포함하면 null) */
+  selectionSource: (() => import('./tableTools').CodeSource | null) | null;
 } = {
   getMarkdown: () => doc.content,
   preparePrint: null,
@@ -89,6 +91,7 @@ export const editorBridge: {
   insertTable: null,
   insertCode: null,
   codeSource: null,
+  selectionSource: null,
 };
 
 // '새로 만든 글'·'이름 변경 직후'에만 본문에 포커스를 준다(파일 목록을 키보드로 탐색 중이면 빼앗지 않는다).

@@ -5,6 +5,7 @@ import { Plugin } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { detectTable, toCsv, toTsv } from './tableCsv';
+import { parseGfmSource } from './tableList';
 import { transposeRows } from './tableOps';
 import { toHtml, toAscii, toMarkdown } from './tableFormats';
 import { downloadBlob, writeClipboard, writeClipboardHtml } from './utils';
@@ -22,6 +23,8 @@ export interface TableToolsEnv {
   openExport?: (rows: string[][], index: number) => void;
   /** 코드 블록의 내용을 표로 바꾸는 변환 창을 연다 */
   openFromCode?: (src: CodeSource) => void;
+  /** 본문에서 선택한 블록의 변환 정보(우클릭 메뉴용). 변환할 수 없으면 null */
+  selectionSource?: () => CodeSource | null;
 }
 
 /** 문서 안 표 하나 — 헤더 행을 분리해 둔다(헤더가 꺼진 표는 header 가 열 번호 이름). */
@@ -32,6 +35,15 @@ export interface TableData {
   rows: string[][];
   /** 확대 보기에서 만든 상태(필터·정렬·열 순서)를 문서의 표에 반영한다. 읽기 전용이면 없다. 표를 못 찾으면 false */
   apply?: (header: string[], rows: string[][]) => boolean;
+}
+
+/** 순수 텍스트가 마크다운 문서 모양인가: 두 줄 이상이고 제목·목록 둘 이상·코드 펜스·표 구분줄 중 하나가 있다 */
+export function looksLikeMarkdown(text: string): boolean {
+  const ls = text.split(/\r?\n/).filter((l) => l.trim() !== '');
+  if (ls.length < 2) return false;
+  if (ls.some((l) => /^#{1,6}\s+\S/.test(l) || /^\s*(`{3,}|~{3,})/.test(l))) return true;
+  if (ls.some((l, i) => i > 0 && l.includes('|') && l.includes('-') && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l))) return true;
+  return ls.filter((l) => /^\s*([-*+]|\d+[.)])\s+\S/.test(l)).length >= 2;
 }
 
 const BLOCK_NO_PASTE = new Set(['code_block', 'table', 'table_cell', 'table_header']);
@@ -81,6 +93,10 @@ export interface CodeSource {
   text: string;
   /** 코드 블록 언어에서 정한 입력 형식(모르면 auto) */
   format: 'auto' | 'json' | 'yaml' | 'md';
+  /** 변환 창 문구에 쓰는 원본 이름(기본 '코드 블록') */
+  label?: string;
+  /** '블럭 교체' 를 처음부터 켠다(선택 영역 변환) */
+  replaceDefault?: boolean;
   /** 코드 블록 바로 뒤에 표를 넣는다. 블록이 사라졌으면 false */
   insertAfter: (rows: string[][]) => boolean;
   /** 코드 블록을 표로 바꾼다. 블록이 사라졌거나 내용이 달라졌으면 false */
@@ -128,6 +144,58 @@ export function codeSourceAt(view: EditorView, pos: number): CodeSource | null {
   };
 }
 
+const FLAT_BLOCKS = new Set(['paragraph', 'heading']);
+
+/**
+ * 본문에서 선택한 블록들의 변환 정보. 선택이 걸친 최상위 블록 전체가 대상이다.
+ * 문단·제목뿐이면 화면에 보이는 글자 그대로(붙여넣다 깨진 `| a | b |` 줄 포함), 목록 등이 섞이면 마크다운으로 직렬화해 중첩을 살린다.
+ * 선택이 없거나 코드 블록·표를 포함하면 null.
+ */
+export function selectionSourceAt(view: EditorView, serialize: (doc: PMNode) => string): CodeSource | null {
+  const { $from, $to, empty } = view.state.selection;
+  if (empty || !view.editable) return null;
+  const start = $from.depth ? $from.before(1) : $from.pos;
+  const end = $to.depth ? $to.after(1) : $to.pos;
+  const blocks: PMNode[] = [];
+  view.state.doc.nodesBetween(start, end, (n, _pos, parent) => {
+    if (parent === view.state.doc) blocks.push(n);
+    return false;
+  });
+  if (!blocks.length || blocks.some((b) => b.type.name === 'code_block' || b.type.name === 'table')) return null;
+  let text: string;
+  if (blocks.every((b) => FLAT_BLOCKS.has(b.type.name))) {
+    text = blocks.map((b) => b.textBetween(0, b.content.size, '\n', (leaf) => (leaf.type.name === 'hardbreak' ? '\n' : ((leaf.attrs.alt as string) ?? '')))).join('\n');
+  } else {
+    try { text = serialize(view.state.schema.topNodeType.create(null, blocks)).replace(/\n+$/, ''); } catch { return null; }
+  }
+  if (!text.trim()) return null;
+  const slice = view.state.doc.slice(start, end).content;
+  const live = (): number | null => {
+    const cur = view.state.doc.slice(start, end).content;
+    return cur.eq(slice) ? slice.size : null;
+  };
+  return {
+    text,
+    format: 'auto',
+    label: '선택 영역',
+    replaceDefault: true,
+    insertAfter(rows) {
+      const size = live();
+      if (size === null || !view.editable) return false;
+      view.dispatch(view.state.tr.insert(start + size, buildTable(view, rows)).scrollIntoView());
+      view.focus();
+      return true;
+    },
+    replace(rows) {
+      const size = live();
+      if (size === null || !view.editable) return false;
+      view.dispatch(view.state.tr.replaceWith(start, start + size, buildTable(view, rows)).scrollIntoView());
+      view.focus();
+      return true;
+    },
+  };
+}
+
 /** 변환기에서 만든 목록 텍스트를 코드 블록으로 넣는다 */
 export function insertCodeAtCursor(view: EditorView, language: string, text: string) {
   const { schema } = view.state;
@@ -148,9 +216,25 @@ export const tablePaste = (env: TableToolsEnv) =>
             if ((view as unknown as { input?: { shiftKey?: boolean } }).input?.shiftKey) return false; // Ctrl+Shift+V: 그대로 붙여넣기
             if (cd.getData('text/html').includes('data-pm-slice')) return false; // 이 에디터에서 복사한 조각
             const text = cd.getData('text/plain');
+            const { $from } = view.state.selection;
+            const html = cd.getData('text/html');
+            // 마크다운 표 소스(`| a | b |` + `|---|---|`): HTML 표가 아닌 서식 붙여넣기에서는 문단 글자로 깨지므로 표로 만든다
+            const gfm = /<table[\s>]/i.test(html) ? null : parseGfmSource(text);
+            if (gfm) {
+              for (let d = $from.depth; d >= 0; d--) if (BLOCK_NO_PASTE.has($from.node(d).type.name)) return false;
+              event.preventDefault();
+              insertTable(view, gfm);
+              return true;
+            }
+            // 마크다운 문서(제목·목록·표 등)를 다른 앱에서 복사하면 HTML 에 구조가 없어 줄바꿈으로 이어진 한 문단이 되므로, 순수 텍스트를 마크다운으로 붙여넣는다
+            if (looksLikeMarkdown(text) && !/<(h[1-6]|table|ul|ol|li|pre|blockquote)[\s>]/i.test(html)) {
+              for (let d = $from.depth; d >= 0; d--) if (BLOCK_NO_PASTE.has($from.node(d).type.name)) return false;
+              event.preventDefault();
+              view.pasteText(text);
+              return true;
+            }
             const t = detectTable(text);
             if (!t) return false;
-            const { $from } = view.state.selection;
             for (let d = $from.depth; d >= 0; d--) if (BLOCK_NO_PASTE.has($from.node(d).type.name)) return false;
             event.preventDefault(); // DOM 이벤트로 받으면 PM 이 막아주지 않으므로 브라우저 기본 붙여넣기를 직접 막는다
             if (t.kind !== 'csv') { insertTable(view, t.rows); return true; }
@@ -412,7 +496,16 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
     if (!b) {
       // 코드 블록(JSON·YAML·마크다운 등): '표로 변환…'
       const cb = (e.target as HTMLElement).closest<HTMLElement>('.milkdown-code-block');
-      if (!cb || !env.openFromCode || !view.editable) return;
+      if (!env.openFromCode || !view.editable) return;
+      if (!cb) {
+        // 본문에서 블록을 선택한 채 우클릭: '선택 영역을 표로 변환…'
+        const sel = env.selectionSource?.();
+        if (!sel) return;
+        e.preventDefault();
+        block = null;
+        showMenu(e.clientX, e.clientY, [{ label: '선택 영역을 표로 변환…', hint: '', run: () => env.openFromCode!(sel) }]);
+        return;
+      }
       let pos: number;
       try { pos = view.posAtDOM(cb, 0); } catch { return; }
       const src = codeSourceAt(view, pos);

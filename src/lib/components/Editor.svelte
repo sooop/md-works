@@ -11,7 +11,7 @@
   import { placeholder } from '@milkdown/crepe/feature/placeholder';
   import { table } from '@milkdown/crepe/feature/table';
   import { toolbar } from '@milkdown/crepe/feature/toolbar';
-  import { editorViewCtx, commandsCtx } from '@milkdown/kit/core';
+  import { editorViewCtx, commandsCtx, serializerCtx } from '@milkdown/kit/core';
   import { callCommand } from '@milkdown/kit/utils';
   import {
     clearTextInCurrentBlockCommand, toggleStrongCommand, toggleEmphasisCommand, toggleInlineCodeCommand, wrapInHeadingCommand, wrapInBlockquoteCommand,
@@ -20,7 +20,7 @@
   import { toggleStrikethroughCommand, insertTableCommand } from '@milkdown/kit/preset/gfm';
   import { editorBridge, doc, settings, toast, askChoose, focusNext, type EditorCommand } from '../store.svelte';
   import { stripExt } from '../utils';
-  import { tablePaste, attachTableTools, insertGridAtCursor, insertCodeAtCursor, codeSourceAt, type CodeSource, type TableData } from '../tableTools';
+  import { tablePaste, attachTableTools, insertGridAtCursor, insertCodeAtCursor, codeSourceAt, selectionSourceAt, type CodeSource, type TableData } from '../tableTools';
   import { tableViewer } from '../tableViewer.svelte';
   import { openListImport, openListExport } from '../tableListUi.svelte';
   import { attachFinder } from '../search/pmSearch';
@@ -91,9 +91,22 @@
         .addFeature(listItem)
         .addFeature(linkTooltip)
         .addFeature(blockEdit, {
+          // '/' 메뉴는 이름에 포함된 글자로만 걸러지므로, 한글로도 찾도록 이름 뒤에 한글을 붙인다(아이콘은 기본값 유지)
+          textGroup: {
+            text: { label: 'Text · 텍스트(본문)' },
+            h1: { label: 'Heading 1 · 제목 1' }, h2: { label: 'Heading 2 · 제목 2' }, h3: { label: 'Heading 3 · 제목 3' },
+            h4: { label: 'Heading 4 · 제목 4' }, h5: { label: 'Heading 5 · 제목 5' }, h6: { label: 'Heading 6 · 제목 6' },
+            quote: { label: 'Quote · 인용' }, divider: { label: 'Divider · 구분선' },
+          },
+          listGroup: {
+            bulletList: { label: 'Bullet List · 글머리 목록' }, orderedList: { label: 'Ordered List · 번호 목록' }, taskList: { label: 'Task List · 할 일(체크리스트)' },
+          },
+          advancedGroup: {
+            image: { label: 'Image · 이미지(사진)' }, codeBlock: { label: 'Code · 코드 블록' }, table: { label: 'Table · 표(테이블)' }, math: { label: 'Math · 수식' },
+          },
           // '/' 메뉴: Table 바로 아래에 '목록·표 텍스트에서 표 만들기'(JSON·YAML·마크다운 목록·CSV 등)
           buildMenu: (b) => b.getGroup('advanced').addItem('table-from-list', {
-            label: 'Table from list',
+            label: 'Table from list · 목록에서 표 만들기',
             icon: LIST_TABLE_ICON,
             onRun: (ctx) => {
               ctx.get(commandsCtx).call(clearTextInCurrentBlockCommand.key); // 입력한 '/…' 글자를 지운다
@@ -101,7 +114,19 @@
             },
           }),
         })
-        .addFeature(toolbar)
+        .addFeature(toolbar, {
+          // 선택한 블록(목록·`| a | b |` 줄 등)을 표로 변환
+          buildToolbar: (b) => b.addGroup('table-from-selection', 'Table').addItem('selection-table', {
+            icon: LIST_TABLE_ICON,
+            label: '선택 영역을 표로 변환',
+            active: () => false,
+            onRun: (ctx) => {
+              const src = selectionSourceAt(ctx.get(editorViewCtx), ctx.get(serializerCtx));
+              if (src) openListImport(src);
+              else toast('코드 블록·표를 뺀 본문을 선택하세요');
+            },
+          }),
+        })
         .addFeature(codeMirror, { languages: codeLanguages, theme: codeHighlight })
         .addFeature(table)
         .addFeature(latex) // $수식$ · $$블록 수식$$ (KaTeX)
@@ -112,7 +137,7 @@
           inlineOnUpload: upload,
           proxyDomURL: resolveUrl,
         });
-      const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const), openExport: openListExport, openFromCode: (src: CodeSource) => openListImport(src) };
+      const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const), openExport: openListExport, openFromCode: (src: CodeSource) => openListImport(src), selectionSource: () => editorBridge.selectionSource?.() ?? null };
       c.editor.use(tablePaste(tableEnv)); // TSV/CSV 붙여넣기 → 표
       onlyDoubleTilde(c.editor); // 취소선은 ~~A~~ 만 인식하고 글자 그대로의 ~ 는 보존한다
       footnotes(c.editor); // 각주: 정의는 문서 끝에 모으고 등장 순서로 번호
@@ -160,6 +185,7 @@
             editorBridge.insertTable = (rows) => { if (!insertable()) return false; insertGridAtCursor(view, rows); return true; };
             editorBridge.insertCode = (lang, text) => { if (!insertable()) return false; insertCodeAtCursor(view, lang, text); return true; };
             editorBridge.codeSource = () => codeSourceAt(view, view.state.selection.from);
+            editorBridge.selectionSource = () => c.editor.action((ctx) => selectionSourceAt(view, ctx.get(serializerCtx)));
             if (focusNext.on) { focusNext.on = false; editorBridge.focus(); } // 새로 만든 글: 바로 타이핑할 수 있게
           }
         }
@@ -169,7 +195,7 @@
       disposed = true;
       ready = false;
       builder = undefined;
-      if (!preview) { editorBridge.focus = null; editorBridge.command = null; editorBridge.insertTable = null; editorBridge.insertCode = null; editorBridge.codeSource = null; }
+      if (!preview) { editorBridge.focus = null; editorBridge.command = null; editorBridge.insertTable = null; editorBridge.insertCode = null; editorBridge.codeSource = null; editorBridge.selectionSource = null; }
       unbind?.();
       unbindTable?.();
       unbindCode?.();

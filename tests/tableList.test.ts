@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { importToGrid, exportListText, parseTableText, parseMdList, jsonTextToGrid, detectListFormat, headBody } from '../src/lib/tableList';
+import { importToGrid, exportListText, parseTableText, parseMdList, jsonTextToGrid, detectListFormat, headBody, parseGfmSource } from '../src/lib/tableList';
 import { toAscii, toMarkdown } from '../src/lib/tableFormats';
 import { toTsv } from '../src/lib/tableCsv';
 
@@ -82,4 +82,23 @@ describe('형식 자동 감지', () => {
   it('빈 머리글은 열 N', () => {
     expect(headBody([['a', ''], ['1', '2']]).head).toEqual(['a', '열 2']);
   });
+});
+
+describe('parseGfmSource', () => {
+  it('마크다운 표 소스를 표로 읽는다', () => {
+    expect(parseGfmSource('| 이름 | 수량 |\n|---|---|\n| 사과 | 3 |')).toEqual([['이름', '수량'], ['사과', '3']]);
+  });
+  it('모든 줄이 \| 로 시작하는 이스케이프된 소스도 읽는다', () => {
+    expect(parseGfmSource('\| a \| b \|\n\|---\|---\|\n\| 1 \| 2 \|')).toEqual([['a', 'b'], ['1', '2']]);
+  });
+  it('구분줄이 없으면 null', () => {
+    expect(parseGfmSource('| a | b |\n| 1 | 2 |')).toBeNull();
+    expect(parseGfmSource('그냥 문장')).toBeNull();
+  });
+});
+
+describe('이스케이프된 표 소스(줄끝 강제 줄바꿈 포함)', () => {
+  const src = ['\\| 항목 | 선택 |\\', '\\|---|---|\\', '\\| 메뉴 | SendTo |'].join('\n');
+  it('parseGfmSource', () => expect(parseGfmSource(src)).toEqual([['항목', '선택'], ['메뉴', 'SendTo']]));
+  it('importToGrid', () => expect(importToGrid(src, 'auto', IMP).grid).toEqual([['항목', '선택'], ['메뉴', 'SendTo']]));
 });

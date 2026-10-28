@@ -99,6 +99,24 @@ function parseGfm(text: string): string[][] {
   return lines.filter((l) => !(GFM_SEP.test(l) && l.includes('-'))).map(splitPipes);
 }
 
+/** 모든 줄이 `\|` 로 시작하면 마크다운 이스케이프된 표 소스로 보고 되돌린다: `\|` → `|`, 줄끝의 강제 줄바꿈 `\` 제거 */
+export function unescapeMdTable(text: string): string {
+  const t = text.replace(/\r\n?/g, '\n');
+  const ls = t.split('\n').filter((l) => l.trim() !== '');
+  if (ls.length < 2 || !ls.every((l) => l.trim().startsWith('\\|'))) return text;
+  return t.split('\n').map((l) => l.replace(/\\+\s*$/, '').replace(/\\\|/g, '|')).join('\n');
+}
+
+/** 마크다운 표 소스(머리글 줄 + 구분줄 + 본문)만으로 된 글자를 표로 읽는다. 이스케이프된 소스도 받는다. 아니면 null */
+export function parseGfmSource(text: string): string[][] | null {
+  const t = unescapeMdTable(text).replace(/\r\n?/g, '\n');
+  const ls = t.split('\n').filter((l) => l.trim() !== '');
+  if (ls.length < 2 || !ls.every((l) => l.includes('|'))) return null;
+  if (!(GFM_SEP.test(ls[1]) && ls[1].includes('-'))) return null;
+  const grid = parseGfm(t);
+  return grid.length && grid[0].length >= 1 ? normalize(grid) : null;
+}
+
 function parseHtmlTable(html: string): string[][] | null {
   const doc = new DOMParser().parseFromString(html, 'text/html');
   const tb = doc.querySelector('table');
@@ -444,6 +462,7 @@ function detectInput(text: string, html?: string): 'table' | ListFormat {
  */
 export function importToGrid(text: string, format: InputFormat, o: ImportOpts, html?: string): ImportResult {
   if (!text.trim()) throw new Error('내용이 비어 있습니다.');
+  text = unescapeMdTable(text);
   const kind = format === 'auto' ? detectInput(text, html) : format;
   if (kind === 'json') return { kind: 'json', grid: jsonTextToGrid(text, o), label: 'JSON' };
   if (kind === 'yaml') return { kind: 'yaml', grid: yamlTextToGrid(text, o), label: 'YAML' };

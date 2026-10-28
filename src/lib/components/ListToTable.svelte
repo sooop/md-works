@@ -33,7 +33,7 @@
       const s = listImport.src;
       // 여는 순간에만 비운다. text 를 읽는 쓰기가 의존성이 되면 타이핑·붙여넣기마다 다시 비워진다
       untrack(() => {
-        text = s?.text ?? ''; live = text; html = undefined; headerText = ''; replaceOrig = false;
+        text = s?.text ?? ''; live = text; html = undefined; headerText = ''; replaceOrig = s?.replaceDefault ?? false;
         if (s) listImport.format = s.format; // 코드 블록 언어에 맞춘다
       });
       void tick().then(() => textEl?.focus());
@@ -63,8 +63,8 @@
     const src = listImport.src;
     if (src) {
       const done = replaceOrig ? src.replace(grid) : src.insertAfter(grid);
-      if (done) { toast(replaceOrig ? '코드 블록을 표로 바꿨습니다' : `${grid.length - 1}행 × ${grid[0].length}열 표를 코드 블록 뒤에 넣었습니다`); close(); }
-      else toast('코드 블록이 바뀌었거나 사라져 표를 넣지 못했습니다', 'error');
+      if (done) { toast(replaceOrig ? `${srcName}을 표로 바꿨습니다` : `${grid.length - 1}행 × ${grid[0].length}열 표를 ${srcName} 뒤에 넣었습니다`); close(); }
+      else toast(`${srcName}이 바뀌었거나 사라져 표를 넣지 못했습니다`, 'error');
       return;
     }
     if (!editorBridge.insertTable) { toast('열려 있는 문서가 없어 표를 넣을 수 없습니다', 'error'); return; }
@@ -75,6 +75,25 @@
     if (!listImport.open || e.isComposing) return;
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
     else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); insert(); }
+  }
+  const srcName = $derived(listImport.src?.label ?? '코드 블록');
+  // 입력란에서 Tab 은 포커스 이동 대신 공백 4칸 들여쓰기(여러 줄 선택이면 줄마다, Shift+Tab 은 내어쓰기) — 중첩 목록을 쓰기 위함
+  const INDENT = '    ';
+  function onTextKey(e: KeyboardEvent) {
+    if (e.key !== 'Tab' || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    e.preventDefault();
+    const el = e.currentTarget as HTMLTextAreaElement;
+    const { selectionStart: a, selectionEnd: b, value: v } = el;
+    const put = (t: string) => { if (!document.execCommand('insertText', false, t)) el.setRangeText(t, el.selectionStart, el.selectionEnd, 'end'); }; // execCommand 는 실행 취소(Ctrl+Z)를 살린다
+    if (a === b && !e.shiftKey) { put(INDENT); text = el.value; return; }
+    const ls = v.lastIndexOf('\n', a - 1) + 1;
+    const le = b > a && v[b - 1] === '\n' ? b - 1 : b; // 끝이 줄머리에 걸친 선택은 그 줄을 제외
+    const lines = v.slice(ls, le).split('\n');
+    const next = lines.map((l) => (e.shiftKey ? l.replace(/^ {1,4}|^\t/, '') : INDENT + l)).join('\n');
+    el.setSelectionRange(ls, le);
+    put(next);
+    el.setSelectionRange(ls, ls + next.length);
+    text = el.value;
   }
   const kind = $derived(result && 'ok' in result ? result.ok.kind : null);
   const showArr = $derived(listImport.format === 'json' || listImport.format === 'yaml' || kind === 'json' || kind === 'yaml');
@@ -92,9 +111,10 @@
         bind:this={textEl}
         bind:value={text}
         onpaste={onPaste}
+        onkeydown={onTextKey}
         rows="9"
         spellcheck="false"
-        aria-label="변환할 내용"
+        aria-label="변환할 내용 (Tab: 들여쓰기)"
         placeholder={'JSON · YAML · 마크다운 목록 · CSV/TSV · 마크다운 표 · 아스키 표를 붙여넣거나 입력하세요.\n\n[{"이름":"사과","수량":3},{"이름":"배","수량":5}]'}
       ></textarea>
 
@@ -147,7 +167,7 @@
       <div class="actions">
         {#if listImport.src}
           <Switch bind:checked={replaceOrig}>블럭 교체</Switch>
-          <span class="hint">Ctrl+Enter · {replaceOrig ? '코드 블록이 표로 바뀝니다' : '코드 블록 바로 뒤에 들어갑니다'}</span>
+          <span class="hint">Ctrl+Enter · {replaceOrig ? `${srcName}이 표로 바뀝니다` : `${srcName} 바로 뒤에 들어갑니다`}</span>
         {:else}
           <span class="hint">Ctrl+Enter 로 삽입 · 커서 위치(코드·표 안이면 그 뒤)에 들어갑니다</span>
         {/if}
