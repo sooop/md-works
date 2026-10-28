@@ -1,11 +1,14 @@
 // 표 ↔ CSV/TSV: 붙여넣기 변환(편집 모드) + 표 호버 툴바·우클릭 메뉴로 복사/파일 저장(읽기 모드 포함)
 import type { Node as PMNode } from '@milkdown/kit/prose/model';
-import { Fragment } from '@milkdown/kit/prose/model';
+import { Fragment, Slice } from '@milkdown/kit/prose/model';
+import { parserCtx } from '@milkdown/kit/core';
+import type { Ctx } from '@milkdown/kit/ctx';
 import { Plugin } from '@milkdown/kit/prose/state';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { $prose } from '@milkdown/kit/utils';
 import { detectTable, toCsv, toTsv } from './tableCsv';
 import { parseGfmSource } from './tableList';
+import { isEscapedMarkdown, unescapeMarkdown } from './mdUnescape';
 import { transposeRows } from './tableOps';
 import { toHtml, toAscii, toMarkdown } from './tableFormats';
 import { downloadBlob, writeClipboard, writeClipboardHtml } from './utils';
@@ -204,7 +207,7 @@ export function insertCodeAtCursor(view: EditorView, language: string, text: str
 
 export const tablePaste = (env: TableToolsEnv) =>
   $prose(
-    () =>
+    (ctx: Ctx) =>
       new Plugin({
         props: {
           // handlePaste 는 Milkdown clipboard 플러그인이 먼저 받아 순수 텍스트(HTML 없음)를 마크다운으로 가로채므로, 그보다 앞서는 DOM 이벤트로 받는다
@@ -227,10 +230,17 @@ export const tablePaste = (env: TableToolsEnv) =>
               return true;
             }
             // 마크다운 문서(제목·목록·표 등)를 다른 앱에서 복사하면 HTML 에 구조가 없어 줄바꿈으로 이어진 한 문단이 되므로, 순수 텍스트를 마크다운으로 붙여넣는다
-            if (looksLikeMarkdown(text) && !/<(h[1-6]|table|ul|ol|li|pre|blockquote)[\s>]/i.test(html)) {
+            const esc = isEscapedMarkdown(text);
+            const md = esc ? unescapeMarkdown(text) : text;
+            if ((esc || looksLikeMarkdown(text)) && looksLikeMarkdown(md) && !/<(h[1-6]|table|ul|ol|li|pre|blockquote)[\s>]/i.test(html)) {
               for (let d = $from.depth; d >= 0; d--) if (BLOCK_NO_PASTE.has($from.node(d).type.name)) return false;
               event.preventDefault();
-              view.pasteText(text);
+              // view.pasteText 는 클립보드 이벤트가 없어 Milkdown 의 마크다운 해석을 거치지 않고 문단 글자로 들어간다. 파서를 직접 쓴다
+              try {
+                const parsed = ctx.get(parserCtx)(md);
+                if (!parsed || typeof parsed === 'string') throw new Error('parse');
+                view.dispatch(view.state.tr.replaceSelection(new Slice(parsed.content, 0, 0)).scrollIntoView());
+              } catch { view.pasteText(text); }
               return true;
             }
             const t = detectTable(text);
