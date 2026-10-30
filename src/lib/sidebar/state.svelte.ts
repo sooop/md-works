@@ -7,7 +7,7 @@ export const LEFT_W = { min: 200, max: 480, def: 270 };
 export const clampLeftWidth = (w: number): number => Math.round(Math.max(LEFT_W.min, Math.min(w, LEFT_W.max)));
 
 function load(): { pinned: boolean; width: number } {
-  let pinned = true; // 처음 쓸 때는 왼쪽 패널만 본문 옆에 열어 둔다(이후는 저장된 고정 여부를 따른다)
+  let pinned = false; // 처음에는 숨겨 둔다(이후는 마지막에 저장한 고정 여부를 따른다)
   let width = LEFT_W.def;
   try {
     const j = JSON.parse(localStorage.getItem(KEY) ?? '{}');

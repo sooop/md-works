@@ -4,7 +4,7 @@
 import yaml from 'js-yaml';
 
 export type TableFormat = 'HTML' | 'ASCII' | 'GFM' | 'TSV' | 'CSV' | 'CSV(;)' | 'PIPE';
-export type ListFormat = 'json' | 'yaml' | 'md';
+export type ListFormat = 'json' | 'yaml' | 'md' | 'nu';
 export type ArrMode = 'cols' | 'rows';
 export type HeaderMode = 'auto' | 'first' | 'last' | 'none';
 export type MdStyle = 'record' | 'tree' | 'line';
@@ -264,6 +264,117 @@ export function yamlTextToGrid(text: string, o: ListOpts): string[][] {
   return grid;
 }
 
+/* ===== nushell(nu) 리터럴 -> JS 값 ===== */
+// 소스 리터럴만 다룬다: 레코드 {k: v}, 리스트 [a b], 테이블 [[h1 h2]; [..] [..]], 문자열("" '' ``), 따옴표 없는 단어, 숫자, # 주석.
+// 쉼표는 선택이며 공백·줄바꿈도 구분자다. 따옴표 없는 숫자는 원문 그대로 두고(정밀도 보존) true/false/null 만 값으로 바꾼다.
+const NU_BARE_END = /[\s,;[\]{}()]/;
+const NU_ESC: Record<string, string> = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '"': '"', "'": "'", '\\': '\\', '/': '/' };
+function nuParse(src: string): unknown {
+  let i = 0;
+  const fail = (msg: string): never => { throw new Error(`nu 리터럴 오류(${i + 1}번째 글자): ${msg}`); };
+  const ws = () => {
+    while (i < src.length) {
+      const c = src[i];
+      if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === ',') i++;
+      else if (c === '#') { while (i < src.length && src[i] !== '\n') i++; }
+      else break;
+    }
+  };
+  const quoted = (): string => {
+    const q = src[i++]; let out = '';
+    while (i < src.length) {
+      const c = src[i];
+      if (c === q) { i++; return out; }
+      if (q === '"' && c === '\\') {
+        const n = src[i + 1];
+        if (n === 'u') {
+          const m = /^u\{([0-9a-fA-F]{1,6})\}|^u([0-9a-fA-F]{4})/.exec(src.slice(i + 1, i + 10));
+          if (m) { out += String.fromCodePoint(parseInt(m[1] ?? m[2], 16)); i += 1 + m[0].length; continue; }
+        }
+        if (n !== undefined && n in NU_ESC) { out += NU_ESC[n]; i += 2; continue; }
+      }
+      out += c; i++;
+    }
+    return fail('문자열이 닫히지 않았습니다');
+  };
+  const bare = (stop: RegExp): string => { const s = i; while (i < src.length && !stop.test(src[i])) i++; return src.slice(s, i); };
+  const scalar = (w: string): unknown => {
+    if (w === 'true') return true;
+    if (w === 'false') return false;
+    if (w === 'null') return null;
+    if (/^[-+]?0[xX][0-9a-fA-F_]+$|^[-+]?0[bB][01_]+$|^[-+]?0[oO][0-7_]+$/.test(w)) return String(Number(w.replace(/_/g, '').replace(/^\+/, '')));
+    if (w.includes('_') && /^[-+]?\d[\d_]*(\.\d[\d_]*)?$/.test(w)) return w.replace(/_/g, '').replace(/^\+/, '');
+    return w;
+  };
+  const key = (): string => {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') return quoted();
+    const k = bare(/[\s,:;[\]{}()]/);
+    if (k === '') fail('키가 필요합니다');
+    return k;
+  };
+  const record = (): Record<string, unknown> => {
+    i++; const o: Record<string, unknown> = Object.create(null);
+    for (;;) {
+      ws();
+      if (i >= src.length) fail('레코드가 닫히지 않았습니다(})');
+      if (src[i] === '}') { i++; return o; }
+      const k = key(); ws();
+      if (src[i] !== ':') fail(`'${k}' 뒤에 ':' 가 필요합니다`);
+      i++; ws();
+      if (i >= src.length || src[i] === '}') fail(`'${k}' 의 값이 없습니다`);
+      o[k] = value();
+    }
+  };
+  const list = (): unknown[] => {
+    i++; ws();
+    const out: unknown[] = [];
+    if (src[i] === '[') {
+      const first = list(); ws();
+      if (src[i] === ';') { // 테이블 리터럴: [[헤더...]; [행] [행]]
+        i++;
+        const head = first.map((h) => { if (typeof h !== 'string') fail('테이블 머리글은 이름이어야 합니다'); return h as string; });
+        for (;;) {
+          ws();
+          if (i >= src.length) fail('테이블이 닫히지 않았습니다(])');
+          if (src[i] === ']') { i++; return out; }
+          if (src[i] !== '[') fail('테이블 행은 [값 ...] 형태여야 합니다');
+          const r = list(); const o: Record<string, unknown> = Object.create(null);
+          if (r.length > head.length) fail(`행의 값(${r.length}개)이 머리글(${head.length}개)보다 많습니다`);
+          head.forEach((h, n) => { o[h] = n < r.length ? r[n] : null; });
+          out.push(o);
+        }
+      }
+      out.push(first);
+    }
+    for (;;) {
+      ws();
+      if (i >= src.length) fail('리스트가 닫히지 않았습니다(])');
+      if (src[i] === ']') { i++; return out; }
+      out.push(value());
+    }
+  };
+  const value = (): unknown => {
+    const c = src[i];
+    if (c === '{') return record();
+    if (c === '[') return list();
+    if (c === '"' || c === "'" || c === '`') return quoted();
+    if (c === '(' || c === '$') return fail('서브식·변수는 지원하지 않습니다');
+    if (c === ')' || c === '}' || c === ']' || c === ';' || c === ':') return fail(`예상하지 못한 '${c}'`);
+    return scalar(bare(NU_BARE_END));
+  };
+  ws();
+  if (src[i] !== '[' && src[i] !== '{') fail('[ 또는 { 로 시작해야 합니다');
+  const v = value(); ws();
+  if (i < src.length) fail('리터럴 뒤에 남는 내용이 있습니다');
+  return v;
+}
+export function nuTextToGrid(text: string, o: ListOpts): string[][] {
+  const grid = valueToGrid(nuParse(text), o.arr);
+  if (!grid) throw new Error('표로 만들 항목이 없습니다.');
+  return grid;
+}
+
 /* ===== 마크다운 목록 <-> 표 ===== */
 const HDR_KEY = /^(헤더|머리글|header|headers|column|columns|컬럼|칼럼|열)\s*[:：]\s*(.+)$/i;
 const fixCell = (s: unknown) => String(s).replace(/<br\s*\/?>/gi, '\n').trim();
@@ -415,10 +526,14 @@ export function headBody(rows: string[][]): { head: string[]; body: string[][] }
   return { head, body: rows.slice(1) };
 }
 
-/** 목록 텍스트가 JSON·YAML·마크다운 중 무엇인지(붙여넣기 감지용). `[`·`{` 로 시작하면 JSON, 모든 줄이 목록 표지면 마크다운, 객체로 읽히면 YAML */
+/** 목록 텍스트가 JSON·nu·YAML·마크다운 중 무엇인지(붙여넣기 감지용). `[`·`{` 로 시작하면 JSON, 모든 줄이 목록 표지면 마크다운, 객체로 읽히면 YAML */
 export function detectListFormat(text: string): ListFormat {
   const t = text.trim();
-  if (/^[[{]/.test(t)) return 'json';
+  if (/^[[{]/.test(t)) {
+    // JSON 으로 유효하면 JSON 우선. 아니고 nu 리터럴로 읽히면 nu, 둘 다 아니면 JSON(오류 안내용)
+    try { JSON.parse(t); return 'json'; } catch { /* nu 확인 */ }
+    try { nuParse(t); return 'nu'; } catch { return 'json'; }
+  }
   const ls = t.split('\n').filter((l) => l.trim());
   const bullet = /^\s*([-*+]|\d+[.)])\s/;
   if (ls.every((l) => bullet.test(l))) return 'md';
@@ -465,6 +580,7 @@ export function importToGrid(text: string, format: InputFormat, o: ImportOpts, h
   text = unescapeMdTable(text);
   const kind = format === 'auto' ? detectInput(text, html) : format;
   if (kind === 'json') return { kind: 'json', grid: jsonTextToGrid(text, o), label: 'JSON' };
+  if (kind === 'nu') return { kind: 'nu', grid: nuTextToGrid(text, o), label: 'nu 리터럴' };
   if (kind === 'yaml') return { kind: 'yaml', grid: yamlTextToGrid(text, o), label: 'YAML' };
   if (kind === 'md') {
     const r = parseMdList(text, o);

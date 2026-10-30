@@ -31,4 +31,14 @@ export type DropPos = '' | 'before' | 'after' | 'into';
  * 놓을 위치 표시: 행마다 반응형 상태를 바꾸면 끄는 동안 모든 행이 다시 계산돼 표시가 마우스를 늦게 따라온다.
  * 그래서 표시 요소 하나를 DocTree 가 직접 옮기게 하고(indicate), 마지막 위치만 여기에 적어 둔다.
  */
-export const dndUi: { pos: DropPos; indicate: (row: HTMLElement | null, pos: DropPos) => void; seedOrders: () => void } = { pos: '', indicate: () => {}, seedOrders: () => {} };
+export const dndUi: {
+  pos: DropPos;
+  indicate: (row: HTMLElement | null, pos: DropPos) => void;
+  seedOrders: () => void;
+  /** 끌기 시작 때 만든 고스트 복제본과, 마우스가 행 안에서 잡은 위치(놓을 때 이 고스트가 자리로 날아간다) */
+  ghost: { el: HTMLElement; dx: number; dy: number; width: number; height: number } | null;
+  /** 놓은 직후 트리가 갱신되는 동안 true: 옮기기를 삭제·삽입 효과(빨강·초록 flash)로 보이지 않게 한다 */
+  moving: boolean;
+  /** 끌던 항목이 접혀 있던 자리를 애니메이션 없이 곧바로 되돌린다(놓은 자리가 이미 펼쳐져 있어 주변이 다시 움직이지 않게) */
+  restoreSource: (() => void) | null;
+} = { pos: '', indicate: () => {}, seedOrders: () => {}, ghost: null, moving: false, restoreSource: null };

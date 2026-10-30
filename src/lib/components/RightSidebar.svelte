@@ -13,6 +13,7 @@
   import { rightPeek, viewport } from '../sidebar/state.svelte';
   import { edgeHover, peekPanel } from '../sidebar/peek';
   import { tip } from '../tooltip.svelte';
+  import { panelFx } from '../motion';
 
   // 닫아 둔 상태(또는 집중 모드)에서는 붙어 있지 않고 오른쪽 가장자리 호버로 팝오버처럼 나타난다
   const peek = $derived(!viewport.mobile && (writing.focus || !right.open));
@@ -25,7 +26,7 @@
 {/if}
 {#if shown}
   <aside
-    class="sidebar right-sidebar" class:peek aria-label="글감과 코멘트" style:--right-w="{right.width}px"
+    class="sidebar right-sidebar" class:peek aria-label="글감과 코멘트" style:--right-w="{right.width}px" transition:panelFx={{ side: viewport.mobile ? 'bottom' : 'right' }}
     use:peekPanel={{ active: () => peek, close: () => (rightPeek.open = false) }}
   >
     <Resizer side="right" value={right.width} min={RIGHT_W.min} max={RIGHT_W.max} def={RIGHT_W.def} label="오른쪽 패널 폭 조절" onchange={(w, save) => setRightWidth(w, save)} />

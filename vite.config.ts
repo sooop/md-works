@@ -47,6 +47,9 @@ export default defineConfig(({ mode }) => {
   const stat = mode === 'static';
   const html = single || stat; // 스탠드얼론 셸(IndexedDB)을 쓰는 모드
   const env = loadEnv(mode, process.cwd(), ''); // 접두사 '' → VITE_ 가 아닌 서버 설정도 읽는다
+  // 애니메이션 빌드 옵션: 단일 HTML 만 `ANIMATIONS=off` 로 효과를 끈 채 빌드할 수 있다(결과물에서는 설정 토글도 숨는다).
+  // 서버·정적 빌드는 항상 켜 두고 설정 화면의 토글로 끈다.
+  const anim = !(single && /^(off|0|false)$/i.test(env.ANIMATIONS ?? ''));
   return {
     base: stat ? './' : '/', // 정적 호스팅은 하위 경로에 올려도 동작하도록 상대 경로로 둔다
     plugins: [svelte(), ...(single ? [viteSingleFile(), renameStandalone()] : stat ? [] : [notesApi(env)])],
@@ -54,7 +57,7 @@ export default defineConfig(({ mode }) => {
       // pandoc-wasm 의 exports 가 하위 경로 import 를 막아, 환경 무관 코어를 직접 가리킨다
       alias: { 'pandoc-wasm-core': fileURLToPath(new URL('./node_modules/pandoc-wasm/src/core.js', import.meta.url)) },
     },
-    define: { __MODE__: JSON.stringify(html ? 'html' : 'server') },
+    define: { __MODE__: JSON.stringify(html ? 'html' : 'server'), __ANIM__: JSON.stringify(anim) },
     build: {
       outDir: single ? 'dist-html' : stat ? 'dist-static' : 'dist',
       emptyOutDir: true,

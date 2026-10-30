@@ -119,3 +119,8 @@ export function transposeRows(rows: string[][], headerOn: boolean): string[][] {
   const t = Array.from({ length: width }, (_, c) => body.map((r) => r[c] ?? ''));
   return headerOn ? t : [body.map(() => ''), ...t];
 }
+
+/** 사각형 선택(양 끝 포함, 정규화된 좌표)으로 격자를 자른다. 격자는 헤더 행을 맨 앞에 둔 '지금 보이는 상태'. 첫 행이 새 표의 헤더가 된다 */
+export function sliceGrid(grid: string[][], r0: number, c0: number, r1: number, c1: number): string[][] {
+  return grid.slice(r0, r1 + 1).map((r) => Array.from({ length: c1 - c0 + 1 }, (_, i) => r[c0 + i] ?? ''));
+}

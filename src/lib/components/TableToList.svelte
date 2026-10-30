@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   // 표를 JSON·YAML·마크다운 목록으로 바꿔 미리 보고, 복사·파일 저장·문서에 코드 블록으로 넣는 창.
   // 편집기의 표 메뉴(⋯·우클릭)와 표 확대 보기의 복사 메뉴에서 열린다.
   import Switch from './Switch.svelte';
@@ -55,8 +56,8 @@
 
 {#if listExport.rows}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) close(); }}>
-    <div class="dialog wide ttl" role="dialog" aria-modal="true" aria-label="표를 목록으로 내보내기">
+  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div class="dialog wide ttl" role="dialog" transition:modalFx aria-modal="true" aria-label="표를 목록으로 내보내기">
       <h2>표 {listExport.index} 를 목록으로 <span class="sub">{listExport.rows.length - 1}행 × {listExport.rows[0]?.length ?? 0}열</span></h2>
 
       <div class="opts">

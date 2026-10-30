@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   import { tip } from '../tooltip.svelte';
   // 본문 이미지를 팝오버로 띄워 확대·이동해 본다. 읽기 모드는 클릭, 편집 모드는 더블클릭(단일 클릭은 이미지 선택용)으로 연다.
   import { tick } from 'svelte';
@@ -108,10 +109,11 @@
 
 {#if src !== null}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="lb-backdrop" role="dialog" aria-modal="true" aria-label="이미지 확대 보기" tabindex="-1" onclick={close} onwheel={onWheel}>
+  <div class="lb-backdrop" transition:backdropFx role="dialog" aria-modal="true" aria-label="이미지 확대 보기" tabindex="-1" onclick={close} onwheel={onWheel}>
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
     <img
       class="lb-img"
+      transition:modalFx
       {src}
       alt="확대 이미지"
       draggable="false"

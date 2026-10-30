@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   import { guessTitle } from '../utils';
 
   interface Props {
@@ -47,8 +48,8 @@
 
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-    <div class="dialog wide" role="dialog" aria-modal="true" aria-label="붙여넣어 새 문서 만들기">
+  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class="dialog wide" role="dialog" transition:modalFx aria-modal="true" aria-label="붙여넣어 새 문서 만들기">
       <h2>붙여넣어 새 문서 만들기</h2>
       <textarea
         bind:this={textEl}

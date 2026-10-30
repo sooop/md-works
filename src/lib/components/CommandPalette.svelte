@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   // 명령 팔레트: Ctrl+K 또는 Ctrl+Space 로 열어 이름(초성 가능)으로 명령·단축키·메뉴·서식·글을 찾아 실행한다.
   // ↑↓ 선택, Enter 실행, Esc 닫기. 검색어가 없으면 명령만, 있으면 글 이동도 함께 검색한다.
   import { tick } from 'svelte';
@@ -61,8 +62,8 @@
 
 {#if palette.open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay cp-overlay" onclick={(e) => { if (e.target === e.currentTarget) closePalette(); }}>
-    <div class="cp" role="dialog" aria-modal="true" aria-label="명령 팔레트">
+  <div class="overlay cp-overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) closePalette(); }}>
+    <div class="cp" role="dialog" transition:modalFx aria-modal="true" aria-label="명령 팔레트">
       <div class="cp-input">
         <Search size={16} />
         <input

@@ -1,6 +1,7 @@
 // 두 모드가 공유하는 상태: 설정, 현재 문서, 토스트, 대화상자
 export type Theme = 'system' | 'light' | 'dark';
 export type ImageMode = 'file' | 'base64';
+import type { CopyKind } from './tableTools';
 
 const SETTINGS_KEY = 'notes.settings';
 const SETTINGS_VERSION = 3;
@@ -15,7 +16,9 @@ function loadSettings() {
     autosave: true,
     imageMode: 'file' as ImageMode,
     template: '', // 서버 버전의 docx 템플릿 파일명, 빈 값이면 기본 템플릿
+    tableLastCopy: '' as '' | CopyKind, // 표 확대 보기에서 가장 최근에 고른 복사 형식(비어 있으면 tableCopyFormat)
     tableCopyFormat: 'tsv' as 'tsv' | 'csv', // 표 '복사' 단추의 기본 형식(다른 형식은 메뉴에서)
+    animations: true, // 패널·툴팁·모달·팝오버의 나타남/사라짐과 flash(빌드 옵션 __ANIM__ 이 꺼져 있으면 무시)
     snippetColors: false, // 글감 색 지정·색 필터 같은 '고급' 기능을 쓸지(기본 꺼짐: 화면을 어지럽히지 않는다)
     version: SETTINGS_VERSION,
   };

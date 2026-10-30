@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   // JSON·YAML·마크다운 목록(과 CSV·TSV·GFM·아스키·HTML 표 글자)을 붙여넣어 표로 바꿔 커서 위치에 넣는 창.
   // 형식은 내용을 보고 자동으로 정한다. 읽을 수 없으면 오류만 보이고 삽입 단추가 꺼진다.
   import { tick, untrack } from 'svelte';
@@ -10,7 +11,7 @@
   const MAX_ROWS = 3000;
   const PREVIEW_ROWS = 8;
   const FORMATS: { v: InputFormat; l: string }[] = [
-    { v: 'auto', l: '자동' }, { v: 'json', l: 'JSON' }, { v: 'yaml', l: 'YAML' }, { v: 'md', l: '마크다운 목록' }, { v: 'table', l: '표 글자' },
+    { v: 'auto', l: '자동' }, { v: 'json', l: 'JSON' }, { v: 'yaml', l: 'YAML' }, { v: 'md', l: '마크다운 목록' }, { v: 'nu', l: 'nu 리터럴' }, { v: 'table', l: '표 글자' },
   ];
 
   let text = $state('');
@@ -96,7 +97,7 @@
     text = el.value;
   }
   const kind = $derived(result && 'ok' in result ? result.ok.kind : null);
-  const showArr = $derived(listImport.format === 'json' || listImport.format === 'yaml' || kind === 'json' || kind === 'yaml');
+  const showArr = $derived(listImport.format === 'json' || listImport.format === 'yaml' || listImport.format === 'nu' || kind === 'json' || kind === 'yaml' || kind === 'nu');
   const showHdr = $derived(listImport.format === 'md' || kind === 'md');
 </script>
 
@@ -104,8 +105,8 @@
 
 {#if listImport.open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) close(); }}>
-    <div class="dialog wide ltt" role="dialog" aria-modal="true" aria-label="목록·표 글자에서 표 만들기">
+  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) close(); }}>
+    <div class="dialog wide ltt" role="dialog" transition:modalFx aria-modal="true" aria-label="목록·표 글자에서 표 만들기">
       <h2>목록·표 글자에서 표 만들기</h2>
       <textarea
         bind:this={textEl}

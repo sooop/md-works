@@ -168,13 +168,30 @@ export async function moveStep(dir: -1 | 1, id?: string) {
 const last = { text: '', para: '' };
 const BLOCK = 'p, li, h1, h2, h3, h4, h5, h6, blockquote, pre, td, th';
 
+// 코드 블록 전체를 걸쳐 고르면 줄 번호·언어 선택 같은 장식이 선택 문자열에 섞이므로, 장식을 뺀 복제본에서 글자를 읽는다
+const CODE_DECOR = '.cm-gutters, .cm-lineNumbers, .tools';
+function selectedText(s: Selection): string {
+  const plain = s.toString().trim();
+  if (!s.rangeCount) return plain;
+  const frag = s.getRangeAt(0).cloneContents();
+  if (!frag.querySelector(CODE_DECOR)) return plain;
+  frag.querySelectorAll(CODE_DECOR).forEach((el) => el.remove());
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;left:-9999px;top:0;white-space:pre-wrap;pointer-events:none';
+  box.appendChild(frag);
+  document.body.appendChild(box); // innerText 가 줄바꿈을 만들려면 화면 트리에 붙어 있어야 한다
+  const text = box.innerText.trim();
+  box.remove();
+  return text || plain;
+}
+
 function onSelChange() {
   const s = window.getSelection();
   const n = s?.anchorNode;
   const el = n instanceof Element ? n : n?.parentElement;
   const pm = el?.closest('.editor-wrap .ProseMirror');
   if (!s || !el || !pm) return;
-  last.text = s.isCollapsed ? '' : s.toString().trim();
+  last.text = s.isCollapsed ? '' : selectedText(s);
   last.para = el.closest(BLOCK)?.textContent?.trim() ?? '';
 }
 /** 선택 변화 추적을 시작한다. 돌려주는 함수로 해제 */

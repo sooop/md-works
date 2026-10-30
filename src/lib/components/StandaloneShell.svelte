@@ -37,6 +37,7 @@
   import FindBar from './FindBar.svelte';
   import StatusBar from './StatusBar.svelte';
   import SheetBackdrop from './SheetBackdrop.svelte';
+  import { panelFx } from '../motion';
   import SearchPanel from './SearchPanel.svelte';
   import Search from '@lucide/svelte/icons/search';
   import X from '@lucide/svelte/icons/x';
@@ -59,14 +60,14 @@
   leftSheet.close = closeLeft;
   const docked = $derived(isDocked());
   let settingsOpen = $state(false);
-  // 열린 문서가 없으면 목록을 보여 주고, 문서가 열리면 마우스가 목록 위에 있을 때만 남긴다(직접 글을 고른 경우). 시작할 때 마지막 글이 열리는 경우엔 닫는다
+  // 문서가 열리면 마우스가 목록 위에 있을 때만 목록(팝오버)을 남긴다(직접 글을 고른 경우). 문서가 없을 때는 목록을 자동으로 띄우지 않는다:
+  // 시작하는 동안 문서가 비어 있는 순간에 목록이 떴다가 마지막 글이 열리며 사라지는 깜빡임이 생기고, 빈 화면에 새 글·붙여넣기 단추가 있다
   $effect(() => {
     void doc.key;
     const has = !!doc.path;
     untrack(() => {
       if (viewport.mobile) return;
-      if (!has) openLeft();
-      else if (!document.querySelector('.left-sidebar:hover')) closeLeft();
+      if (has && !document.querySelector('.left-sidebar:hover')) closeLeft();
     });
   });
   function closePeeks() { if (!viewport.mobile) { closeLeft(); rightPeek.open = false; } }
@@ -150,7 +151,7 @@
   {/if}
   {#if docked || left.open}
     <aside
-      class="sidebar left-sidebar" class:peek={!docked} style:--left-w="{left.width}px"
+      class="sidebar left-sidebar" class:peek={!docked} style:--left-w="{left.width}px" transition:panelFx={{ side: viewport.mobile ? 'bottom' : 'left' }}
       use:peekPanel={{ active: () => !docked && !viewport.mobile, close: closeLeft }}
     >
       <header>
@@ -226,7 +227,15 @@
         {/key}
         <CommentLayer />
       {:else}
-        <div class="placeholder">왼쪽 목록에서 문서를 열거나 새로 만드세요.</div>
+        <div class="placeholder">
+          <div class="empty-start">
+            <p>열려 있는 문서가 없습니다.</p>
+            <div class="empty-actions">
+              <button class="primary" onclick={() => createDoc(lib.dir)}><FilePlus size={16} /> 새 글 쓰기</button>
+              <button onclick={() => (pasteOpen = true)}><ClipboardPaste size={16} /> 붙여넣기</button>
+            </div>
+          </div>
+        </div>
       {/if}
     </section>
     <StatusBar />

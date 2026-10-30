@@ -9,18 +9,18 @@ if (typeof window !== 'undefined') {
   window.addEventListener('drop', end, true);
 }
 
-const OPEN_DELAY = 300;
+const OPEN_DELAY = { left: 300, right: 2000 }; // 오른쪽(글감·코멘트) 패널은 스치듯 닿아도 뜨면 거슬려 더 오래 머물러야 연다
 const CLOSE_DELAY = 600;
-const ZONE = 28; // 가장자리 감지 폭(px). 요소가 아니라 창 좌표로 재서 스크롤바 같은 것을 가리지 않는다
+const ZONE = { left: 28, right: 80 }; // 가장자리 감지 폭(px). 요소가 아니라 창 좌표로 재서 스크롤바 같은 것을 가리지 않는다
 
-/** 마우스가 창의 왼쪽/오른쪽 가장자리 ZONE 안에 OPEN_DELAY 동안 머무르면 fn 을 부른다(스쳐 지나가는 것은 무시). node 의 data-side 로 쪽을 정한다 */
+/** 마우스가 창의 왼쪽/오른쪽 가장자리 쪽별 ZONE 안에 OPEN_DELAY 동안 머무르면 fn 을 부른다(스쳐 지나가는 것은 무시). node 의 data-side 로 쪽을 정한다 */
 export function edgeHover(node: HTMLElement, fn: () => void) {
   const side = node.dataset.side === 'right' ? 'right' : 'left';
   let t: ReturnType<typeof setTimeout> | undefined;
-  const inZone = (x: number) => (side === 'left' ? x <= ZONE : x >= innerWidth - ZONE);
+  const inZone = (x: number) => (side === 'left' ? x <= ZONE.left : x >= innerWidth - ZONE.right);
   const move = (e: PointerEvent) => {
     if (e.pointerType !== 'mouse') return;
-    if (inZone(e.clientX)) { if (!t) t = setTimeout(fn, OPEN_DELAY); }
+    if (inZone(e.clientX)) { if (!t) t = setTimeout(fn, OPEN_DELAY[side]); }
     else if (t) { clearTimeout(t); t = undefined; }
   };
   window.addEventListener('pointermove', move, { passive: true });

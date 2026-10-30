@@ -3,6 +3,7 @@
   import { tick } from 'svelte';
   import { ctx, closeContextMenu } from '../contextmenu.svelte';
   import { hideTip } from '../tooltip.svelte';
+  import { popFx } from '../motion';
 
   let el = $state<HTMLElement>();
   let pos = $state({ left: 0, top: 0 });
@@ -39,7 +40,7 @@
 <svelte:window onkeydown={onKey} onblur={closeContextMenu} onresize={closeContextMenu} onscrollcapture={closeContextMenu} onpointerdowncapture={(e) => { if (ctx.open && !el?.contains(e.target as Node)) closeContextMenu(); }} />
 
 {#if ctx.open}
-  <div bind:this={el} class="ctx-menu" role="menu" tabindex="-1" style:left="{pos.left}px" style:top="{pos.top}px" oncontextmenu={(e) => e.preventDefault()}>
+  <div bind:this={el} class="ctx-menu" role="menu" tabindex="-1" transition:popFx style:left="{pos.left}px" style:top="{pos.top}px" oncontextmenu={(e) => e.preventDefault()}>
     {#each ctx.items as it}
       {#if it.sep}<hr />{/if}
       <button role="menuitem" class:danger={it.danger} onclick={() => run(it.run)}>{it.label}</button>
@@ -51,11 +52,8 @@
   .ctx-menu {
     position: fixed; z-index: 90; min-width: 150px; padding: 4px; display: flex; flex-direction: column; gap: 2px;
     background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow);
-    animation: ctx-in 0.1s ease-out;
   }
   .ctx-menu button { text-align: left; border: 0; background: transparent; padding: 6px 10px; border-radius: 6px; }
   .ctx-menu button.danger { color: var(--danger); }
   .ctx-menu hr { border: 0; border-top: 1px solid var(--border); margin: 2px 0; }
-  @keyframes ctx-in { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
-  @media (prefers-reduced-motion: reduce) { .ctx-menu { animation: none; } }
 </style>

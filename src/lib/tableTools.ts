@@ -11,6 +11,8 @@ import { parseGfmSource } from './tableList';
 import { isEscapedMarkdown, unescapeMarkdown } from './mdUnescape';
 import { transposeRows } from './tableOps';
 import { toHtml, toAscii, toMarkdown } from './tableFormats';
+import { dispatchFlash } from './flashDoc';
+import { playPop } from './motion';
 import { downloadBlob, writeClipboard, writeClipboardHtml } from './utils';
 
 export interface TableToolsEnv {
@@ -38,6 +40,14 @@ export interface TableData {
   rows: string[][];
   /** 확대 보기에서 만든 상태(필터·정렬·열 순서)를 문서의 표에 반영한다. 읽기 전용이면 없다. 표를 못 찾으면 false */
   apply?: (header: string[], rows: string[][]) => boolean;
+  /** 확대 보기에서 고른 영역(첫 행이 새 표의 헤더)을 새 표로 현재 표 바로 아래에 추가한다. 읽기 전용이면 없다. 표를 못 찾으면 false */
+  insertAfter?: (rows: string[][]) => boolean;
+  /** 현재 표를 고른 영역으로 만든 새 표로 교체한다. 읽기 전용이면 없다. 표를 못 찾으면 false */
+  replaceWith?: (rows: string[][]) => boolean;
+  /** 문서의 표를 행·열 바꾸기(원본 기준, 필터·정렬·열 이동은 무시). 읽기 전용이면 없다. 못 하면 false */
+  transpose?: () => boolean;
+  /** 첫 행 헤더가 꺼진 표(header 는 `열 N` 이름) — 확대 보기가 머리글 줄을 접는다 */
+  headerless?: boolean;
 }
 
 /** 순수 텍스트가 마크다운 문서 모양인가: 두 줄 이상이고 제목·목록 둘 이상·코드 펜스·표 구분줄 중 하나가 있다 */
@@ -70,7 +80,7 @@ function buildTable(view: EditorView, rows: string[][]): PMNode {
 }
 
 function insertTable(view: EditorView, rows: string[][]) {
-  view.dispatch(view.state.tr.replaceSelectionWith(buildTable(view, rows)).scrollIntoView());
+  dispatchFlash(view, view.state.tr.replaceSelectionWith(buildTable(view, rows)).scrollIntoView(), 'insert'); // 붙여넣기로 만든 표
   view.focus();
 }
 
@@ -82,7 +92,7 @@ function insertBlock(view: EditorView, node: PMNode) {
   const tr = view.state.tr;
   if (outer) tr.insert($from.after(outer), node);
   else tr.replaceSelectionWith(node);
-  view.dispatch(tr.scrollIntoView());
+  dispatchFlash(view, tr.scrollIntoView(), 'convert'); // 변환 창 결과 삽입
   view.focus();
 }
 
@@ -95,7 +105,7 @@ export function insertGridAtCursor(view: EditorView, rows: string[][]) {
 export interface CodeSource {
   text: string;
   /** 코드 블록 언어에서 정한 입력 형식(모르면 auto) */
-  format: 'auto' | 'json' | 'yaml' | 'md';
+  format: 'auto' | 'json' | 'yaml' | 'md' | 'nu';
   /** 변환 창 문구에 쓰는 원본 이름(기본 '코드 블록') */
   label?: string;
   /** '블럭 교체' 를 처음부터 켠다(선택 영역 변환) */
@@ -106,7 +116,7 @@ export interface CodeSource {
   replace: (rows: string[][]) => boolean;
 }
 
-const CODE_FORMAT: Record<string, CodeSource['format']> = { json: 'json', jsonc: 'json', yaml: 'yaml', yml: 'yaml', markdown: 'md', md: 'md' };
+const CODE_FORMAT: Record<string, CodeSource['format']> = { json: 'json', jsonc: 'json', yaml: 'yaml', yml: 'yaml', markdown: 'md', md: 'md', nu: 'nu', nushell: 'nu' };
 
 /** pos 가 코드 블록 안(또는 그 시작)이면 변환 정보를 만든다. JSON·YAML·마크다운 코드이거나 언어가 없는 블록만 대상 */
 export function codeSourceAt(view: EditorView, pos: number): CodeSource | null {
@@ -133,14 +143,14 @@ export function codeSourceAt(view: EditorView, pos: number): CodeSource | null {
     insertAfter(rows) {
       const cur = live();
       if (!cur || !view.editable) return false;
-      view.dispatch(view.state.tr.insert(start + cur.nodeSize, buildTable(view, rows)).scrollIntoView());
+      dispatchFlash(view, view.state.tr.insert(start + cur.nodeSize, buildTable(view, rows)).scrollIntoView(), 'convert');
       view.focus();
       return true;
     },
     replace(rows) {
       const cur = live();
       if (!cur || !view.editable) return false;
-      view.dispatch(view.state.tr.replaceWith(start, start + cur.nodeSize, buildTable(view, rows)).scrollIntoView());
+      dispatchFlash(view, view.state.tr.replaceWith(start, start + cur.nodeSize, buildTable(view, rows)).scrollIntoView(), 'convert');
       view.focus();
       return true;
     },
@@ -185,14 +195,14 @@ export function selectionSourceAt(view: EditorView, serialize: (doc: PMNode) => 
     insertAfter(rows) {
       const size = live();
       if (size === null || !view.editable) return false;
-      view.dispatch(view.state.tr.insert(start + size, buildTable(view, rows)).scrollIntoView());
+      dispatchFlash(view, view.state.tr.insert(start + size, buildTable(view, rows)).scrollIntoView(), 'convert');
       view.focus();
       return true;
     },
     replace(rows) {
       const size = live();
       if (size === null || !view.editable) return false;
-      view.dispatch(view.state.tr.replaceWith(start, start + size, buildTable(view, rows)).scrollIntoView());
+      dispatchFlash(view, view.state.tr.replaceWith(start, start + size, buildTable(view, rows)).scrollIntoView(), 'convert');
       view.focus();
       return true;
     },
@@ -239,7 +249,7 @@ export const tablePaste = (env: TableToolsEnv) =>
               try {
                 const parsed = ctx.get(parserCtx)(md);
                 if (!parsed || typeof parsed === 'string') throw new Error('parse');
-                view.dispatch(view.state.tr.replaceSelection(new Slice(parsed.content, 0, 0)).scrollIntoView());
+                dispatchFlash(view, view.state.tr.replaceSelection(new Slice(parsed.content, 0, 0)).scrollIntoView(), esc ? 'tidy' : 'insert'); // 이스케이프 원문은 풀어서 보정
               } catch { view.pasteText(text); }
               return true;
             }
@@ -279,7 +289,7 @@ function tableRows(table: PMNode): string[][] {
 function toTableData(node: PMNode, index: number): TableData {
   const all = tableRows(node);
   if (isHeaderOn(node)) return { index, header: all[0], rows: all.slice(1) };
-  return { index, header: all[0].map((_, i) => `열 ${i + 1}`), rows: all.slice(1) };
+  return { index, header: all[0].map((_, i) => `열 ${i + 1}`), rows: all.slice(1), headerless: true };
 }
 
 function findTable(view: EditorView, block: HTMLElement): { node: PMNode; pos: number; index: number } | null {
@@ -318,15 +328,16 @@ function toggleHeader(view: EditorView, table: PMNode, pos: number, env: TableTo
     if (rows.length < 2) { env.toast('본문 행이 없어 첫 행 헤더를 켤 수 없습니다', 'error'); return; }
     next = [retype(rows[1], n.table_header_row, n.table_header), ...rows.slice(2)];
   }
-  view.dispatch(view.state.tr.replaceWith(pos, pos + table.nodeSize, table.type.create(table.attrs, Fragment.from(next))));
+  dispatchFlash(view, view.state.tr.replaceWith(pos, pos + table.nodeSize, table.type.create(table.attrs, Fragment.from(next))), 'tidy');
 }
 
 /** 행·열 바꾸기. 열 정렬(좌/중/우)과 셀 서식은 사라진다 */
-function transposeTable(view: EditorView, table: PMNode, pos: number, env: TableToolsEnv) {
+function transposeTable(view: EditorView, table: PMNode, pos: number, env: TableToolsEnv): boolean {
   const rows = tableRows(table);
   const next = transposeRows(rows, isHeaderOn(table));
-  if (next.length < 1 || next[0].length < 1 || (next.length < 2 && !isHeaderOn(table))) { env.toast('바꿀 내용이 없습니다', 'error'); return; }
-  view.dispatch(view.state.tr.replaceWith(pos, pos + table.nodeSize, buildTable(view, next)));
+  if (next.length < 1 || next[0].length < 1 || (next.length < 2 && !isHeaderOn(table))) { env.toast('바꿀 내용이 없습니다', 'error'); return false; }
+  dispatchFlash(view, view.state.tr.replaceWith(pos, pos + table.nodeSize, buildTable(view, next)), 'convert'); // 행·열 전치
+  return true;
 }
 
 export type Fmt = 'tsv' | 'csv';
@@ -368,13 +379,49 @@ export function saveTable(rows: string[][], fmt: Fmt, index: number, env: Pick<T
   env.toast(`${fmt.toUpperCase()} 파일을 내려받았습니다`);
 }
 
+/** 파일 저장 형식 목록(저장 팝오버 순서). 형식이 늘어도 팝오버는 한 단계로 고른다 */
+export type SaveKind = 'csv' | 'tsv' | 'markdown' | 'html' | 'ascii';
+export const SAVE_KINDS: { kind: SaveKind; label: string; ext: string; desc: string }[] = [
+  { kind: 'csv', label: 'CSV', ext: 'csv', desc: '쉼표 구분 — 엑셀에서 한글이 깨지지 않게 BOM 포함' },
+  { kind: 'tsv', label: 'TSV', ext: 'tsv', desc: '탭 구분' },
+  { kind: 'markdown', label: '마크다운 표', ext: 'md', desc: '| a | b | 형식' },
+  { kind: 'html', label: 'HTML 표', ext: 'html', desc: '<table> 태그' },
+  { kind: 'ascii', label: '아스키 표', ext: 'txt', desc: '+---+ 로 그린 고정폭 글자 표' },
+];
+
+/** 형식을 골라 표를 파일로 내려받는다 */
+export function saveAs(rows: string[][], kind: SaveKind, index: number, env: Pick<TableToolsEnv, 'toast' | 'docName'>) {
+  if (kind === 'csv' || kind === 'tsv') { saveTable(rows, kind, index, env); return; }
+  const k = SAVE_KINDS.find((s) => s.kind === kind)!;
+  const text = kind === 'markdown' ? toMarkdown(rows) : kind === 'html' ? toHtml(rows) : toAscii(rows);
+  const mime = kind === 'markdown' ? 'text/markdown' : kind === 'html' ? 'text/html' : 'text/plain';
+  downloadBlob(`${env.docName() || '표'}-표${index}.${k.ext}`, new Blob([text], { type: `${mime};charset=utf-8` }));
+  env.toast(`${k.ext.toUpperCase()} 파일을 내려받았습니다`);
+}
+
 /** 확대 보기에서 만든 머리글·본문 행을 문서의 표로 바꾼다(셀 서식은 일반 글자가 된다). 첫 행 헤더가 꺼진 표는 빈 헤더 행을 유지한다 */
 function applyRows(view: EditorView, block: HTMLElement, header: string[], rows: string[][]): boolean {
   const t = findTable(view, block);
   if (!t || !view.editable) return false;
   const head = isHeaderOn(t.node) ? header : header.map(() => '');
   const next = buildTable(view, [head, ...rows]);
-  view.dispatch(view.state.tr.replaceWith(t.pos, t.pos + t.node.nodeSize, next));
+  dispatchFlash(view, view.state.tr.replaceWith(t.pos, t.pos + t.node.nodeSize, next), 'tidy'); // 확대 보기의 정렬·필터·열 이동 반영
+  return true;
+}
+
+/** 확대 보기에서 고른 영역으로 만든 새 표를 현재 표 바로 아래에 넣는다(rows[0] 이 헤더) */
+function insertTableAfter(view: EditorView, block: HTMLElement, rows: string[][]): boolean {
+  const t = findTable(view, block);
+  if (!t || !view.editable || rows.length < 1 || rows[0].length < 1) return false;
+  dispatchFlash(view, view.state.tr.insert(t.pos + t.node.nodeSize, buildTable(view, rows)).scrollIntoView(), 'convert'); // 선택 영역으로 새 표
+  return true;
+}
+
+/** 현재 표를 고른 영역으로 만든 새 표로 바꾼다(rows[0] 이 헤더, 첫 행 헤더는 켜진 상태) */
+function replaceTableWith(view: EditorView, block: HTMLElement, rows: string[][]): boolean {
+  const t = findTable(view, block);
+  if (!t || !view.editable || rows.length < 1 || rows[0].length < 1) return false;
+  dispatchFlash(view, view.state.tr.replaceWith(t.pos, t.pos + t.node.nodeSize, buildTable(view, rows)), 'convert'); // 선택 영역으로 표 교체
   return true;
 }
 
@@ -413,7 +460,12 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
   const openZoom = withTable((t) => {
     const data = toTableData(t.node, t.index);
     const b = block!;
-    if (view.editable) data.apply = (header, rows) => applyRows(view, b, header, rows);
+    if (view.editable) {
+      data.apply = (header, rows) => applyRows(view, b, header, rows);
+      data.insertAfter = (rows) => insertTableAfter(view, b, rows);
+      data.replaceWith = (rows) => replaceTableWith(view, b, rows);
+      data.transpose = () => { const cur = findTable(view, b); return !!cur && transposeTable(view, cur.node, cur.pos, env); };
+    }
     env.openViewer(data);
   });
 
@@ -455,9 +507,12 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
       b.setAttribute('role', 'menuitem');
       return b;
     }));
+    menuGen++; // 사라지는 중이었다면 취소
+    const wasHidden = menu.hidden;
     menu.hidden = false;
     menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
     menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+    if (wasHidden) void playPop(menu, 'in');
   }
 
   function position() {
@@ -494,7 +549,13 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
     clearTimeout(hideTimer);
     hideTimer = window.setTimeout(() => { bar.hidden = true; if (menu.hidden) block = null; }, 250);
   };
-  function hideMenu() { menu.hidden = true; }
+  /** 사라짐 모션이 끝난 뒤 숨긴다. 모션 중 다시 열리면 숨기지 않는다 */
+  let menuGen = 0;
+  function hideMenu() {
+    if (menu.hidden) return;
+    const gen = ++menuGen;
+    void playPop(menu, 'out').then(() => { if (gen === menuGen) menu.hidden = true; });
+  }
 
   const onOver = (e: MouseEvent) => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('.milkdown-table-block');

@@ -8,13 +8,14 @@
   import Hand from '@lucide/svelte/icons/hand';
   import Check from '@lucide/svelte/icons/check';
   import ListFilter from '@lucide/svelte/icons/list-filter';
-  import TreeNodeView from './TreeNode.svelte';
+  import TreeNodeView, { type TreeFx } from './TreeNode.svelte';
   import Pop from './Pop.svelte';
   import { tip } from '../tooltip.svelte';
   import { matchName } from '../search/nameMatch';
   import { stripExt } from '../utils';
   import { sortTree, ordersOf, splitPath, type DocNode, type SortMode } from '../docTree';
   import { treeUi, setSort, setOrders, SORT_LABEL, treeNav, onActiveChange } from '../docTree.svelte';
+  import { animOn } from '../motion';
   import { TREE_CTL, dndUi, type DragState, type DropPos, type TreeCtl } from './treeCtl';
 
   interface Props {
@@ -31,9 +32,29 @@
   let navEl = $state<HTMLElement>();
   let indEl = $state<HTMLDivElement>();
   // 놓을 위치 표시(선 또는 상자) 하나를 직접 옮긴다. 반응형 상태를 거치지 않아 마우스를 바로 따라온다
+  // 형제 사이에 놓을 때(before·after)는 선 대신 그 자리의 행이 슬라이드로 비켜 '빈 슬롯'을 연다(.slot-before/.slot-after, TreeNode 스타일).
+  // 슬롯의 빈 공간은 그 행의 ::before/::after 라 마우스 이벤트가 같은 행으로 들어와, 슬롯 위에서도 같은 위치로 놓인다.
+  // 빠르게 지나갈 때 깜빡이지 않도록 열기 전에 잠깐 기다리고, 애니메이션을 끈 경우에는 기존의 선으로 보여 준다
+  const SLOT_DELAY = 70;
+  let gapRow: HTMLElement | null = null;
+  let gapPos: DropPos = '';
+  let gapTimer: ReturnType<typeof setTimeout> | undefined;
+  function showGap(row: HTMLElement | null, pos: DropPos) {
+    const want: DropPos = row && (pos === 'before' || pos === 'after') ? pos : '';
+    if (row === gapRow && want === gapPos) return;
+    clearTimeout(gapTimer);
+    gapRow?.classList.remove('slot-before', 'slot-after');
+    gapRow = want ? row : null;
+    gapPos = want;
+    const r = gapRow;
+    if (!r) return;
+    gapTimer = setTimeout(() => r.classList.add(want === 'before' ? 'slot-before' : 'slot-after'), SLOT_DELAY);
+  }
   dndUi.indicate = (row: HTMLElement | null, pos: DropPos) => {
     if (!indEl || !navEl) return;
-    if (!row || !pos) { indEl.style.display = 'none'; return; }
+    const slot = animOn() && !!row && (pos === 'before' || pos === 'after');
+    showGap(slot ? row : null, slot ? pos : '');
+    if (!row || !pos || slot) { indEl.style.display = 'none'; return; }
     const n = navEl.getBoundingClientRect();
     const r = row.getBoundingClientRect();
     const top = r.top - n.top + navEl.scrollTop;
@@ -75,6 +96,17 @@
     return out;
   }
   const view = $derived(filter.trim() ? filterNodes(sorted, filter) : sorted);
+
+  // 삽입·삭제 효과용: 접어 둔 폴더 안까지 포함한 전체 경로 집합(nodes 기준이라 필터·접기에는 변하지 않는다)
+  const collect = (list: DocNode[], out = new Set<string>()): Set<string> => { for (const n of list) { out.add(n.path); if (n.children) collect(n.children, out); } return out; };
+  const allPaths = $derived(collect(nodes));
+  // 직전에 본 경로. 처음 채워질 때(빈 상태 → 목록)는 기준선만 잡고 재생하지 않으며, 이름 바꾸기·이동으로 상위가 함께 사라진 하위 항목도 재생하지 않는다
+  let seen = new Set<string>();
+  $effect(() => { seen = new Set(allPaths); });
+  const fx: TreeFx = {
+    isNew: (path, parent) => !dndUi.moving && seen.size > 0 && !seen.has(path) && (parent === '' || seen.has(parent)),
+    isGone: (path, parent) => !dndUi.moving && !allPaths.has(path) && (parent === '' || allPaths.has(parent)),
+  };
 
   // 스크롤 고정(sticky)되는 폴더 행이 쌓이는 높이를 맞추려고 실제 행 높이를 잰다
   let rowH = $state(28);
@@ -173,13 +205,13 @@
   </Pop>
 </div>
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<nav class="tree" bind:this={navEl} style:position="relative" style:--row-h="{rowH}px" ondragover={onRootOver} ondrop={onRootDrop}
+<nav class="tree" class:dnd={!!drag.node} bind:this={navEl} style:position="relative" style:--row-h="{rowH}px" ondragover={onRootOver} ondrop={onRootDrop}
   ondragleave={(e) => { if (!navEl?.contains(e.relatedTarget as Node | null)) dndUi.indicate(null, ''); }}>
   <div class="drop-ind" bind:this={indEl} style:display="none" aria-hidden="true"></div>
   {#if view.length}
     <ul>
       {#each view as node (node.path)}
-        <TreeNodeView {node} {filter} {drag} {siblings} />
+        <TreeNodeView {node} {filter} {drag} {siblings} {fx} />
       {/each}
     </ul>
   {:else if filter.trim()}

@@ -2,6 +2,7 @@
   // 아이콘 버튼 따위의 트리거 아래에 뜨는 팝오버. 패널은 fixed 로 띄워 스크롤하는 사이드바 안에서도 잘리지 않는다.
   // 바깥을 누르거나 Esc 를 누르면 닫히고, Esc 로 닫으면 트리거로 포커스가 돌아간다.
   import { tick, type Snippet } from 'svelte';
+  import { popFx } from '../motion';
 
   interface Props {
     open?: boolean;
@@ -46,7 +47,7 @@
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="pop-backdrop" onpointerdown={close}></div>
-  <div bind:this={panel} class="pop-panel" role="dialog" aria-label={label} style:left="{pos.left}px" style:top="{pos.top}px" style:width="min({width}px, calc(100vw - 16px))">
+  <div bind:this={panel} class="pop-panel" role="dialog" transition:popFx aria-label={label} style:left="{pos.left}px" style:top="{pos.top}px" style:width="min({width}px, calc(100vw - 16px))">
     {@render children({ close })}
   </div>
 {/if}
@@ -57,10 +58,7 @@
   .pop-panel {
     position: fixed; z-index: 1501; box-sizing: border-box; padding: 6px; display: flex; flex-direction: column; gap: 2px;
     background: var(--surface); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow);
-    animation: pop-in 0.12s ease-out;
   }
-  @keyframes pop-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
-  @media (prefers-reduced-motion: reduce) { .pop-panel { animation: none; } }
   /* 팝오버 안의 공용 항목 모양: 아이콘 + 제목 + 설명 */
   .pop-panel :global(.pop-row) {
     display: flex; align-items: center; gap: 10px; text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: 8px; width: 100%;

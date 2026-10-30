@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   import { tip } from '../tooltip.svelte';
   import Editor from './Editor.svelte';
   import { listVersions, setVersionName, type Version } from '../history';
@@ -92,8 +93,8 @@
 
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
-    <div class="dialog history" role="dialog" aria-modal="true" aria-label="버전 이력">
+  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
+    <div class="dialog history" role="dialog" transition:modalFx aria-modal="true" aria-label="버전 이력">
       <h2>버전 이력 <span class="sub">24시간 이내 전부 · 이후 시간당/일당 1개로 정리 · 이름 붙인 버전은 보존 · 노트 폴더(.works)와 함께 보관됩니다</span></h2>
       {#if loading}
         <p class="muted">불러오는 중…</p>

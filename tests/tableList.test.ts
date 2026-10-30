@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { importToGrid, exportListText, parseTableText, parseMdList, jsonTextToGrid, detectListFormat, headBody, parseGfmSource } from '../src/lib/tableList';
+import { nuTextToGrid, importToGrid, exportListText, parseTableText, parseMdList, jsonTextToGrid, detectListFormat, headBody, parseGfmSource } from '../src/lib/tableList';
 import { toAscii, toMarkdown } from '../src/lib/tableFormats';
 import { toTsv } from '../src/lib/tableCsv';
 
@@ -101,4 +101,44 @@ describe('이스케이프된 표 소스(줄끝 강제 줄바꿈 포함)', () => 
   const src = ['\\| 항목 | 선택 |\\', '\\|---|---|\\', '\\| 메뉴 | SendTo |'].join('\n');
   it('parseGfmSource', () => expect(parseGfmSource(src)).toEqual([['항목', '선택'], ['메뉴', 'SendTo']]));
   it('importToGrid', () => expect(importToGrid(src, 'auto', IMP).grid).toEqual([['항목', '선택'], ['메뉴', 'SendTo']]));
+});
+
+describe('nu 리터럴', () => {
+  const nu = (s: string) => importToGrid(s, 'nu', IMP).grid;
+  it('레코드 목록(쉼표·줄바꿈 구분 모두)', () => {
+    expect(nu('[{name: a, age: 1}, {name: b, age: 2}]')).toEqual([['name', 'age'], ['a', '1'], ['b', '2']]);
+    expect(nu('[{name: a} {name: b}]')).toEqual([['name'], ['a'], ['b']]);
+    expect(nu('[\n  {name: a, age: 1}\n  {name: b, age: 2}\n]')).toEqual([['name', 'age'], ['a', '1'], ['b', '2']]);
+  });
+  it('테이블 리터럴', () => {
+    expect(nu('[[name age]; [a 1] [b 2]]')).toEqual([['name', 'age'], ['a', '1'], ['b', '2']]);
+    expect(nu('[[name, age]; [a, 1], [b, 2]]')).toEqual([['name', 'age'], ['a', '1'], ['b', '2']]);
+  });
+  it('단일 레코드', () => {
+    expect(nu('{name: a, age: 1}')).toEqual([['name', 'age'], ['a', '1']]);
+  });
+  it('따옴표 문자열·키·주석·null', () => {
+    expect(nu("[{\"k 1\": \"a, b\", 'x': `c d`, n: null, ok: true} # 주석\n]")).toEqual([['k 1', 'x', 'n', 'ok'], ['a, b', 'c d', '', 'true']]);
+    expect(nu('{a: "x\\ny\\u{41}"}')).toEqual([['a'], ['x\nyA']]);
+    expect(nu('{a: 0x1F, b: 1_000}')).toEqual([['a', 'b'], ['31', '1000']]);
+  });
+  it('중첩은 json 과 같은 평탄화', () => {
+    expect(nuTextToGrid('[{id: 1, addr: {city: seoul}, items: [{sku: A}, {sku: B}]}]', { ...IMP, arr: 'cols' })[0]).toEqual(['id', 'addr.city', 'items[0].sku', 'items[1].sku']);
+    expect(nuTextToGrid('[{id: 1, t: [x y]}]', { ...IMP, arr: 'rows' })).toHaveLength(3);
+  });
+  it('자동 감지: JSON 우선, 따옴표 없는 키는 nu', () => {
+    expect(detectListFormat('[{"a":1}]')).toBe('json');
+    expect(detectListFormat('[[1,2],[3,4]]')).toBe('json');
+    expect(detectListFormat('[{name: a} {name: b}]')).toBe('nu');
+    expect(detectListFormat('[[name age]; [a 1]]')).toBe('nu');
+    expect(detectListFormat('{name: a, age: 1}')).toBe('nu');
+    expect(importToGrid('[[name age]; [a 1]]', 'auto', IMP)).toMatchObject({ kind: 'nu', label: 'nu 리터럴' });
+  });
+  it('오류는 메시지로', () => {
+    expect(() => nu('[{name: a')).toThrow(/닫히지/);
+    expect(() => nu('[{name}]')).toThrow(/':'/);
+    expect(() => nu('[{a: (ls)}]')).toThrow(/서브식/);
+    expect(() => nu('[[a b]; [1 2 3]]')).toThrow(/머리글/);
+    expect(() => nu('[{a: 1}] x')).toThrow(/남는/);
+  });
 });

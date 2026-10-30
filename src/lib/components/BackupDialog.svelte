@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   import { tip } from '../tooltip.svelte';
   // 상단바 '백업' 버튼 + 모달: 상태 요약, 내보내기, 가져오기(미리보기·병합), 텔레그램, (서버 모드) 노트 폴더 백업.
   import { onMount } from 'svelte';
@@ -190,8 +191,8 @@
 
 {#if backupUi.open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget && !busy) close(); }}>
-    <div class="dialog wide backup" role="dialog" aria-modal="true" aria-label="백업">
+  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget && !busy) close(); }}>
+    <div class="dialog wide backup" role="dialog" transition:modalFx aria-modal="true" aria-label="백업">
       <h2>백업</h2>
 
       <section aria-label="현재 상태">

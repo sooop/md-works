@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   import { dialog } from '../store.svelte';
 
   let inputEl = $state<HTMLInputElement>();
@@ -31,8 +32,8 @@
 
 {#if dialog.open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) pick(-1); }}>
-    <div class="dialog" role="dialog" aria-modal="true" aria-label={dialog.title || dialog.message}>
+  <div class="overlay top" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) pick(-1); }}>
+    <div class="dialog" role="dialog" transition:modalFx aria-modal="true" aria-label={dialog.title || dialog.message}>
       {#if dialog.title}<h2>{dialog.title}</h2>{/if}
       {#if dialog.message}<p>{dialog.message}</p>{/if}
       {#if dialog.input}
@@ -46,3 +47,8 @@
     </div>
   </div>
 {/if}
+
+<style>
+  /* 확대 보기·변환 창 같은 다른 모달 위에서 뜨는 확인·입력 창이라 그 아래에 깔리지 않게 한다 */
+  .overlay.top { z-index: 200; }
+</style>

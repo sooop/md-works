@@ -19,6 +19,7 @@
   import Command from '@lucide/svelte/icons/command';
   import { openPalette } from '../commands/registry.svelte';
   import { tip } from '../tooltip.svelte';
+  import { popFx, slideFx } from '../motion';
   interface Props {
     /** 열린 문서가 있는가 — 없으면 문서 관련 항목(이력·내보내기·도구)을 숨긴다 */
     hasDoc: boolean;
@@ -67,7 +68,7 @@
   {#if open}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="backdrop" onclick={() => (open = false)}></div>
-    <div class="popover menu-list" role="menu">
+    <div class="popover menu-list" role="menu" transition:popFx>
       <button role="menuitem" class="mi" onclick={() => run(openPalette)}><Command size={16} /><span class="t">명령 팔레트</span><kbd>Ctrl+K</kbd></button>
       <hr />
       {#if hasDoc}
@@ -77,7 +78,7 @@
           <Download size={16} /><span class="t">내보내기</span>{#if sub === 'export'}<ChevronDown size={14} class="chev" />{:else}<ChevronRight size={14} class="chev" />{/if}
         </button>
         {#if sub === 'export'}
-          <div class="subgroup" role="group" aria-label="내보내기">
+          <div class="subgroup" role="group" aria-label="내보내기" transition:slideFx>
             {#if onMd}<button role="menuitem" class="mi" onclick={() => run(onMd)}><FileDown size={15} /><span class="t">.md 파일로 저장</span></button>{/if}
             {#if onCopyMd}<button role="menuitem" class="mi" onclick={() => run(onCopyMd)}><Copy size={15} /><span class="t">마크다운 텍스트 복사</span></button>{/if}
             <button role="menuitem" class="mi" onclick={() => run(onDocx)}><FileType size={15} /><span class="t">.docx 로 내보내기</span></button>
@@ -89,7 +90,7 @@
           <Wrench size={16} /><span class="t">문서 도구</span>{#if sub === 'tools'}<ChevronDown size={14} class="chev" />{:else}<ChevronRight size={14} class="chev" />{/if}
         </button>
         {#if sub === 'tools'}
-          <div class="subgroup" role="group" aria-label="문서 도구">
+          <div class="subgroup" role="group" aria-label="문서 도구" transition:slideFx>
             {#if onImages}
               <button role="menuitem" class="mi" onclick={() => run(() => onImages('base64'))}><ImageDown size={15} /><span class="t">이미지를 Base64로 변환</span></button>
               <button role="menuitem" class="mi" onclick={() => run(() => onImages('file'))}><ImageUp size={15} /><span class="t">이미지를 파일로 분리</span></button>

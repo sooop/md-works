@@ -20,7 +20,9 @@
   import { toggleStrikethroughCommand, insertTableCommand } from '@milkdown/kit/preset/gfm';
   import { editorBridge, doc, settings, toast, askChoose, focusNext, type EditorCommand } from '../store.svelte';
   import { stripExt } from '../utils';
-  import { tablePaste, attachTableTools, insertGridAtCursor, insertCodeAtCursor, codeSourceAt, selectionSourceAt, type CodeSource, type TableData } from '../tableTools';
+  import { tableHeaderless } from '../tableHeaderless';
+  import { codeClipboard } from '../codeClipboard';
+  import { tablePaste,attachTableTools, insertGridAtCursor, insertCodeAtCursor, codeSourceAt, selectionSourceAt, type CodeSource, type TableData } from '../tableTools';
   import { tableViewer } from '../tableViewer.svelte';
   import { openListImport, openListExport } from '../tableListUi.svelte';
   import { attachFinder } from '../search/pmSearch';
@@ -33,6 +35,7 @@
   import { trimSelectionSpaces } from '../inlineCode';
   import { notionHeading, notionHeadingBackspace } from '../headingNotion';
   import { buildPrintClone } from '../printCode';
+  import { flashAfter } from '../flashDoc';
   import { splitFrontmatter, joinFrontmatter, frontInner, frontOuter } from '../frontmatter';
 
   interface Props {
@@ -139,6 +142,8 @@
         });
       const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const), openExport: openListExport, openFromCode: (src: CodeSource) => openListImport(src), selectionSource: () => editorBridge.selectionSource?.() ?? null };
       c.editor.use(tablePaste(tableEnv)); // TSV/CSV 붙여넣기 → 표
+      c.editor.use(codeClipboard); // 코드 블록 복사는 ``` 언어명 펜스 마크다운으로
+      c.editor.use(tableHeaderless); // 모든 셀이 빈 헤더 행은 얇게 접어 헤더 없는 표처럼 보이게
       onlyDoubleTilde(c.editor); // 취소선은 ~~A~~ 만 인식하고 글자 그대로의 ~ 는 보존한다
       footnotes(c.editor); // 각주: 정의는 문서 끝에 모으고 등장 순서로 번호
       notionHeading(c.editor); // 제목: ## 입력은 level 설정, 맨 앞 Backspace 는 문단으로
@@ -175,8 +180,8 @@
               h1: () => run(wrapInHeadingCommand.key as never, 1), h2: () => run(wrapInHeadingCommand.key as never, 2), h3: () => run(wrapInHeadingCommand.key as never, 3),
               paragraph: () => run(turnIntoTextCommand.key as never), quote: () => run(wrapInBlockquoteCommand.key as never),
               bullet: () => run(wrapInBulletListCommand.key as never), ordered: () => run(wrapInOrderedListCommand.key as never),
-              codeblock: () => run(createCodeBlockCommand.key as never), hr: () => run(insertHrCommand.key as never),
-              table: () => run(insertTableCommand.key as never, { row: 3, col: 3 }),
+              codeblock: () => flashAfter(view, () => run(createCodeBlockCommand.key as never), 'insert'), hr: () => flashAfter(view, () => run(insertHrCommand.key as never), 'insert'),
+              table: () => flashAfter(view, () => run(insertTableCommand.key as never, { row: 3, col: 3 }), 'insert'),
               footnote: () => { insertFootnote(view); },
             };
             editorBridge.command = (name) => { if (readonly) { toast('읽기 모드에서는 서식을 바꿀 수 없습니다'); return; } view.focus(); table[name](); };

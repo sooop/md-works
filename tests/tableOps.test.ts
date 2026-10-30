@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseNumber, computeStats, matchesColumnFilter, filterRows, sortRows, moveItem, transposeRows } from '../src/lib/tableOps';
+import { parseNumber, computeStats, matchesColumnFilter, filterRows, sortRows, moveItem, transposeRows, sliceGrid } from '../src/lib/tableOps';
 import { toHtml, toAscii, toMarkdown, textWidth } from '../src/lib/tableFormats';
 
 describe('parseNumber', () => {
@@ -95,5 +95,18 @@ describe('transposeRows', () => {
   });
   it('헤더가 꺼진 표는 빈 헤더 행을 유지한다', () => {
     expect(transposeRows([['', ''], ['1', '2'], ['3', '4']], false)).toEqual([['', ''], ['1', '3'], ['2', '4']]);
+  });
+});
+
+describe('sliceGrid', () => {
+  const grid = [['a', 'b', 'c'], ['1', '2', '3'], ['4', '5', '6']];
+  it('선택 사각형을 잘라 첫 행을 헤더로 둔다', () => {
+    expect(sliceGrid(grid, 1, 1, 2, 2)).toEqual([['2', '3'], ['5', '6']]);
+  });
+  it('헤더 행부터 선택해도 된다', () => {
+    expect(sliceGrid(grid, 0, 0, 1, 0)).toEqual([['a'], ['1']]);
+  });
+  it('짧은 행은 빈 칸으로 채운다', () => {
+    expect(sliceGrid([['a', 'b'], ['1']], 0, 0, 1, 1)).toEqual([['a', 'b'], ['1', '']]);
   });
 });

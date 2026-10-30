@@ -4,6 +4,7 @@
   import { untrack } from 'svelte';
   import { doc } from '../store.svelte';
   import { isMobile } from '../writing/state.svelte';
+  import { backdropFx, panelFx } from '../motion';
   import '../writing/writing.css';
 
   interface Props { open: boolean; onClose: () => void }
@@ -18,6 +19,6 @@
 <svelte:window onkeydown={(e) => { if (open && isMobile() && e.key === 'Escape' && !e.defaultPrevented) onClose(); }} />
 
 {#if open}
-  <button class="sheet-backdrop" tabindex="-1" aria-label="사이드바 닫기" onclick={onClose}></button>
-  <button class="sheet-handle" aria-label="사이드바 닫기" onclick={onClose}></button>
+  <button class="sheet-backdrop" tabindex="-1" transition:backdropFx aria-label="사이드바 닫기" onclick={onClose}></button>
+  <button class="sheet-handle" transition:panelFx={{ side: 'bottom' }} aria-label="사이드바 닫기" onclick={onClose}></button>
 {/if}

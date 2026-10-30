@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { backdropFx, modalFx } from '../motion';
   // 설정 창: 가운데에 크게 띄우고 왼쪽에 분류, 오른쪽에 그 분류의 항목. 위쪽 검색으로 모든 분류의 항목을 찾는다.
   // 변경은 즉시 적용·저장된다. 테마 편집기는 '디자인' 분류에서 연다.
   import { tick } from 'svelte';
@@ -50,6 +51,7 @@
     { id: 'theme', cat: 'view', text: '테마 라이트 다크 시스템 밝기 색 화면' },
     { id: 'fontSize', cat: 'view', text: '글자 크기 폰트 서체 크기 본문' },
     { id: 'width', cat: 'view', text: '본문 폭 너비 넓이 가로 창 폭' },
+    ...(__ANIM__ ? [{ id: 'anim', cat: 'view' as Cat, text: '애니메이션 효과 모션 전환 flash 깜빡임 움직임' }] : []),
     { id: 'count', cat: 'write', text: '글자 수 공백 포함 제외 상태 표시줄 세기' },
     { id: 'tablefmt', cat: 'write', text: '표 복사 형식 tsv csv 탭 쉼표 엑셀 기본 복사' },
     { id: 'image', cat: 'write', text: '이미지 삽입 방식 파일 assets base64 붙여넣기', server: true },
@@ -85,6 +87,7 @@
   function toggleAutosave() { settings.autosave = !settings.autosave; persistSettings(); }
   function setTableFmt(f: 'tsv' | 'csv') { settings.tableCopyFormat = f; persistSettings(); }
   function toggleColors() { settings.snippetColors = !settings.snippetColors; persistSettings(); }
+  function toggleAnim() { settings.animations = !settings.animations; document.documentElement.dataset.anim = settings.animations ? 'on' : 'off'; persistSettings(); }
 
   // 글자 크기·본문 폭은 디자인 설정('works.design')에 저장된다
   const setFont = (e: Event) => setTypo('fontSize', Number((e.currentTarget as HTMLInputElement).value));
@@ -117,8 +120,8 @@
 
 {#if open}
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
-   <div class="sw-stage" class:island onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
+  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
+   <div class="sw-stage" transition:modalFx class:island onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
     <div class="sw" role="dialog" aria-modal="true" aria-label="설정">
       <header class="sw-head">
         <h2><SettingsIcon size={18} /> 설정</h2>
@@ -173,6 +176,12 @@
                     <output>{design.typography.contentWidth > 0 ? `${design.typography.contentWidth}px` : '전체'}</output>
                     <button class="sw-switch" role="switch" aria-checked={design.typography.contentWidth === 0} aria-label="창 폭에 맞추기" use:tip={'창 폭에 맞추기'} onclick={toggleFullWidth}><span></span></button>
                   </div>
+                </div>
+              {/if}
+              {#if __ANIM__ && matches('anim')}
+                <div class="srow">
+                  <div class="s-text"><b>애니메이션</b><small>패널·툴팁·모달의 나타남/사라짐과 자동 변경 시 깜빡임 효과를 켭니다. OS 의 '동작 줄이기' 설정이면 이동 없이 페이드만 합니다.</small></div>
+                  <button class="sw-switch" role="switch" aria-checked={settings.animations} aria-label="애니메이션" onclick={toggleAnim}><span></span></button>
                 </div>
               {/if}
               {#if matches('fontSize') || matches('width')}

@@ -28,6 +28,12 @@
   --on-primary: #ffffff;
   --accent-soft: #f3dcd2;
   --danger: #b3261e;
+  /* flash 의미색: 정보(구조 변환)·성공(삽입)·강조(자동 정리)·경고(충돌)·위험(삭제) */
+  --fx-info: #2b5fb0;
+  --fx-success: #2f7d32;
+  --fx-accent: #d97757;
+  --fx-warn: #b7791f;
+  --fx-danger: #b3261e;
   --shadow: 0 4px 16px rgba(20, 20, 19, 0.12);
   --font:
     'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, 'Segoe UI',
@@ -61,6 +67,11 @@
   --on-primary: #1f1e1d;
   --accent-soft: #4a352c;
   --danger: #f2a49c;
+  --fx-info: #8fb4e8;
+  --fx-success: #8fcf8f;
+  --fx-accent: #e8956f;
+  --fx-warn: #e0b46a;
+  --fx-danger: #f2a49c;
   --shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   --hl-keyword: #e8956f;
   --hl-string: #a3c98a;
@@ -169,6 +180,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .editor-wrap { flex: 1; overflow: auto; }
 .editor-host { min-height: 100%; }
 .placeholder { display: grid; place-items: center; height: 100%; color: var(--muted); }
+.empty-start { display: flex; flex-direction: column; align-items: center; gap: 14px;
+  /* 마지막 문서를 불러오는 동안 잠깐 비는 순간에는 보이지 않도록, 지연 뒤에 서서히 나타난다(애니메이션을 꺼도 지연은 유지) */
+  opacity: 0; animation: empty-in 300ms ease-out 450ms forwards;
+}
+@keyframes empty-in { to { opacity: 1; } }
+:root[data-anim='off'] .empty-start { animation-duration: 1ms; }
+.empty-start p { margin: 0; }
+.empty-actions { display: flex; gap: 8px; }
+.empty-actions button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; }
 
 /* ---- 사이드바 ---- */
 .sidebar {
@@ -195,7 +215,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   border-bottom: 1px solid var(--border);
 }
 .sidebar .root { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree { flex: 1; overflow: auto; padding: 6px 4px 16px; --band: color-mix(in srgb, var(--surface) 55%, var(--accent-soft)); }
+.tree { flex: 1; overflow: auto; padding: 6px 4px 16px; }
 .tree ul { list-style: none; margin: 0; padding: 0; }
 .tree .empty { color: var(--muted); padding: 12px; font-size: 13px; }
 .row { display: flex; align-items: center; border-radius: 6px; padding-right: 4px; }
@@ -336,7 +356,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 }
 .sidebar .root-btn.selected { background: var(--selected); }
 .sidebar .ops-head { display: flex; flex: none; }
-.row.selected { background: var(--accent-soft); }
 
 .dialog.wide { width: min(640px, calc(100vw - 32px)); }
 .dialog textarea {
@@ -461,6 +480,10 @@ button svg { flex: none; }
 :root .milkdown .milkdown-code-block,
 :root .milkdown .milkdown-code-block .cm-editor,
 :root .milkdown .milkdown-code-block .cm-gutters { background: var(--code-bg, var(--crepe-color-surface)); }
+/* 줄 번호·언어 선택·복사 단추 같은 블록 장식은 선택·복사·글감 보내기에 섞이지 않게 한다(순수 코드만 전달) */
+:root .milkdown .milkdown-code-block .cm-gutters,
+:root .milkdown .milkdown-code-block .cm-lineNumbers,
+:root .milkdown .milkdown-code-block .tools { user-select: none; -webkit-user-select: none; }
 
 /* 버전 이력 대화상자: 왼쪽 목록 + 오른쪽 읽기 전용 미리보기 */
 .dialog.history { width: min(980px, calc(100vw - 32px)); display: flex; flex-direction: column; max-height: calc(100vh - 48px); }
@@ -616,6 +639,26 @@ input.invalid { color: #c0392b; }
 .tbl-hdr { display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; cursor: pointer; border-left: 1px solid var(--border); margin-left: 2px; white-space: nowrap; }
 .tbl-hdr input { accent-color: var(--primary); }
 
+/* 헤더 없는 표: 모든 셀이 빈 헤더 행(src/lib/tableHeaderless.ts 가 tbl-headless 를 붙임)은 위쪽 얇은 줄(6px)만 남긴다.
+   행은 DOM 에 남아 호버 툴바의 '첫 행을 헤더로' 토글이 되고, 커서·선택이 그 행에 있으면(tbl-headless-active) 원래 높이로 펼쳐 입력할 수 있다 */
+:root .milkdown .milkdown-table-block tr.tbl-headless:not(.tbl-headless-active) > th,
+:root .milkdown .milkdown-table-block tr.tbl-headless:not(.tbl-headless-active) > td {
+  padding-top: 0; padding-bottom: 0; height: 6px; font-size: 0; line-height: 0; background: transparent; border-bottom-color: transparent; overflow: hidden;
+}
+:root .milkdown .milkdown-table-block tr.tbl-headless:not(.tbl-headless-active) p { margin: 0; padding: 0; height: 0; overflow: hidden; }
+
+/* 모바일(iOS Safari): 포커스된 입력 요소의 글자가 16px 미만이면 화면이 자동 확대된다. 핀치 확대는 접근성 때문에 막지 않고(maximum-scale 미사용),
+   터치 기기에서만 입력 요소를 최소 16px 로 올린다. 컴포넌트 scoped 스타일(font-size 13px 등)보다 우선하도록 !important 로 한 곳에 모은다 */
+@media screen and (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [type='submit'], [type='color'], [type='file']),
+  textarea, select { font-size: 16px !important; }
+  /* 에디터 본문: 디자인 설정(--editor-font-size)이 16px 이상이면 그 값, 미만이면 16px */
+  :root .milkdown { --crepe-base-font-size: max(16px, var(--editor-font-size, 15px)); }
+  :root .milkdown .ProseMirror { font-size: var(--crepe-base-font-size); }
+  /* 코드 블록 CodeMirror 는 본문×0.93 이라 15px 아래로 내려가므로 최소 16px */
+  :root .milkdown .milkdown-code-block .cm-editor { font-size: max(16px, calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.93))); }
+}
+
 .print-clone { display: none !important; }
 /* ---- 인쇄: 현재 문서 본문만, 라이트 색, 작은 글자. 코멘트·frontmatter·UI 는 출력하지 않는다 ---- */
 /* 머리글: 제목(좌), 바닥글: 인쇄 날짜(좌) · 쪽 번호 n/전체(우). --print-title/--print-date 는 인쇄 직전에 JS 가 채운다 */
@@ -699,14 +742,11 @@ input.invalid { color: #c0392b; }
 @media (min-width: 721px) {
   .sidebar.left-sidebar { width: var(--left-w, 270px); position: relative; }
   .sidebar.peek { position: fixed; z-index: 18; top: 0; bottom: 0; box-shadow: var(--shadow); }
-  .sidebar.left-sidebar.peek { left: 0; animation: peek-in-l 0.18s ease-out; }
-  .sidebar.right-sidebar.peek { right: 0; animation: peek-in-r 0.18s ease-out; }
+  .sidebar.left-sidebar.peek { left: 0; }
+  .sidebar.right-sidebar.peek { right: 0; }
   .left-edge, .right-edge { display: block; position: fixed; top: 0; bottom: 0; width: 1px; }
   .left-edge { left: 0; }
   .right-edge { right: 0; }
-  @keyframes peek-in-l { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: none; } }
-  @keyframes peek-in-r { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
-  @media (prefers-reduced-motion: reduce) { .sidebar.peek { animation: none !important; } }
 }
 @media (max-width: 720px) { .sb-resizer { display: none; } }
 .sidebar header .pin-btn.on { color: var(--accent); }

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tip } from '../tooltip.svelte';
+  import { panelFx } from '../motion';
   import { tick } from 'svelte';
   import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
@@ -45,7 +46,7 @@
 </script>
 
 {#if ui.findOpen}
-  <div class="findbar-anchor">
+  <div class="findbar-anchor" transition:panelFx={{ side: 'right' }}>
   <div class="findbar" role="search">
     <input
       bind:this={input}

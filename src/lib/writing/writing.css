@@ -83,10 +83,7 @@ html.focus-mode .milkdown .ProseMirror { padding-bottom: 50vh; }
     border-top: 1px solid var(--border);
     border-radius: 16px 16px 0 0;
     box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.25);
-    animation: sheet-up 0.2s ease-out;
   }
-  @keyframes sheet-up { from { transform: translateY(100%); } to { transform: none; } }
-  @media (prefers-reduced-motion: reduce) { html .sidebar { animation: none; } }
 
   .sheet-backdrop {
     display: block;
