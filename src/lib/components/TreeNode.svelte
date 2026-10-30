@@ -25,6 +25,7 @@
   import { highlight } from '../search/nameMatch';
   import { isCollapsed, toggleFolder, expandFolder, treeUi, treeNav, moveInOrder, setSort } from '../docTree.svelte';
   import { splitPath, type DocNode } from '../docTree';
+  import { exportFolder } from '../folderExportUi';
   import { TREE_CTL, dndUi, type DragState, type TreeCtl } from './treeCtl';
   import RenameInput from './RenameInput.svelte';
 
@@ -50,6 +51,11 @@
   const menuItems = $derived([
     ...(node.type === 'dir' ? [{ label: '새 문서', run: () => ctl.createDoc(node.path) }, { label: '새 폴더', run: () => ctl.createFolder(node.path) }] : []),
     { label: '이름 변경', run: () => { renaming = true; }, sep: node.type === 'dir' },
+    ...(node.type === 'dir' ? [
+      { label: '내보내기 · 백업 JSON', run: () => void exportFolder('json', node) },
+      { label: '내보내기 · MD 압축(zip)', run: () => void exportFolder('zip', node) },
+      { label: '내보내기 · 연결된 MD', run: () => void exportFolder('md', node), sep: true },
+    ] : []),
     { label: '삭제…', run: () => ctl.remove(node), danger: true, sep: true },
   ]);
 

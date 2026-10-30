@@ -74,7 +74,7 @@
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
-    input.accept = '.mwb,.zip,.001,.002,.003,.004,.005,application/zip,application/octet-stream';
+    input.accept = '.mwb,.zip,.json,.001,.002,.003,.004,.005,application/zip,application/octet-stream';
     input.onchange = () => { const fs = [...(input.files ?? [])]; if (fs.length) void loadFiles(fs); };
     input.click();
   }

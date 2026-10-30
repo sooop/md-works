@@ -102,10 +102,49 @@
   const allPaths = $derived(collect(nodes));
   // 직전에 본 경로. 처음 채워질 때(빈 상태 → 목록)는 기준선만 잡고 재생하지 않으며, 이름 바꾸기·이동으로 상위가 함께 사라진 하위 항목도 재생하지 않는다
   let seen = new Set<string>();
-  $effect(() => { seen = new Set(allPaths); });
+  // 이름 바꾸기는 경로가 바뀌어 '옛 항목 삭제 + 새 항목 삽입'처럼 보이므로(폴더가 순간 두 벌로 보인다), 직전 트리와 견줘
+  // 같은 자리에서 이름만 바뀐 항목(폴더는 안의 구성이 같고, 글은 수정 시각이 같다)을 찾아 삭제·삽입 효과에서 뺀다
+  interface Info { type: 'file' | 'dir'; parent: string; sig: string }
+  const indexTree = (list: DocNode[], parent = '', out = new Map<string, Info>()): { out: Map<string, Info>; rels: string[] } => {
+    const rels: string[] = [];
+    for (const n of list) {
+      if (n.type === 'file') { out.set(n.path, { type: 'file', parent, sig: String(n.mtime ?? '') }); rels.push(`f:${n.mtime ?? ''}:${n.name}`); continue; }
+      const sub = indexTree(n.children ?? [], n.path, out);
+      out.set(n.path, { type: 'dir', parent, sig: sub.rels.join('|') });
+      rels.push(`d:${n.name}{${sub.rels.join(',')}}`);
+    }
+    return { out, rels };
+  };
+  let prevIndex = new Map<string, Info>();
+  let quietKey: [Set<string>, Set<string>] | null = null;
+  let quiet = new Set<string>();
+  function renamedPaths(): Set<string> {
+    if (quietKey && quietKey[0] === seen && quietKey[1] === allPaths) return quiet;
+    quietKey = [seen, allPaths];
+    quiet = new Set();
+    const cur = indexTree(nodes).out;
+    const gone = [...prevIndex.keys()].filter((p) => !cur.has(p));
+    const fresh = [...cur.keys()].filter((p) => !prevIndex.has(p));
+    const sameSpot = (r: string, a: string) => {
+      const ri = prevIndex.get(r)!, ai = cur.get(a)!;
+      return ri.type === ai.type && ri.parent === ai.parent && ri.sig === ai.sig;
+    };
+    for (const r of gone) {
+      const ri = prevIndex.get(r)!;
+      const twins = fresh.filter((a) => cur.get(a)!.type === ri.type && sameSpot(r, a));
+      const rivals = gone.filter((x) => prevIndex.get(x)!.type === ri.type && prevIndex.get(x)!.parent === ri.parent && prevIndex.get(x)!.sig === ri.sig);
+      if (twins.length !== 1 || rivals.length !== 1) continue; // 짝이 하나로 정해질 때만 이름 바꾸기로 본다
+      const a = twins[0];
+      quiet.add(r); quiet.add(a);
+      for (const p of prevIndex.keys()) if (p.startsWith(r + '/')) quiet.add(p);
+      for (const p of cur.keys()) if (p.startsWith(a + '/')) quiet.add(p);
+    }
+    return quiet;
+  }
+  $effect(() => { seen = new Set(allPaths); prevIndex = indexTree(nodes).out; });
   const fx: TreeFx = {
-    isNew: (path, parent) => !dndUi.moving && seen.size > 0 && !seen.has(path) && (parent === '' || seen.has(parent)),
-    isGone: (path, parent) => !dndUi.moving && !allPaths.has(path) && (parent === '' || allPaths.has(parent)),
+    isNew: (path, parent) => !dndUi.moving && seen.size > 0 && !seen.has(path) && (parent === '' || seen.has(parent)) && !renamedPaths().has(path),
+    isGone: (path, parent) => !dndUi.moving && !allPaths.has(path) && (parent === '' || allPaths.has(parent)) && !renamedPaths().has(path),
   };
 
   // 스크롤 고정(sticky)되는 폴더 행이 쌓이는 높이를 맞추려고 실제 행 높이를 잰다

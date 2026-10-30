@@ -6,6 +6,7 @@ import { downloadBlob } from '../utils';
 import { onWorksWrite } from '../works/store';
 import { buildBundle, type BundleSummary } from './api';
 import { encryptBundle, decryptBundle, hasBundleKey } from './crypto';
+import { folderJsonToBundle, parseFolderJson } from '../folderExport';
 import {
   DEFAULT_NOTIFY_DAYS, SERVER_BACKUP_NAME_RE, classifyBytes, concatBytes, isPartName, planImport, splitBundleFiles, clampInterval, formatAgo, isBackupStale, isUploadDue, needsBackup, MIN_MS,
 } from './backupLogic';
@@ -134,7 +135,8 @@ export async function readBundleFiles(files: File[]): Promise<Uint8Array> {
   const kind = classifyBytes(name, bytes);
   if (kind === 'bundle-encrypted') return decryptBundle(bytes);
   if (kind === 'bundle-zip') return bytes;
-  throw new Error(kind === 'doc-zip' ? '번들이 아닌 일반 문서 zip 입니다 (문서 가져오기를 사용하세요)' : '.mwb 또는 번들 zip 파일이 아닙니다');
+  if (kind === 'folder-json') return folderJsonToBundle(parseFolderJson(bytes)!, name.replace(/\.json$/i, '')); // 기존 번들 흐름(미리보기·병합)으로 보낸다
+  throw new Error(kind === 'doc-zip' ? '번들이 아닌 일반 문서 zip 입니다 (문서 가져오기를 사용하세요)' : '.mwb, 번들 zip 또는 폴더 백업 JSON 파일이 아닙니다');
 }
 
 // ---- 텔레그램 ----

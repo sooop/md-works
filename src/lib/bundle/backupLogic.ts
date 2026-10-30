@@ -1,6 +1,7 @@
 // 백업 판단·스케줄·파일 판별 순수 함수. 상태(backupState.svelte.ts)와 UI 에서 분리해 단위 테스트한다.
 import { unzipSync } from 'fflate';
 import { isEncrypted } from './crypto';
+import { parseFolderJson } from '../folderExport';
 
 export const MIN_MS = 60_000;
 export const DAY_MS = 24 * 60 * MIN_MS;
@@ -84,11 +85,12 @@ export function isBundleZip(bytes: Uint8Array): boolean {
   }
 }
 
-export type FileKind = 'bundle-encrypted' | 'bundle-zip' | 'doc-zip' | 'other';
+export type FileKind = 'bundle-encrypted' | 'bundle-zip' | 'doc-zip' | 'folder-json' | 'other';
 
 /** 바이트로 판별한다. 암호화 번들은 매직으로, zip 은 manifest 의 schema 로 구분한다. */
 export function classifyBytes(name: string, bytes: Uint8Array): FileKind {
   if (isEncrypted(bytes)) return 'bundle-encrypted';
+  if (/\.json$/i.test(name) && parseFolderJson(bytes)) return 'folder-json';
   if (isZipBytes(bytes) || /\.zip$/i.test(name)) return isBundleZip(bytes) ? 'bundle-zip' : 'doc-zip';
   return 'other';
 }
@@ -97,6 +99,7 @@ export function classifyBytes(name: string, bytes: Uint8Array): FileKind {
 export async function isBundleFile(file: File): Promise<boolean> {
   if (isPartName(file.name)) return true; // 분할 조각(.mwb.001…)은 이름으로 판정한다(바이트를 읽지 않음)
   const isMwb = /\.mwb$/i.test(file.name);
+  if (/\.json$/i.test(file.name)) return parseFolderJson(new Uint8Array(await file.arrayBuffer())) !== null; // 폴더 백업 JSON
   const isZip = /\.zip$/i.test(file.name) || file.type === 'application/zip';
   if (!isMwb && !isZip) return false; // .md/.docx 등은 바이트를 읽지 않는다
   const kind = classifyBytes(file.name, new Uint8Array(await file.arrayBuffer()));
