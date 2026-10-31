@@ -76,9 +76,9 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     { id: 'cm.add', group: '글감·코멘트', title: '선택한 문장에 코멘트 달기', shortcut: 'Ctrl+Alt+M', keywords: 'comment', when: hasDoc, run: startDraft },
 
     // ---- 보기 ----
-    { id: 'view.left', group: '보기', title: '파일 목록 열기 / 숨기기', keywords: 'sidebar 사이드바 목록', run: () => toggleLeft() },
+    { id: 'view.left', group: '보기', title: '파일 목록 열기 / 숨기기', shortcut: 'Ctrl+Alt+[', keywords: 'sidebar 사이드바 목록', run: () => toggleLeft() },
     { id: 'view.outline', group: '보기', title: '목차 열기', keywords: 'outline toc 목차 차례', when: hasDoc, run: () => openRight('outline') },
-    { id: 'view.right', group: '보기', title: '글감·코멘트 패널 열기 / 숨기기', keywords: 'panel 사이드바 패널', run: () => toggleRight() },
+    { id: 'view.right', group: '보기', title: '글감·코멘트 패널 열기 / 숨기기', shortcut: 'Ctrl+Alt+]', keywords: 'panel 사이드바 패널', run: () => toggleRight() },
     { id: 'view.light', group: '보기', title: '테마: 라이트', keywords: 'theme light 밝게', run: () => setTheme('light') },
     { id: 'view.dark', group: '보기', title: '테마: 다크', keywords: 'theme dark 어둡게', run: () => setTheme('dark') },
     { id: 'view.system', group: '보기', title: '테마: 시스템 설정 따르기', keywords: 'theme system auto', run: () => setTheme('system') },

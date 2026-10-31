@@ -115,7 +115,7 @@
 }
 :root .milkdown .ProseMirror {
   padding: 40px 48px 120px;
-  max-width: var(--editor-width, 980px);
+  max-width: var(--editor-width, 860px);
   margin: 0 auto;
 }
 
@@ -429,9 +429,9 @@ button svg { flex: none; }
 
 /* Crepe 는 코드 블록 placeholder 에만 코드 폰트를 지정하므로 CodeMirror 에디터에도 적용한다 */
 .milkdown .milkdown-code-block .cm-editor .cm-scroller { font-family: var(--ed-code-font, var(--font-code)); }
-/* 코드 블록 글자는 본문보다 약간 작게(Crepe 기본 0.875배 → 0.93배). 읽기 모드는 placeholder, 편집 모드는 CodeMirror 가 그린다 */
+/* 코드 블록 글자는 본문보다 약간 작게(Crepe 기본 0.875배 → 0.78배). 읽기 모드는 placeholder, 편집 모드는 CodeMirror 가 그린다 */
 :root .milkdown .milkdown-code-block .cm-editor,
-:root .milkdown .milkdown-code-block .milkdown-code-block-placeholder { font-size: calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.93)); }
+:root .milkdown .milkdown-code-block .milkdown-code-block-placeholder { font-size: calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.78)); }
 /* 줄 간격: CodeMirror 기본(1.4)이 촘촘해서 넓힌다 */
 :root .milkdown .milkdown-code-block .cm-editor .cm-scroller { line-height: 1.65; }
 /* basicSetup 의 현재 행 하이라이트 끄기 (Crepe 가 extensions 에서 빼는 옵션을 주지 않아 CSS 로 무력화) */
@@ -447,7 +447,7 @@ button svg { flex: none; }
 :root .milkdown .ProseMirror h6 { font-size: var(--ed-h6-size, 0.9em); font-weight: var(--ed-heading-weight, 600); line-height: 1.5; margin-top: calc(var(--ed-h6-before, 0.8) * var(--crepe-base-font-size, 15px)); margin-bottom: calc(var(--ed-h6-after, 0.267) * var(--crepe-base-font-size, 15px)); }
 
 /* 조판 간격: Crepe 기본(블록 margin 4px)이 촘촘해서 블록 요소의 위·아래 여백을 넓힌다 */
-:root .milkdown .ProseMirror p { padding: var(--ed-para-gap, 0.4em) 0; line-height: var(--ed-line-height, 1.5); }
+:root .milkdown .ProseMirror p { padding: var(--ed-para-gap, 0.65em) 0; line-height: var(--ed-line-height, 1.5); }
 :root .milkdown .ProseMirror ul,
 :root .milkdown .ProseMirror ol { margin: 8px 0; }
 :root .milkdown .ProseMirror blockquote { margin: 16px 0; padding-top: 2px; padding-bottom: 2px; }
@@ -658,8 +658,8 @@ input.invalid { color: #c0392b; }
   /* 에디터 본문: 디자인 설정(--editor-font-size)이 16px 이상이면 그 값, 미만이면 16px */
   :root .milkdown { --crepe-base-font-size: max(16px, var(--editor-font-size, 15px)); }
   :root .milkdown .ProseMirror { font-size: var(--crepe-base-font-size); }
-  /* 코드 블록 CodeMirror 는 본문×0.93 이라 15px 아래로 내려가므로 최소 16px */
-  :root .milkdown .milkdown-code-block .cm-editor { font-size: max(16px, calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.93))); }
+  /* 코드 블록 CodeMirror 는 본문×0.78 이라 16px 아래로 내려가므로 최소 16px */
+  :root .milkdown .milkdown-code-block .cm-editor { font-size: max(16px, calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.78))); }
 }
 
 .print-clone { display: none !important; }

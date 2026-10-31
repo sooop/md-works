@@ -20,6 +20,7 @@ function loadSettings() {
     tableCopyFormat: 'tsv' as 'tsv' | 'csv', // 표 '복사' 단추의 기본 형식(다른 형식은 메뉴에서)
     animations: true, // 패널·툴팁·모달·팝오버의 나타남/사라짐과 flash(빌드 옵션 __ANIM__ 이 꺼져 있으면 무시)
     snippetColors: false, // 글감 색 지정·색 필터 같은 '고급' 기능을 쓸지(기본 꺼짐: 화면을 어지럽히지 않는다)
+    rightHover: false, // 오른쪽 가장자리에 마우스를 대면 글감·목차·코멘트 패널을 팝오버로 띄울지(기본 꺼짐: 옆에 자료 창을 두고 쓸 때 거슬린다)
     version: SETTINGS_VERSION,
   };
   try {

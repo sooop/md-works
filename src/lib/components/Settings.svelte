@@ -51,6 +51,7 @@
     { id: 'theme', cat: 'view', text: '테마 라이트 다크 시스템 밝기 색 화면' },
     { id: 'fontSize', cat: 'view', text: '글자 크기 폰트 서체 크기 본문' },
     { id: 'width', cat: 'view', text: '본문 폭 너비 넓이 가로 창 폭' },
+    { id: 'rightHover', cat: 'view', text: '오른쪽 패널 호버 가장자리 마우스 글감 목차 코멘트 팝오버 자동 열기' },
     ...(__ANIM__ ? [{ id: 'anim', cat: 'view' as Cat, text: '애니메이션 효과 모션 전환 flash 깜빡임 움직임' }] : []),
     { id: 'count', cat: 'write', text: '글자 수 공백 포함 제외 상태 표시줄 세기' },
     { id: 'tablefmt', cat: 'write', text: '표 복사 형식 tsv csv 탭 쉼표 엑셀 기본 복사' },
@@ -87,6 +88,7 @@
   function toggleAutosave() { settings.autosave = !settings.autosave; persistSettings(); }
   function setTableFmt(f: 'tsv' | 'csv') { settings.tableCopyFormat = f; persistSettings(); }
   function toggleColors() { settings.snippetColors = !settings.snippetColors; persistSettings(); }
+  function toggleRightHover() { settings.rightHover = !settings.rightHover; persistSettings(); }
   function toggleAnim() { settings.animations = !settings.animations; document.documentElement.dataset.anim = settings.animations ? 'on' : 'off'; persistSettings(); }
 
   // 글자 크기·본문 폭은 디자인 설정('works.design')에 저장된다
@@ -182,6 +184,12 @@
                 <div class="srow">
                   <div class="s-text"><b>애니메이션</b><small>패널·툴팁·모달의 나타남/사라짐과 자동 변경 시 깜빡임 효과를 켭니다. OS 의 '동작 줄이기' 설정이면 이동 없이 페이드만 합니다.</small></div>
                   <button class="sw-switch" role="switch" aria-checked={settings.animations} aria-label="애니메이션" onclick={toggleAnim}><span></span></button>
+                </div>
+              {/if}
+              {#if matches('rightHover')}
+                <div class="srow">
+                  <div class="s-text"><b>오른쪽 가장자리 호버로 패널 열기</b><small>창 오른쪽 끝에 마우스를 2초 두면 글감·목차·코멘트 패널이 잠깐 나타납니다. 옆에 자료 창을 띄워 두고 쓸 때는 꺼 두세요. 꺼도 상단바 단추와 Ctrl+Alt+] 로 열 수 있습니다.</small></div>
+                  <button class="sw-switch" role="switch" aria-checked={settings.rightHover} aria-label="오른쪽 가장자리 호버" onclick={toggleRightHover}><span></span></button>
                 </div>
               {/if}
               {#if matches('fontSize') || matches('width')}

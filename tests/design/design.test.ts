@@ -80,8 +80,8 @@ describe('스키마 클램프', () => {
     expect(clampNum(TYPO_SPEC.fontSize as NumSpec, 0)).toBe(12);
   });
   it('기본값은 현재 화면과 같다', () => {
-    expect(DEFAULT_TYPOGRAPHY.fontSize).toBe(15);
-    expect(DEFAULT_TYPOGRAPHY.contentWidth).toBe(980);
+    expect(DEFAULT_TYPOGRAPHY.fontSize).toBe(16);
+    expect(DEFAULT_TYPOGRAPHY.contentWidth).toBe(860);
     expect(DEFAULT_TYPOGRAPHY.lineHeight).toBe(1.5);
     expect(clampTypography(undefined)).toEqual(DEFAULT_TYPOGRAPHY);
   });
@@ -163,7 +163,7 @@ describe('CSS 생성', () => {
     expect(css.startsWith('@media screen{')).toBe(true);
     expect(css.trimEnd().endsWith('}')).toBe(true);
     expect(css).toContain("html:root[data-theme='dark']");
-    expect(css).toContain('--editor-font-size:15px');
+    expect(css).toContain('--editor-font-size:16px');
     expect(css).toContain('--ed-quote-color:var(--quote)');
   });
   it('서체를 지정하면 변수가 생기고 비우면 생기지 않는다', () => {

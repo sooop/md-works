@@ -21,7 +21,7 @@
   import { revealFolder } from '../docTree.svelte';
   import CommentLayer from './CommentLayer.svelte';
   import RightSidebar from './RightSidebar.svelte';
-  import { closeRightOnMobile, leftSheet } from '../rightbar/state.svelte';
+  import { closeRightOnMobile, leftSheet, openRight } from '../rightbar/state.svelte';
   import { untrack } from 'svelte';
   import Resizer from './Resizer.svelte';
   import Pin from '@lucide/svelte/icons/pin';
@@ -32,6 +32,7 @@
   import { edgeHover, peekPanel } from '../sidebar/peek';
   import { backupUi, isStale } from '../bundle/backupState.svelte';
   import SnippetShortcuts from './SnippetShortcuts.svelte';
+  import PanelShortcuts from './PanelShortcuts.svelte';
   import FindBar from './FindBar.svelte';
   import StatusBar from './StatusBar.svelte';
   import SheetBackdrop from './SheetBackdrop.svelte';
@@ -40,6 +41,7 @@
   import Search from '@lucide/svelte/icons/search';
   import X from '@lucide/svelte/icons/x';
   import FilePlus from '@lucide/svelte/icons/file-plus';
+  import PanelRight from '@lucide/svelte/icons/panel-right';
   import FolderPlus from '@lucide/svelte/icons/folder-plus';
   import ClipboardPaste from '@lucide/svelte/icons/clipboard-paste';
   import PanelLeft from '@lucide/svelte/icons/panel-left';
@@ -151,6 +153,7 @@
 
 <div class="shell">
   <SnippetShortcuts />
+  <PanelShortcuts />
   <CommandPalette commands={() => paletteCommands} docCommands={() => docCommands(paletteCtx)} />
   {#if !docked && !left.open && !viewport.mobile}
     <div class="left-edge" data-side="left" use:edgeHover={openLeft}></div>
@@ -249,6 +252,7 @@
             <div class="empty-actions">
               <button class="primary" onclick={() => createDoc(nav.dir)}><FilePlus size={16} /> 새 글 쓰기</button>
               <button onclick={() => (pasteOpen = true)}><ClipboardPaste size={16} /> 붙여넣기</button>
+              {#if viewport.mobile}<button onclick={() => openRight('snippets')}><PanelRight size={16} /> 글감 열기</button>{/if}
             </div>
           </div>
         </div>

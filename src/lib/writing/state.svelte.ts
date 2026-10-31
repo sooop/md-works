@@ -3,12 +3,12 @@
 const SPACES_KEY = 'works.countSpaces';
 
 function loadSpaces(): boolean {
-  try { return localStorage.getItem(SPACES_KEY) !== '0'; } catch { return true; }
+  try { return localStorage.getItem(SPACES_KEY) === '1'; } catch { return false; }
 }
 
 export const writing = $state({
   focus: false, // 집중 모드
-  spaces: loadSpaces(), // 글자 수에 공백 포함
+  spaces: loadSpaces(), // 글자 수에 공백 포함(기본은 제외)
   selection: 0, // 선택 영역 글자 수 (없으면 0)
 });
 

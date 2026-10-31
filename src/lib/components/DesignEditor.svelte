@@ -84,7 +84,7 @@
   }
   function onStr(k: TypoKey, e: Event) { setTypo(k, (e.currentTarget as HTMLInputElement).value as never); }
   function onBool(k: TypoKey, e: Event) { setTypo(k, (e.currentTarget as HTMLInputElement).checked as never); }
-  function toggleFull() { setTypo('contentWidth', (t.contentWidth > 0 ? 0 : 980) as never); }
+  function toggleFull() { setTypo('contentWidth', (t.contentWidth > 0 ? 0 : 860) as never); }
 
   const palette = $derived(design.palettes[mode]);
   const warnings = $derived(contrastWarnings(palette));

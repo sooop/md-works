@@ -13,6 +13,7 @@
   import { writing } from '../writing/state.svelte';
   import { rightPeek, viewport } from '../sidebar/state.svelte';
   import { edgeHover, peekPanel } from '../sidebar/peek';
+  import { settings } from '../store.svelte';
   import { tip } from '../tooltip.svelte';
   import { panelFx } from '../motion';
 
@@ -22,7 +23,7 @@
   $effect(() => { if (!peek) rightPeek.open = false; });
 </script>
 
-{#if peek && !rightPeek.open}
+{#if peek && !rightPeek.open && settings.rightHover}
   <div class="right-edge" data-side="right" use:edgeHover={() => (rightPeek.open = true)}></div>
 {/if}
 {#if shown}
