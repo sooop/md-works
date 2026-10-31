@@ -24,6 +24,7 @@ export interface AppCommandCtx {
   copyMd: () => void;
   exportDocx: () => void;
   print: () => void;
+  deleteDoc?: () => void;
   images?: (to: 'base64' | 'file') => void;
   settings: () => void;
   backup: () => void;
@@ -56,6 +57,7 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     { id: 'doc.md', group: '문서', title: '.md 파일로 저장', keywords: 'export markdown 내보내기', when: hasDoc, run: c.exportMd },
     { id: 'doc.copymd', group: '문서', title: '마크다운 텍스트 복사', keywords: 'copy clipboard 복사', when: hasDoc, run: c.copyMd },
     { id: 'doc.docx', group: '문서', title: '.docx 로 내보내기', keywords: 'word export 워드', when: hasDoc, run: c.exportDocx },
+    ...(c.deleteDoc ? [{ id: 'doc.delete', group: '문서', title: '문서 삭제…', keywords: 'delete remove 삭제 지우기', when: hasDoc, run: c.deleteDoc } satisfies Command] : []),
     { id: 'doc.print', group: '문서', title: '인쇄', shortcut: 'Ctrl+P', keywords: 'print pdf', when: hasDoc, run: c.print },
     ...(c.images ? [
       { id: 'doc.img64', group: '문서', title: '이미지를 Base64로 변환', keywords: 'image', when: hasDoc, run: () => c.images?.('base64') } satisfies Command,

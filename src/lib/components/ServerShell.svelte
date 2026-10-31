@@ -97,6 +97,7 @@
     copyMd: copyMdCurrent,
     exportDocx: exportDocxCurrent,
     print: () => void printDoc(),
+    deleteDoc: () => void removeNode({ type: 'file', name: stripExt(doc.name), path: doc.path }),
     images: (to) => void convertImages(to),
     settings: () => { settingsOpen = true; },
     backup: () => { backupUi.open = true; },
@@ -221,6 +222,7 @@
           onCopyMd={copyMdCurrent}
           onDocx={exportDocxCurrent}
           onPrint={printDoc}
+          onDelete={() => void removeNode({ type: 'file', name: stripExt(doc.name), path: doc.path })}
           options={templateOptions}
           selected={settings.template}
           onSelect={selectTemplate}

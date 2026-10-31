@@ -67,6 +67,9 @@ export const doc = $state({
   edit: true, // 편집 모드 여부. 기본은 편집이고, 문서를 열 때마다 편집으로 초기화한다(읽기 전환은 토글/Ctrl+Alt+E)
 });
 
+/** 문서를 열 때의 시작 모드: 좁은 화면(모바일)은 읽기, 그 밖에는 편집 */
+export const defaultEdit = (): boolean => !(typeof matchMedia === 'function' && matchMedia('(max-width: 720px)').matches);
+
 // 마지막 에디터 내용을 외부에서 읽기 위한 훅 (Editor 가 등록)
 // preparePrint: 인쇄용 정적 사본(코드 하이라이트 포함)을 만들고 정리 함수를 돌려준다
 /** 명령 팔레트가 부르는 편집기 서식 명령 이름 */

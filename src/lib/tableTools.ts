@@ -557,7 +557,25 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
     void playPop(menu, 'out').then(() => { if (gen === menuGen) menu.hidden = true; });
   }
 
+  // 터치 기기: 호버가 없어 떠 있는 도구줄이 다음 문단을 가리므로 띄우지 않고, 표를 길게 눌러 메뉴(확대 보기 포함)를 연다
+  const coarse = () => matchMedia('(pointer: coarse)').matches;
+  let pressTimer = 0;
+  let pressAt = { x: 0, y: 0 };
+  const cancelPress = () => clearTimeout(pressTimer);
+  const onPressStart = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    const b = (e.target as HTMLElement).closest<HTMLElement>('.milkdown-table-block');
+    if (!b) return;
+    pressAt = { x: e.clientX, y: e.clientY };
+    cancelPress();
+    pressTimer = window.setTimeout(() => { block = b; showMenu(pressAt.x, pressAt.y); }, 500);
+  };
+  const onPressMove = (e: PointerEvent) => {
+    if (Math.hypot(e.clientX - pressAt.x, e.clientY - pressAt.y) > 10) cancelPress();
+  };
+
   const onOver = (e: MouseEvent) => {
+    if (coarse()) return;
     const b = (e.target as HTMLElement).closest<HTMLElement>('.milkdown-table-block');
     if (b) showBar(b);
   };
@@ -592,9 +610,13 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
   };
   const onDocDown = (e: Event) => { if (!menu.hidden && !menu.contains(e.target as Node) && !bar.contains(e.target as Node)) hideMenu(); };
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') hideMenu(); };
-  const onScroll = () => { hideMenu(); position(); };
+  const onScroll = () => { cancelPress(); hideMenu(); position(); };
 
   view.dom.addEventListener('mouseover', onOver);
+  view.dom.addEventListener('pointerdown', onPressStart);
+  view.dom.addEventListener('pointermove', onPressMove);
+  view.dom.addEventListener('pointerup', cancelPress);
+  view.dom.addEventListener('pointercancel', cancelPress);
   view.dom.addEventListener('mouseleave', scheduleHide);
   view.dom.addEventListener('contextmenu', onContext);
   bar.addEventListener('mouseenter', () => clearTimeout(hideTimer));
@@ -606,7 +628,12 @@ export function attachTableTools(view: EditorView, env: TableToolsEnv): () => vo
 
   return () => {
     clearTimeout(hideTimer);
+    cancelPress();
     view.dom.removeEventListener('mouseover', onOver);
+    view.dom.removeEventListener('pointerdown', onPressStart);
+    view.dom.removeEventListener('pointermove', onPressMove);
+    view.dom.removeEventListener('pointerup', cancelPress);
+    view.dom.removeEventListener('pointercancel', cancelPress);
     view.dom.removeEventListener('mouseleave', scheduleHide);
     view.dom.removeEventListener('contextmenu', onContext);
     document.removeEventListener('mousedown', onDocDown, true);

@@ -16,6 +16,7 @@
   import FilePlus2 from '@lucide/svelte/icons/file-plus-2';
   import SettingsIcon from '@lucide/svelte/icons/settings';
   import DatabaseBackup from '@lucide/svelte/icons/database-backup';
+  import Trash2 from '@lucide/svelte/icons/trash-2';
   import Command from '@lucide/svelte/icons/command';
   import { openPalette } from '../commands/registry.svelte';
   import { tip } from '../tooltip.svelte';
@@ -30,6 +31,8 @@
     onHistory: () => void;
     onDocx: () => void;
     onPrint?: () => void;
+    /** 열린 문서 삭제(확인창은 호출한 쪽이 띄운다) — 목록이 가려진 모바일에서도 지울 수 있게 한다 */
+    onDelete?: () => void;
     onMd?: () => void;
     onCopyMd?: () => void;
     /** 서버 모드: 문서의 이미지를 Base64 ↔ 파일로 바꾸는 항목 */
@@ -43,7 +46,7 @@
     hint?: string;
     actions?: { label: string; run: () => void }[];
   }
-  let { hasDoc, onSettings, onBackup, backupStale = false, onHistory, onDocx, onPrint, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
+  let { hasDoc, onSettings, onBackup, backupStale = false, onHistory, onDocx, onPrint, onDelete, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
 
   let open = $state(false);
   let sub = $state<'' | 'export' | 'tools'>(''); // 펼친 하위 메뉴(하나만)
@@ -107,6 +110,7 @@
             {#if hint}<p class="menu-hint">{hint}</p>{/if}
           </div>
         {/if}
+        {#if onDelete}<button role="menuitem" class="mi danger" onclick={() => run(onDelete)}><Trash2 size={16} /><span class="t">문서 삭제…</span></button>{/if}
         <hr />
       {/if}
       <button role="menuitem" class="mi" onclick={() => run(onSettings)}><SettingsIcon size={16} /><span class="t">설정</span></button>
@@ -124,6 +128,7 @@
   .mi { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 7px 10px; border-radius: 8px; }
   .mi :global(svg) { flex: none; color: var(--muted); }
   .mi:hover :global(svg) { color: var(--text); }
+  .mi.danger, .mi.danger :global(svg) { color: var(--danger); }
   .mi .t { flex: 1; min-width: 0; }
   .mi :global(.chev) { margin-left: auto; }
   .mi kbd { font: inherit; font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border-strong); color: var(--muted); }

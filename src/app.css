@@ -300,6 +300,9 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   background: var(--surface);
 }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* 확인창에서 Enter 로 눌릴 단추를 알 수 있게: 마우스로 연 뒤 스크립트가 준 포커스도 :focus-visible 이 안 켜지므로 :focus 로 항상 표시.
+   확정 색(primary) 단추는 배경과 같은 색의 링이 묻히므로 띄운 이중 링을 쓴다 */
+.dialog .actions button:focus { outline: 2px solid var(--text); outline-offset: 2px; box-shadow: 0 0 0 2px var(--surface); }
 .toasts {
   position: fixed;
   right: 16px;

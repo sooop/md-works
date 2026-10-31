@@ -1,6 +1,6 @@
 // 웹서버 버전: 파일 API 호출과 폴더 노트 앱 로직
 import {
-  doc, requestEditorFocus, settings, persistSettings, toast, askPrompt, askConfirm, askChoose, errMsg,
+  doc, defaultEdit, requestEditorFocus, settings, persistSettings, toast, askPrompt, askConfirm, askChoose, errMsg,
 } from './store.svelte';
 import {
   basename, dirname, joinPath, safeDecode, stripExt, fileToDataUrl, imageExt,
@@ -131,7 +131,7 @@ async function loadDoc(path: string) {
   doc.name = basename(path);
   doc.content = f.content;
   doc.dirty = false;
-  doc.edit = true; // 문서는 항상 편집 모드로 연다
+  doc.edit = defaultEdit(); // 문서는 편집 모드로 연다(모바일은 읽기)
   doc.key++;
   const text = f.content;
   setTimeout(() => { void snapshot(path, text).catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ }); }, 2500); // 급하지 않다: 바로 다음 클릭의 요청과 디스크를 다투지 않게 미룬다

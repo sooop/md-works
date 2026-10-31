@@ -1,6 +1,6 @@
 // 스탠드얼론 HTML 버전: IndexedDB 에 문서 여러 개와 이미지 Blob, docx 템플릿을 보관하는 라이브러리.
 // 디스크 파일과는 연동하지 않는다(열기/드롭/붙여넣기는 가져오기, .md/.docx 는 내보내기).
-import { doc, toast, askPrompt, askConfirm, errMsg, withStatus, requestEditorFocus, editorBridge } from './store.svelte';
+import { doc, defaultEdit, toast, askPrompt, askConfirm, errMsg, withStatus, requestEditorFocus, editorBridge } from './store.svelte';
 import { buildArchive, parseArchive } from './archive';
 import { downloadBlob, downloadText, writeClipboard, stripEmptyBlocks, fileToDataUrl, replaceImages, sanitizeName, stripExt } from './utils';
 import { updatedAfterEdit } from './docUpdated';
@@ -15,7 +15,7 @@ import { snapshot, removeHistory, allContents } from './history';
 import { useBackend, flushComments } from './comments/store.svelte';
 import { sanitize, type Comment } from './comments/anchor';
 import { useWorksStore, worksStore } from './works/store';
-import { markChanged } from './bundle/backupState.svelte';
+import { markChanged, divertBundleDrop } from './bundle/backupState.svelte';
 import { commentToThread, listThreads, threadToComment } from './comments/threads';
 import { reattachDoc } from './works/snippets';
 import { createIdbStore } from './works/idbStore';
@@ -198,7 +198,7 @@ export async function openDoc(id: string) {
   await flush();
   const rec = all.get(id);
   if (!rec) return;
-  Object.assign(doc, { path: id, name: rec.name, content: rec.content, dirty: false, edit: true }); // 문서는 항상 편집 모드로 연다
+  Object.assign(doc, { path: id, name: rec.name, content: rec.content, dirty: false, edit: defaultEdit() }); // 문서는 편집 모드로 연다(모바일은 읽기)
   lib.dir = folderOf(rec); // 새 글은 지금 보는 글의 폴더에 만든다
   doc.key++;
   void snapshot(id, rec.content).catch(() => { /* 무시 */ });
@@ -597,8 +597,14 @@ export function openPicker() {
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
-  input.accept = `${IMPORT_ACCEPT},.zip,text/markdown,text/plain,application/zip`;
-  input.onchange = () => { void importFiles([...(input.files ?? [])]); };
+  // 백업 번들(.mwb·조각·폴더 백업 .json)도 고를 수 있어야 한다 — 번들은 백업 대화상자의 가져오기로 보낸다
+  input.accept = `${IMPORT_ACCEPT},.zip,.mwb,.json,.001,.002,.003,.004,.005,text/markdown,text/plain,application/zip,application/json,application/octet-stream`;
+  input.onchange = () => {
+    void (async () => {
+      const rest = await divertBundleDrop([...(input.files ?? [])]);
+      if (rest.length) await importFiles(rest);
+    })();
+  };
   input.click();
 }
 

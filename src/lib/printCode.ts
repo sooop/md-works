@@ -82,6 +82,16 @@ function printHintOnce() {
     : "인쇄 창의 '머리글 및 바닥글'을 켜면 브라우저의 날짜·주소가 문서의 머리글과 겹칠 수 있습니다. 문서의 머리글·쪽 번호만 쓰려면 그 옵션을 끄세요.");
 }
 
+/** window.print() 가 바로 돌아오는 환경(모바일 브라우저)에서는 미리보기가 그 뒤에 DOM 으로 만들어지므로, 사본·머리글을 afterprint 까지 남긴다 */
+function afterPrint(): Promise<void> {
+  return new Promise((resolve) => {
+    let done = false;
+    const end = () => { if (done) return; done = true; window.removeEventListener('afterprint', end); resolve(); };
+    window.addEventListener('afterprint', end);
+    setTimeout(end, 10 * 60 * 1000);
+  });
+}
+
 /** 현재 문서 인쇄. 탭 제목(= PDF 저장 시 기본 파일명)에서 저장 안 됨 표시를 뺀다. */
 export async function printDoc() {
   const title = document.title;
@@ -94,7 +104,9 @@ export async function printDoc() {
     root.setProperty('--print-title', JSON.stringify(name));
     root.setProperty('--print-date', JSON.stringify(new Date().toLocaleDateString('ko-KR')));
     printHintOnce();
+    const finished = afterPrint();
     window.print();
+    await finished;
   } finally {
     root.removeProperty('--print-title');
     root.removeProperty('--print-date');

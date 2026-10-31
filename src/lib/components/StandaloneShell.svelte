@@ -96,6 +96,7 @@
     copyMd,
     exportDocx: exportDocxCurrent,
     print: () => void printDoc(),
+    deleteDoc: () => { const m = metaOf(doc.path); if (m) void removeDoc(m); },
     settings: () => { settingsOpen = true; },
     backup: () => { backupUi.open = true; },
   };
@@ -207,6 +208,7 @@
           onCopyMd={copyMd}
           onDocx={exportDocxCurrent}
           onPrint={printDoc}
+          onDelete={() => { const m = metaOf(doc.path); if (m) void removeDoc(m); }}
           options={templateOptions}
           selected={tpl.name ? 'custom' : ''}
           onSelect={(id) => { if (id === '') void clearTemplate(); }}
