@@ -145,3 +145,15 @@ html.focus-mode .milkdown .ProseMirror { padding-bottom: 50vh; }
 /* 키보드 포커스 보임 (전역 button:focus-visible 규칙 보강: 입력칸·시트 요소) */
 .statusbar button:focus-visible, .statusbar input:focus-visible,
 .sheet-backdrop:focus-visible, .sheet-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* ---- 모바일 집중 모드 나가기 단추: 좁은 화면에서만 (데스크톱은 Esc·단축키·위쪽 가장자리) ---- */
+.focus-exit { display: none; }
+@media (max-width: 720px) {
+  html.focus-mode .focus-exit {
+    display: inline-flex; justify-content: center; align-items: center;
+    position: fixed; z-index: 30; right: 10px; top: calc(10px + env(safe-area-inset-top, 0px));
+    width: 40px; height: 40px; min-width: 40px; padding: 0; border-radius: 50%;
+    background: var(--bg); color: var(--muted); border: 1px solid var(--border-strong); box-shadow: var(--shadow); opacity: 0.55;
+  }
+  html.focus-mode .focus-exit:hover:not(:disabled), html.focus-mode .focus-exit:focus-visible, html.focus-mode .focus-exit:active { opacity: 1; color: var(--text); }
+}

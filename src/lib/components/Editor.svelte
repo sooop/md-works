@@ -78,6 +78,24 @@
     if (ready) builder?.setReadonly(ro);
   });
 
+  // 읽기 모드: 코드 블록(CodeMirror)은 읽기 전용이어도 contenteditable 이라 탭하면 모바일 키보드가 올라온다.
+  // inputmode="none" 으로 가상 키보드만 막는다(글자 선택·복사·코멘트는 그대로).
+  $effect(() => {
+    if (!ready || !host) return;
+    const ro = readonly;
+    const apply = () => {
+      host.querySelectorAll<HTMLElement>('.cm-content').forEach((el) => {
+        if (ro) el.setAttribute('inputmode', 'none');
+        else el.removeAttribute('inputmode');
+      });
+    };
+    apply();
+    if (!ro) return;
+    const mo = new MutationObserver(apply);
+    mo.observe(host, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  });
+
   // 문서가 바뀌면 부모가 {#key} 로 이 컴포넌트를 새로 만든다. 여기서는 한 번만 생성한다.
   $effect(() => {
     let crepe: CrepeBuilder | undefined;

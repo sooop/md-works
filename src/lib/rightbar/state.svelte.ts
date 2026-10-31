@@ -3,7 +3,7 @@ import { isMobile, writing } from '../writing/state.svelte';
 import { rightPeek } from '../sidebar/state.svelte';
 
 const KEY = 'works.right';
-export type RightTab = 'snippets' | 'comments';
+export type RightTab = 'snippets' | 'comments' | 'outline';
 
 export const RIGHT_W = { min: 260, max: 720, def: 320 };
 /** 폭을 허용 범위(그리고 창 폭의 60%)로 맞춘다 */
@@ -17,7 +17,7 @@ function load(): { open: boolean; tab: RightTab; width: number } {
   try {
     const j = JSON.parse(localStorage.getItem(KEY) ?? '{}');
     if (typeof j.open === 'boolean') open = j.open;
-    if (j.tab === 'comments' || j.tab === 'snippets') tab = j.tab;
+    if (j.tab === 'comments' || j.tab === 'snippets' || j.tab === 'outline') tab = j.tab;
     if (typeof j.width === 'number' && Number.isFinite(j.width)) width = clampRightWidth(j.width);
   } catch { /* 저장소를 못 쓰는 환경 */ }
   if (typeof innerWidth === 'number' && innerWidth <= 720) open = false; // 모바일은 하단 시트라 시작할 때 항상 닫는다

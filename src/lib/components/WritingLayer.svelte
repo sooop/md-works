@@ -1,5 +1,6 @@
 <script lang="ts">
   // 집필 UI 의 전역 동작(마크업 없음): 집중 모드 단축키/Esc, <html> 클래스, 선택 글자 수, 타자기 스크롤.
+  import Minimize2 from '@lucide/svelte/icons/minimize-2';
   import { doc } from '../store.svelte';
   import { writing, toggleFocus } from '../writing/state.svelte';
   import { countText } from '../writing/countChars';
@@ -91,6 +92,11 @@
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) centerCaret(e);
   }
 </script>
+
+<!-- 모바일 집중 모드: 상단바·상태 표시줄이 숨겨져 Esc 도 없으므로 빠져나갈 단추를 둔다(평소엔 흐리게) -->
+{#if writing.focus}
+  <button class="focus-exit" aria-label="집중 모드 끝내기" onclick={() => toggleFocus(false)}><Minimize2 size={18} /></button>
+{/if}
 
 <svelte:window onkeydowncapture={onEscCapture} onkeydown={onKey} onkeyup={onKeyUp} oninput={centerCaret} />
 <svelte:document onselectionchange={onSelection} />

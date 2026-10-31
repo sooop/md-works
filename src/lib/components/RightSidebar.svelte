@@ -5,6 +5,7 @@
   import PinOff from '@lucide/svelte/icons/pin-off';
   import SnippetPanel from './SnippetPanel.svelte';
   import CommentsPanel from './CommentsPanel.svelte';
+  import OutlinePanel from './OutlinePanel.svelte';
   import SheetBackdrop from './SheetBackdrop.svelte';
   import Resizer from './Resizer.svelte';
   import { openCount } from '../comments/store.svelte';
@@ -26,12 +27,13 @@
 {/if}
 {#if shown}
   <aside
-    class="sidebar right-sidebar" class:peek aria-label="글감과 코멘트" style:--right-w="{right.width}px" transition:panelFx={{ side: viewport.mobile ? 'bottom' : 'right' }}
+    class="sidebar right-sidebar" class:peek aria-label="글감·목차·코멘트" style:--right-w="{right.width}px" transition:panelFx={{ side: viewport.mobile ? 'bottom' : 'right' }}
     use:peekPanel={{ active: () => peek, close: () => (rightPeek.open = false) }}
   >
     <Resizer side="right" value={right.width} min={RIGHT_W.min} max={RIGHT_W.max} def={RIGHT_W.def} label="오른쪽 패널 폭 조절" onchange={(w, save) => setRightWidth(w, save)} />
     <div class="sidetabs" role="tablist">
       <button role="tab" class:on={right.tab === 'snippets'} aria-selected={right.tab === 'snippets'} onclick={() => setRightTab('snippets')} use:tip={{ title: '글감함', lines: ['Ctrl+Alt+G 문구로 찾기', 'Ctrl+Alt+S 선택을 글감으로'] }}>글감</button>
+      <button role="tab" class:on={right.tab === 'outline'} aria-selected={right.tab === 'outline'} onclick={() => setRightTab('outline')} use:tip={'이 문서의 목차'}>목차</button>
       <button role="tab" class:on={right.tab === 'comments'} aria-selected={right.tab === 'comments'} onclick={() => setRightTab('comments')} use:tip={'이 문서의 코멘트'}>코멘트{#if openCount()} <span class="cm-badge">{openCount()}</span>{/if}</button>
       <span class="spacer"></span>
       {#if !viewport.mobile}
@@ -43,6 +45,7 @@
       {/if}
     </div>
     <div class="tabpane" hidden={right.tab !== 'snippets'}><SnippetPanel /></div>
+    <div class="tabpane" hidden={right.tab !== 'outline'}><OutlinePanel active={right.tab === 'outline'} /></div>
     <div class="tabpane" hidden={right.tab !== 'comments'}><CommentsPanel /></div>
   </aside>
 {/if}
