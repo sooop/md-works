@@ -14,7 +14,8 @@ export function keepScrollOnCodeResize(host: HTMLElement): () => void {
       heights.set(e.target, h);
       if (prev === undefined || prev === h) continue;
       if (e.target.contains(document.activeElement)) continue; // 편집 중인 블록은 건드리지 않는다
-      if (e.target.getBoundingClientRect().top < top) delta += h - prev; // 뷰포트 위쪽에서 시작하는 블록만
+      // 변화 전 기준으로 블록 전체가 뷰포트 위쪽에 있던 경우만 보정한다. 위쪽에 걸친 블록은 변화량이 보이는 부분에 얼마나 반영되는지 알 수 없어 건드리지 않는다
+      if (e.target.getBoundingClientRect().top + prev <= top) delta += h - prev;
     }
     if (delta) wrap.scrollTop += delta;
   });
