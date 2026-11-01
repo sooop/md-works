@@ -433,7 +433,8 @@ button svg { flex: none; }
 :root .milkdown .milkdown-code-block .cm-editor,
 :root .milkdown .milkdown-code-block .milkdown-code-block-placeholder { font-size: calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.78)); }
 /* 줄 간격: CodeMirror 기본(1.4)이 촘촘해서 넓힌다 */
-:root .milkdown .milkdown-code-block .cm-editor .cm-scroller { line-height: 1.65; }
+:root .milkdown .milkdown-code-block .cm-editor .cm-scroller,
+:root .milkdown .milkdown-code-block .milkdown-code-block-placeholder { line-height: 1.65; }
 /* basicSetup 의 현재 행 하이라이트 끄기 (Crepe 가 extensions 에서 빼는 옵션을 주지 않아 CSS 로 무력화) */
 :root .milkdown .milkdown-code-block .cm-editor .cm-activeLine,
 :root .milkdown .milkdown-code-block .cm-editor .cm-activeLineGutter { background-color: transparent !important; }
@@ -659,7 +660,8 @@ input.invalid { color: #c0392b; }
   :root .milkdown { --crepe-base-font-size: max(16px, var(--editor-font-size, 15px)); }
   :root .milkdown .ProseMirror { font-size: var(--crepe-base-font-size); }
   /* 코드 블록 CodeMirror 는 본문×0.78 이라 16px 아래로 내려가므로 최소 16px */
-  :root .milkdown .milkdown-code-block .cm-editor { font-size: max(16px, calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.78))); }
+  :root .milkdown .milkdown-code-block .cm-editor,
+  :root .milkdown .milkdown-code-block .milkdown-code-block-placeholder { font-size: max(16px, calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.78))); }
 }
 
 .print-clone { display: none !important; }
