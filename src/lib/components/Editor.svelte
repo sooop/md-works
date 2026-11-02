@@ -1,6 +1,5 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { keepScrollOnCodeResize } from '../codeScrollKeeper';
   import { CrepeBuilder } from '@milkdown/crepe/builder';
   import { blockEdit } from '@milkdown/crepe/feature/block-edit';
   import { codeMirror } from '@milkdown/crepe/feature/code-mirror';
@@ -77,12 +76,6 @@
   $effect(() => {
     const ro = readonly;
     if (ready) builder?.setReadonly(ro);
-  });
-
-  // 코드 블록이 placeholder <-> CodeMirror 로 바뀌며 높이가 달라질 때 스크롤 위치가 튀지 않게 보정한다(iOS 는 스크롤 앵커링 없음)
-  $effect(() => {
-    if (!ready || !host) return;
-    return keepScrollOnCodeResize(host);
   });
 
   // 읽기 모드: 코드 블록(CodeMirror)은 읽기 전용이어도 contenteditable 이라 탭하면 모바일 키보드가 올라온다.
