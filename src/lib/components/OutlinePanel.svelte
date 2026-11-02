@@ -45,12 +45,33 @@
     return () => { mo.disconnect(); clearTimeout(t); cancelAnimationFrame(raf); wrap.removeEventListener('scroll', onScroll); };
   });
 
+  // 목차 이동: 긴 거리를 smooth 로 스크롤하는 동안 레이아웃이 바뀌면(모바일 주소창 접힘, 시트 닫힘, 지연 렌더링) 목표가 어긋난다.
+  // 즉시 이동한 뒤, 3초 동안 매 프레임 실제 위치를 다시 재서 교정한다(글꼴 로딩·코드 블록 전환 등 늦게 생기는 높이 변화 대응).
+  // 사용자가 터치·휠·스크롤바·키보드로 직접 조작하면 중단한다
+  let cancelFix: (() => void) | undefined;
   function go(i: number) {
     const el = headingEls()[i];
     if (!el) return;
+    const wrap = document.querySelector<HTMLElement>('.editor-wrap');
+    if (!wrap) return;
+    cancelFix?.();
     if (viewport.mobile) closeRight(); // 모바일 시트는 이동하면 닫아 본문을 보여 준다
-    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+    const offset = () => el.getBoundingClientRect().top - wrap.getBoundingClientRect().top;
+    wrap.scrollTop += offset();
+    let raf = 0;
+    const until = performance.now() + 3000;
+    const evs = ['touchstart', 'wheel', 'pointerdown', 'keydown'] as const;
+    const stop = () => { cancelAnimationFrame(raf); evs.forEach((e) => window.removeEventListener(e, stop)); if (cancelFix === stop) cancelFix = undefined; };
+    cancelFix = stop;
+    evs.forEach((e) => window.addEventListener(e, stop, { passive: true }));
+    const tick = () => {
+      if (!el.isConnected) return stop();
+      const d = offset();
+      if (Math.abs(d) > 1) wrap.scrollTop += d;
+      if (performance.now() > until) return stop();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
   }
 
   const minLevel = $derived(items.length ? Math.min(...items.map((i) => i.level)) : 1);
