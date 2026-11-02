@@ -435,6 +435,13 @@ button svg { flex: none; }
 /* 줄 간격: CodeMirror 기본(1.4)이 촘촘해서 넓힌다 */
 :root .milkdown .milkdown-code-block .cm-editor .cm-scroller,
 :root .milkdown .milkdown-code-block .milkdown-code-block-placeholder { line-height: 1.65; }
+/* placeholder(화면 밖 코드 블록)가 CodeMirror 로 바뀔 때 높이가 달라지면 스크롤 위치가 튄다(iOS 는 스크롤 앵커링 없음).
+   CodeMirror 는 줄바꿈 없이 가로 스크롤이고 위에 도구줄(.tools, 30px)이 있으므로, placeholder 도 같게 맞춘다 */
+:root .milkdown .milkdown-code-block .milkdown-code-block-placeholder {
+  white-space: pre; word-break: normal; overflow: hidden; padding-top: 34px; box-sizing: border-box;
+}
+/* 인라인 code 스타일(글자 크기·줄 높이)이 placeholder 안의 code 에 새어 들어와 줄 높이가 달라지는 것을 막는다 */
+:root .milkdown .milkdown-code-block .milkdown-code-block-placeholder code { font-size: inherit; line-height: inherit; padding: 0; background: none; }
 /* basicSetup 의 현재 행 하이라이트 끄기 (Crepe 가 extensions 에서 빼는 옵션을 주지 않아 CSS 로 무력화) */
 :root .milkdown .milkdown-code-block .cm-editor .cm-activeLine,
 :root .milkdown .milkdown-code-block .cm-editor .cm-activeLineGutter { background-color: transparent !important; }
