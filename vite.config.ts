@@ -15,6 +15,7 @@ function notesApi(env: Record<string, string>): Plugin {
     configureServer(server) {
       const api = createApi(env.NOTES_ROOT || process.cwd(), {
         templatesDir: env.NOTES_TEMPLATES || fileURLToPath(new URL('./templates', import.meta.url)),
+        allowedHosts: (env.WORKS_ALLOWED_HOSTS ?? '').split(','), // 폰 등 다른 기기로 개발 서버를 볼 때만 .env.development.local 에 지정
       });
       server.middlewares.use((req, res, next) => {
         api(req, res).then((handled) => { if (!handled) next(); }, next);
@@ -63,7 +64,7 @@ export default defineConfig(({ mode }) => {
       emptyOutDir: true,
       target: 'es2022',
     },
-    server: { port: 5273, host: '127.0.0.1' },
+    server: { port: 5273, host: env.DEV_HOST || '127.0.0.1' }, // 기본은 로컬 전용. 다른 기기 접속은 .env.development.local 의 DEV_HOST=0.0.0.0
     test: { testTimeout: 20000, hookTimeout: 20000, include: ['tests/**/*.test.ts'], exclude: ['node_modules/**', '.claude/**'] }, // 병렬 작업용 worktree 의 사본 테스트는 제외
   };
 });
