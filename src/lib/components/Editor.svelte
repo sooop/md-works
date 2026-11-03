@@ -31,6 +31,7 @@
   import { codeLanguages, codeHighlight } from '../codeLanguages';
   import { onlyDoubleTilde } from '../gfmTilde';
   import { attachCodePicker } from '../codePicker';
+  import { deferCodeMirrorDuringScroll } from '../codeBlockDefer';
   import { footnotes, insertFootnote, normalizeNow, attachFootnoteTips } from '../footnotes';
   import { trimSelectionSpaces } from '../inlineCode';
   import { notionHeading, notionHeadingBackspace } from '../headingNotion';
@@ -97,6 +98,8 @@
   });
 
   // 문서가 바뀌면 부모가 {#key} 로 이 컴포넌트를 새로 만든다. 여기서는 한 번만 생성한다.
+  deferCodeMirrorDuringScroll(); // 스크롤 중에는 코드 블록 CodeMirror 생성을 미룬다
+
   $effect(() => {
     let crepe: CrepeBuilder | undefined;
     let ctl: ReturnType<typeof attachFinder> | undefined;

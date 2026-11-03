@@ -11,6 +11,9 @@
 @import '@milkdown/crepe/theme/common/table.css';
 @import '@milkdown/crepe/theme/common/latex.css';
 
+/* iOS Safari 텍스트 자동 확대 방지: 가로로 긴 코드 placeholder(pre)만 글자·줄 높이가 1.3배 안팎으로 부풀어 CodeMirror 와 높이가 어긋나 스크롤이 튄다 */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
 /* Claude 컬러 테마. 폰트는 시스템에 설치된 Pretendard Variable 을 가정한다(호스팅/번들 없음). */
 :root {
   color-scheme: light;
@@ -442,6 +445,12 @@ button svg { flex: none; }
 }
 /* 인라인 code 스타일(글자 크기·줄 높이)이 placeholder 안의 code 에 새어 들어와 줄 높이가 달라지는 것을 막는다 */
 :root .milkdown .milkdown-code-block .milkdown-code-block-placeholder code { font-size: inherit; line-height: inherit; padding: 0; background: none; }
+/* 글자 크기·줄 높이를 변수 하나로 정해 placeholder 와 CodeMirror 양쪽에 같은 값을 강제한다(렌더러가 따로 계산하면 모바일에서 줄당 수 px 어긋나 스크롤이 튄다) */
+:root .milkdown .milkdown-code-block { --cb-fs: calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.78)); }
+@media screen and (pointer: coarse) { :root .milkdown .milkdown-code-block { --cb-fs: max(16px, calc(var(--crepe-base-font-size, 15px) * var(--ed-code-scale, 0.78))); } }
+:root .milkdown .milkdown-code-block :is(.cm-editor, .cm-scroller, .cm-content, .cm-line, .cm-gutters, .cm-gutterElement, .milkdown-code-block-placeholder, .milkdown-code-block-placeholder code) {
+  font-size: var(--cb-fs) !important; line-height: calc(var(--cb-fs) * 1.65) !important;
+}
 /* basicSetup 의 현재 행 하이라이트 끄기 (Crepe 가 extensions 에서 빼는 옵션을 주지 않아 CSS 로 무력화) */
 :root .milkdown .milkdown-code-block .cm-editor .cm-activeLine,
 :root .milkdown .milkdown-code-block .cm-editor .cm-activeLineGutter { background-color: transparent !important; }
