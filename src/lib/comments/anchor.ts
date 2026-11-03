@@ -1,5 +1,6 @@
 // 코멘트 위치: 원문(.md)을 건드리지 않으므로 코멘트는 '선택한 원문 + 앞뒤 문맥' 으로 위치를 기억하고,
 // 문서를 열 때 에디터 문서의 평문에서 다시 찾는다. 평문은 텍스트블록을 '\n' 으로 이어 붙인 문자열이다.
+import { uuid } from '../utils';
 import type { Node as PMNode } from '@milkdown/kit/prose/model';
 
 export interface Comment {
@@ -104,7 +105,7 @@ export function sanitize(raw: unknown): Comment[] {
   for (const r of list as Record<string, unknown>[]) {
     if (!r || typeof r !== 'object') continue;
     const quote = str(r.quote, MAX_QUOTE);
-    const id = str(r.id, 64) || crypto.randomUUID();
+    const id = str(r.id, 64) || uuid();
     if (!quote || seen.has(id)) continue;
     seen.add(id);
     out.push({

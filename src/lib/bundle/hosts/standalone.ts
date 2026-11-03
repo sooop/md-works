@@ -6,7 +6,7 @@ import type { WorksStore } from '../../works/store';
 import type { Design } from '../../design';
 import { relinkNested } from '../../archive';
 import { fullPath, splitPath } from '../../docTree';
-import { basename, dirname, isExternalSrc, joinPath, replaceImages, safeDecode, sanitizeName } from '../../utils';
+import { basename, dirname, isExternalSrc, joinPath, replaceImages, safeDecode, sanitizeName, uuid } from '../../utils';
 import { detachSnippetsFrom } from '../docRemoval';
 import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from '../host';
 
@@ -136,7 +136,7 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
     beginImport(assets): ImportSession {
       const stored = new Map<string, Promise<string | null>>(); // 번들 이미지 경로 → idb: 참조 (같은 이미지는 한 번만 저장)
       const storeImage = async (data: Uint8Array, mime: string): Promise<string> => {
-        const id = crypto.randomUUID();
+        const id = uuid();
         // created = 지금: 이미지 정리(gc)의 5분 유예 안에 들어, 글이 저장되기 전에 지워지지 않는다
         await req('images', 'readwrite', (s) => s.put({ id, blob: new Blob([data as BlobPart], { type: mime }), created: Date.now() } satisfies Img));
         return `idb:${id}`;
@@ -162,7 +162,7 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
           byName ??= new Map((await allDocs()).map((r) => [fullOf(r), r]));
           const cur = byName.get(name);
           const { folder, name: leaf } = splitPath(name);
-          const rec: Rec = cur ? { ...cur, content, updated: updatedAt } : { id: crypto.randomUUID(), name: leaf, ...(folder ? { folder } : {}), content, updated: updatedAt };
+          const rec: Rec = cur ? { ...cur, content, updated: updatedAt } : { id: uuid(), name: leaf, ...(folder ? { folder } : {}), content, updated: updatedAt };
           await req('docs', 'readwrite', (s) => s.put(rec));
           byName.set(name, rec);
           return rec.id;

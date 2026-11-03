@@ -2,7 +2,7 @@
 // 디스크 파일과는 연동하지 않는다(열기/드롭/붙여넣기는 가져오기, .md/.docx 는 내보내기).
 import { doc, defaultEdit, toast, askPrompt, askConfirm, errMsg, withStatus, requestEditorFocus, editorBridge } from './store.svelte';
 import { buildArchive, parseArchive } from './archive';
-import { downloadBlob, downloadText, writeClipboard, stripEmptyBlocks, fileToDataUrl, replaceImages, sanitizeName, stripExt } from './utils';
+import { downloadBlob, downloadText, writeClipboard, stripEmptyBlocks, fileToDataUrl, replaceImages, sanitizeName, stripExt, uuid } from './utils';
 import { updatedAfterEdit } from './docUpdated';
 import { fullPath, splitPath, withParents, byName } from './docTree';
 import { followRename, expandFolder } from './docTree.svelte';
@@ -221,7 +221,7 @@ function uniqueName(stem: string, folder = ''): string {
 
 // edit: 열었을 때 편집 모드로 시작할지. 이제 모든 문서가 편집 모드로 열려 사실상 의미가 없다(호출부 호환용).
 async function createRec(stem: string, content: string, open = true, edit = false, folder = ''): Promise<Rec> {
-  const rec: Rec = { id: crypto.randomUUID(), name: uniqueName(stem, folder), ...(folder ? { folder } : {}), content, updated: Date.now() };
+  const rec: Rec = { id: uuid(), name: uniqueName(stem, folder), ...(folder ? { folder } : {}), content, updated: Date.now() };
   await putDoc(rec);
   await clearDocGone(fullOf(rec)).catch(() => { /* 무시 */ }); // 같은 이름으로 다시 만들면 삭제 묘비는 지운다
   all.set(rec.id, rec);
@@ -452,7 +452,7 @@ const GC_GRACE_MS = 5 * 60 * 1000; // 방금 넣은 이미지나 실행 취소�
 const urls = new Map<string, Promise<string>>();
 
 async function storeImage(blob: Blob): Promise<string> {
-  const id = crypto.randomUUID();
+  const id = uuid();
   await idb('images', 'readwrite', (s) => s.put({ id, blob, created: Date.now() } satisfies Img));
   urls.set(id, Promise.resolve(URL.createObjectURL(blob)));
   return `idb:${id}`;
@@ -559,6 +559,7 @@ async function importZip(file: File) {
       const stored = new Map<string, Promise<string>>(); // zip 내부 이미지 경로 → idb: 참조 (같은 이미지는 한 번만 보관)
       let ok = 0;
       let fail = 0;
+      let firstErr = '';
       for (const d of docs) {
         set(`가져오는 중… ${ok + fail + 1} / ${docs.length}`);
         try {
@@ -572,10 +573,10 @@ async function importZip(file: File) {
           const rec = await createRec(toStem(d.stem), await splitImages(linked.text), false);
           if (d.comments.length) await worksStore().putMany('threads', d.comments.map((c) => commentToThread(c, rec.id)), rec.id);
           ok++;
-        } catch { fail++; }
+        } catch (e) { fail++; firstErr ||= errMsg(e); }
       }
       if (ok && !doc.path) { const first = lib.docs[0]; if (first) await openDoc(first.id); }
-      toast(`'${file.name}' 에서 문서 ${ok}개를 가져왔습니다${fail ? ` (${fail}개 실패)` : ''}`, fail ? 'error' : 'info');
+      toast(`'${file.name}' 에서 문서 ${ok}개를 가져왔습니다${fail ? ` (${fail}개 실패: ${firstErr})` : ''}`, fail ? 'error' : 'info');
     });
   } catch (e) {
     toast(`'${file.name}': ${errMsg(e)}`, 'error');

@@ -1,3 +1,4 @@
+import { uuid } from '../utils';
 // 글감·이력·스레드 레코드 스키마. 번들 병합(P2)이 id·updatedAt·deletedAt 만으로 되도록 모든 레코드가 같은 머리를 가진다.
 export interface WorksRecord {
   id: string;
@@ -60,4 +61,4 @@ export type Coll = 'versions' | 'snippets' | 'threads' | 'tombstones';
 export const PARTITIONED: Record<Coll, boolean> = { versions: true, snippets: false, threads: true, tombstones: false };
 export const GLOBAL_PART = '_';
 
-export const newId = (): string => crypto.randomUUID();
+export const newId = (): string => uuid();
