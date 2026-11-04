@@ -32,6 +32,7 @@
   import { onlyDoubleTilde } from '../gfmTilde';
   import { attachCodePicker } from '../codePicker';
   import { deferCodeMirrorDuringScroll } from '../codeBlockDefer';
+  import { attachImeGuard } from '../imeGuard';
   import { footnotes, insertFootnote, normalizeNow, attachFootnoteTips } from '../footnotes';
   import { trimSelectionSpaces } from '../inlineCode';
   import { notionHeading, notionHeadingBackspace } from '../headingNotion';
@@ -108,6 +109,7 @@
     let unbindCode: (() => void) | undefined;
     let unbindPicker: (() => void) | undefined;
     let unbindTips: (() => void) | undefined;
+    let unbindIme: (() => void) | undefined;
     let disposed = false;
     untrack(() => {
       const c = new CrepeBuilder({ root: host, defaultValue: split.body })
@@ -182,6 +184,7 @@
           unbindPicker = attachCodePicker(host);
           unbindTips = attachFootnoteTips(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           unbindCode = attachCodeTrim(c.editor.action((ctx) => ctx.get(editorViewCtx)));
+          unbindIme = attachImeGuard(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           if (!preview) {
             editorBridge.getMarkdown = () => emit(c.getMarkdown());
             const pv = c.editor.action((ctx) => ctx.get(editorViewCtx));
@@ -227,6 +230,7 @@
       unbindCode?.();
       unbindPicker?.();
       unbindTips?.();
+      unbindIme?.();
       if (ctl) {
         ctl.destroy();
         if (finder.ctl === ctl) { finder.ctl = null; finder.total = 0; finder.current = -1; finder.error = ''; }
