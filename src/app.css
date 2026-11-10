@@ -442,6 +442,7 @@ button svg { flex: none; }
    CodeMirror 는 줄바꿈 없이 가로 스크롤이고 위에 도구줄(.tools, 30px)이 있으므로, placeholder 도 같게 맞춘다 */
 :root .milkdown .milkdown-code-block .milkdown-code-block-placeholder {
   white-space: pre; word-break: normal; overflow: hidden; padding-top: 34px; box-sizing: border-box;
+  padding-left: 6px; /* CodeMirror .cm-line 의 왼쪽 여백과 맞춘다(줄 번호·접기 칸 제거 후) */
 }
 /* 인라인 code 스타일(글자 크기·줄 높이)이 placeholder 안의 code 에 새어 들어와 줄 높이가 달라지는 것을 막는다 */
 :root .milkdown .milkdown-code-block .milkdown-code-block-placeholder code { font-size: inherit; line-height: inherit; padding: 0; background: none; }
@@ -832,4 +833,38 @@ input.invalid { color: #c0392b; }
   :root .milkdown .ProseMirror img, :root .milkdown .milkdown-image-block { max-width: 100%; }
   :root .milkdown .milkdown-table-block, :root .milkdown .milkdown-code-block { max-width: 100%; box-sizing: border-box; }
   .frontmatter { padding-left: 12px; padding-right: 12px; }
+}
+
+/* 인라인 수식 편집 팝오버 */
+:root .milkdown .milkdown-latex-inline-edit {
+  background: var(--bg, var(--crepe-color-surface));
+  color: var(--text, var(--crepe-color-on-surface));
+  border: 1px solid var(--border-strong, var(--crepe-color-outline));
+  border-radius: 10px;
+  padding: 6px 6px 6px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12);
+  z-index: 50;
+}
+:root .milkdown .milkdown-latex-inline-edit .container { align-items: center; }
+:root .milkdown .milkdown-latex-inline-edit .ProseMirror { min-width: 220px; max-width: 360px; font-size: 13px; line-height: 1.5; outline: none; }
+:root .milkdown .milkdown-latex-inline-edit .container button { color: var(--accent, var(--crepe-color-primary)); display: inline-flex; align-items: center; justify-content: center; }
+:root .milkdown .milkdown-latex-inline-edit .container button:hover { background: var(--accent-soft, var(--crepe-color-hover)); }
+
+/* 행 핸들 메뉴: 'N행 위에 삽입 / 아래에 추가' */
+:root .milkdown .milkdown-table-block .button-group .row-multi { display: flex; align-items: center; gap: 2px; padding-left: 4px; border-right: 1px solid var(--border, rgba(0,0,0,.15)); margin-right: 2px; }
+:root .milkdown .milkdown-table-block .button-group .row-multi button { margin: 6px 0; padding: 0 6px; min-width: 24px; height: 24px; border-radius: 6px; font-size: 14px; line-height: 1; }
+:root .milkdown .milkdown-table-block .button-group .row-multi input { width: 40px; height: 24px; border: 1px solid var(--border-strong, rgba(0,0,0,.25)); border-radius: 6px; background: var(--bg, transparent); color: var(--text, inherit); text-align: center; font: inherit; font-size: 13px; }
+
+/* 읽기 모드 링크: 클릭하면 새 창으로 열리므로 눌러볼 수 있게 보이고, 마우스를 올리면 강조한다 */
+.editor-host.is-readonly .ProseMirror a[href] {
+  cursor: pointer; border-radius: 3px; text-underline-offset: 3px;
+  transition: background-color .15s, color .15s, text-decoration-color .15s;
+}
+.editor-host.is-readonly .ProseMirror a[href]:hover {
+  background: var(--accent-soft, rgba(80,120,255,.14)); color: var(--accent, inherit); text-decoration-thickness: 2px;
+}
+
+/* 인쇄: 가상 커서·갭 커서는 화면용 표시라 인쇄물에 나오면 안 된다 */
+@media print {
+  .ProseMirror .prosemirror-virtual-cursor, .ProseMirror .ProseMirror-gapcursor, .crepe-drop-cursor { display: none !important; }
 }

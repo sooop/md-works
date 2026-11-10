@@ -17,7 +17,7 @@
     clearTextInCurrentBlockCommand, toggleStrongCommand, toggleEmphasisCommand, toggleInlineCodeCommand, wrapInHeadingCommand, wrapInBlockquoteCommand,
     wrapInBulletListCommand, wrapInOrderedListCommand, createCodeBlockCommand, insertHrCommand, turnIntoTextCommand,
   } from '@milkdown/kit/preset/commonmark';
-  import { toggleStrikethroughCommand, insertTableCommand } from '@milkdown/kit/preset/gfm';
+  import { toggleStrikethroughCommand, insertTableCommand, addRowAfterCommand, addRowBeforeCommand, goToNextTableCellCommand } from '@milkdown/kit/preset/gfm';
   import { editorBridge, doc, settings, toast, askChoose, focusNext, type EditorCommand } from '../store.svelte';
   import { stripExt } from '../utils';
   import { tableHeaderless } from '../tableHeaderless';
@@ -29,6 +29,10 @@
   import { bindComments } from '../comments/store.svelte';
   import { finder } from '../search/state.svelte';
   import { codeLanguages, codeHighlight } from '../codeLanguages';
+  import { swapBasicSetup } from '../codeSetup';
+  import { attachTableKeys, attachRowMenu } from '../tableKeys';
+  import { attachLatexKeys } from '../latexEdit';
+  import { codeBlockConfig } from '@milkdown/kit/component/code-block';
   import { onlyDoubleTilde } from '../gfmTilde';
   import { attachCodePicker } from '../codePicker';
   import { deferCodeMirrorDuringScroll } from '../codeBlockDefer';
@@ -80,6 +84,22 @@
     if (ready) builder?.setReadonly(ro);
   });
 
+  // 읽기 모드: 본문 링크 클릭은 새 창(탭)으로 연다. 편집 모드는 Crepe 의 링크 툴팁이 처리한다
+  $effect(() => {
+    if (!host || !readonly) return;
+    const onClick = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      const a = (e.target as HTMLElement | null)?.closest?.('.ProseMirror a[href]') as HTMLAnchorElement | null;
+      if (!a) return;
+      const href = a.getAttribute('href') ?? '';
+      if (!/^(https?:|mailto:|tel:)/i.test(href)) return;
+      e.preventDefault(); e.stopPropagation();
+      window.open(href, '_blank', 'noopener,noreferrer');
+    };
+    host.addEventListener('click', onClick, true);
+    return () => host.removeEventListener('click', onClick, true);
+  });
+
   // 읽기 모드: 코드 블록(CodeMirror)은 읽기 전용이어도 contenteditable 이라 탭하면 모바일 키보드가 올라온다.
   // inputmode="none" 으로 가상 키보드만 막는다(글자 선택·복사·코멘트는 그대로).
   $effect(() => {
@@ -110,6 +130,9 @@
     let unbindPicker: (() => void) | undefined;
     let unbindTips: (() => void) | undefined;
     let unbindIme: (() => void) | undefined;
+    let unbindLatex: (() => void) | undefined;
+    let unbindTableKeys: (() => void) | undefined;
+    let unbindRowMenu: (() => void) | undefined;
     let disposed = false;
     untrack(() => {
       const c = new CrepeBuilder({ root: host, defaultValue: split.body })
@@ -153,7 +176,7 @@
             },
           }),
         })
-        .addFeature(codeMirror, { languages: codeLanguages, theme: codeHighlight })
+        .addFeature(codeMirror, { languages: codeLanguages, theme: codeHighlight, previewOnlyByDefault: true })
         .addFeature(table)
         .addFeature(latex) // $수식$ · $$블록 수식$$ (KaTeX)
         .addFeature(placeholder, { text: '내용을 입력하세요. / 를 누르면 블록 메뉴가 열립니다.' })
@@ -163,6 +186,8 @@
           inlineOnUpload: upload,
           proxyDomURL: resolveUrl,
         });
+      // 줄 번호·접기·단어 추천 제거(basicSetup 교체)
+      c.editor.config((ctx) => ctx.update(codeBlockConfig.key, (p) => ({ ...p, extensions: swapBasicSetup(p.extensions) })));
       const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const), openExport: openListExport, openFromCode: (src: CodeSource) => openListImport(src), selectionSource: () => editorBridge.selectionSource?.() ?? null };
       c.editor.use(tablePaste(tableEnv)); // TSV/CSV 붙여넣기 → 표
       c.editor.use(codeClipboard); // 코드 블록 복사는 ``` 언어명 펜스 마크다운으로
@@ -184,6 +209,18 @@
           unbindPicker = attachCodePicker(host);
           unbindTips = attachFootnoteTips(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           unbindCode = attachCodeTrim(c.editor.action((ctx) => ctx.get(editorViewCtx)));
+          unbindLatex = attachLatexKeys();
+          if (!readonly) {
+            const call = (key: never) => c.editor.action(callCommand(key));
+            unbindTableKeys = attachTableKeys(c.editor.action((ctx) => ctx.get(editorViewCtx)), {
+              addAfter: () => call(addRowAfterCommand.key as never), addBefore: () => call(addRowBeforeCommand.key as never), next: () => call(goToNextTableCellCommand.key as never),
+            });
+            const pv2 = c.editor.action((ctx) => ctx.get(editorViewCtx));
+            unbindRowMenu = attachRowMenu(pv2, (cmd, n) => {
+              const key = (cmd === 'after' ? addRowAfterCommand.key : addRowBeforeCommand.key) as never;
+              for (let i = 0; i < n; i++) call(key);
+            });
+          }
           unbindIme = attachImeGuard(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           if (!preview) {
             editorBridge.getMarkdown = () => emit(c.getMarkdown());
@@ -231,6 +268,9 @@
       unbindPicker?.();
       unbindTips?.();
       unbindIme?.();
+      unbindLatex?.();
+      unbindTableKeys?.();
+      unbindRowMenu?.();
       if (ctl) {
         ctl.destroy();
         if (finder.ctl === ctl) { finder.ctl = null; finder.total = 0; finder.current = -1; finder.error = ''; }

@@ -38,6 +38,12 @@ export async function buildPrintClone(view: EditorView, host: HTMLElement): Prom
   const clone = host.cloneNode(true) as HTMLElement;
   clone.classList.add('print-clone');
   clone.removeAttribute('contenteditable');
+  // 가상 커서·갭 커서·포커스 표시·선택 흔적은 복제본에서 지운다(인쇄물에 남지 않게)
+  clone.querySelectorAll('.prosemirror-virtual-cursor, .ProseMirror-gapcursor, .ProseMirror-selectednode').forEach((el) => {
+    if (el.classList.contains('ProseMirror-selectednode')) el.classList.remove('ProseMirror-selectednode');
+    else el.remove();
+  });
+  clone.querySelectorAll('.ProseMirror-focused').forEach((el) => el.classList.remove('ProseMirror-focused'));
 
   const blocks: { code: string; lang: string }[] = [];
   view.state.doc.descendants((n) => {
