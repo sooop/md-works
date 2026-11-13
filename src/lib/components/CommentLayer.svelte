@@ -6,6 +6,7 @@
   import CommentItem from './CommentItem.svelte';
   import { tip } from '../tooltip.svelte';
   import { cm, startDraft, cancelDraft, commitDraft, closePick } from '../comments/store.svelte';
+  import { popFx, tipFx } from '../motion';
 
   // 본문 위에 뜨는 요소: 선택 영역의 '코멘트' 버튼, 새 코멘트 입력, 코멘트를 눌렀을 때의 팝오버
   const W = 320;
@@ -61,7 +62,7 @@
     {@const p = place(cm.sel, 36)}
     <!-- 눌러도 본문 선택이 풀리지 않게 mousedown 의 기본 동작을 막는다 -->
     <!-- 터치 폭에서는 선택 위치 옆이 아니라 화면 오른쪽 아래에 고정한다(서식 툴바와 겹쳐 클릭을 가로채던 문제) -->
-    <div class="cm-layer cm-selbar" class:cm-add-fixed={touch} style:left={touch ? null : `${p.left}px`} style:top={touch ? null : `${p.top}px`}>
+    <div class="cm-layer cm-selbar" class:cm-add-fixed={touch} transition:tipFx style:left={touch ? null : `${p.left}px`} style:top={touch ? null : `${p.top}px`}>
       <button class="cm-add" use:tip={{ title: '선택한 본문에 코멘트', kbd: 'Ctrl+Alt+M' }} onmousedown={(e) => e.preventDefault()} onclick={startDraft}>
         <MessageSquarePlus size={15} />코멘트
       </button>
@@ -73,7 +74,7 @@
 
   {#if cm.draft}
     {@const p = place(cm.draft, 170)}
-    <div class="cm-layer cm-pop" style:left="{p.left}px" style:top="{p.top}px" role="dialog" aria-label="새 코멘트">
+    <div class="cm-layer cm-pop" transition:popFx style:left="{p.left}px" style:top="{p.top}px" role="dialog" aria-label="새 코멘트">
       <textarea bind:this={area} bind:value={cm.draft.text} onkeydown={onDraftKey} rows="4" placeholder={touch ? '코멘트를 입력하세요' : '코멘트를 입력하세요 (Enter 저장, Shift+Enter 줄바꿈)'} aria-label="코멘트 내용"></textarea>
       <div class="cm-actions" class:touch>
         <button onclick={cancelDraft}>취소</button>
@@ -86,7 +87,7 @@
     {@const p = place(cm.pick, 120)}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
     <div class="backdrop" onclick={closePick}></div>
-    <div class="cm-layer cm-pop" style:left="{p.left}px" style:top="{p.top}px" role="dialog" aria-label="코멘트">
+    <div class="cm-layer cm-pop" transition:popFx style:left="{p.left}px" style:top="{p.top}px" role="dialog" aria-label="코멘트">
       {#each cm.pick.ids as id (id)}<CommentItem {id} />{/each}
     </div>
   {/if}

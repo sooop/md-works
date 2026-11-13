@@ -59,10 +59,13 @@ node server.js [루트폴더] [--port 5273] [--templates 템플릿폴더]   # �
 ### 번들 백업·동기화·텔레그램·서버 폴더 백업
 
 - **번들** = 글·이미지·이력·글감·스레드·디자인을 담은 zip. 가져오기는 미리보기(추가/갱신/충돌 건수) 후 '병합 적용'. 같은 id 는 `updatedAt` 최신 우선, 이력·휴지통은 합집합, 글 본문이 양쪽에서 달라졌으면 진 쪽을 '병합 전' 이름의 버전으로 이력에 남긴다.
-- **암호화**: `VITE_BUNDLE_KEY` → SHA-256 → AES-256-GCM. `.mwb` = `MWB1` + iv 12바이트 + 암호문·태그.
-- **알림**: 마지막 백업이 N일(기본 7, 3/7/14/끔) 넘었고 이후 변경이 있으면 버튼 점 배지 + 시작 시 토스트.
+- **창 구성**: 상단바 백업 창은 탭 둘 — "내보내기·가져오기"(내려받기, 가져오기 미리보기·병합)와 "자동 백업"(서버 모드의 노트 폴더 백업·복원, 텔레그램, 알림 기준). 마지막 탭은 세션 동안 기억하고, 앱 창에 번들을 끌어다 놓으면 가져오기 탭이 열린다. 진행·성공·오류는 탭 아래 고정 영역에 보이고(`role=status`/`alert`), 창 밖에서 일어난 자동 백업의 실패만 토스트로 알린다. 병합 뒤 글·목록·열린 편집기·글감 패널은 자동으로 다시 읽고, 코멘트가 바뀐 경우에만 새로 고침을 안내한다.
+- **암호화**: `VITE_BUNDLE_KEY` → SHA-256 → AES-256-GCM. `.mwb` = `MWB1` + iv 12바이트 + 암호문·태그. 키는 앱 빌드에 들어 있어 같은 빌드를 가진 사람은 풀 수 있다(비밀번호 수준의 보호가 아님).
+- **알림**: 마지막 백업이 N일(기본 7, 3/7/14/끔) 넘었고 이후 변경이 있으면 버튼 점 배지 + 시작 시 토스트. 텔레그램 자동 올리기를 켜 둔 채 마지막 성공이 설정 간격의 3배(또는 24시간 중 큰 값)를 넘고 올릴 변경이 있으면 마찬가지로 점 배지를 띄운다(다른 경로의 백업이 성공해도 가려지지 않는다). 경로별(내보내기·텔레그램·폴더) 마지막 성공 시각과 마지막 실패(시각·이유)를 따로 기록해 창에 상시 표시한다. 번들을 만들기 전 준비(열린 글 저장) 중의 쓰기는 변경으로 치지 않지만, 번들을 읽는 동안 생긴 변경은 다음 백업 대상으로 남는다.
 - **텔레그램**: Bot API `getMe`/`sendMessage`/`sendDocument` 로 **올리기만** 자동(기본 30분, 최소 5분, 변경이 있을 때만). 파일명 `md-works-YYYYMMDD-HHmm.mwb`. **큰 번들 분할**: 암호화 번들이 45MB 를 넘으면 `….mwb.001`, `.002` … 조각(최대 20개)으로 순서대로 올리고 caption 에 `i/n`·전체 크기·SHA-256 앞 12자를 적는다(헤더 없이 원본 바이트를 자른 것이라 `cat` 으로도 합쳐진다). 중간 조각이 실패하면 1회 재시도 후 중단하고 어디까지 올라갔는지 알린다(이어 올리기 없음). 가져오기는 받은 파일을 앱에 끌어다 놓는 수동 방식이며 조각은 모두 한꺼번에 놓으면 번호순으로 이어 붙인 뒤 복호화한다(빠진 번호·중복·다른 백업의 조각은 오류로 안내). 토큰·chat_id 는 localStorage `works.telegram` 에만 있고 번들에 들어가지 않는다. **브라우저에서 api.telegram.org 직접 호출(CORS)은 실서버로 미검증**(코드는 fetch 를 주입한 모의 테스트만).
-- **서버 폴더 백업**: `POST /api/backup`(200MB 상한)이 `<루트>/.works-backup/md-works-YYYYMMDD-HHmmss[-n].<mwb|zip>` 로 저장, 최근 10개 유지. `GET /api/backups`(목록), `GET /api/backup/file?name=`. 자동 백업 기본 켬·15분, 변경이 있을 때만.
+- **문서 휴지통(서버)**: `DELETE /api/file` 은 영구 삭제 대신 `<루트>/.works-trash/<id>/` 로 옮긴다(폴더는 비 .md 파일·.git 까지 통째로, 글은 assets/<글 이름>·코멘트·이력·스레드 함께). 응답 `{ok, trashId}`. `GET /api/trash`(`{items:[{id,path,name,type,deletedAt,docs}]}` 최근순), `POST /api/trash/restore {id}`(같은 이름이 있으면 `이름 (2).md`/`폴더 (2)` 로 비켜 복구하고 assets·링크·사이드카 키를 새 이름에 맞춤, 없는 상위 폴더는 재생성 → `{ok,path,type}`), `DELETE /api/trash?id=`(개별) / `DELETE /api/trash`(비우기) → `{ok,removed}`. 30일이 지난 항목은 서버 시작·목록 조회 때 지운다. 휴지통 폴더는 다른 API 로 접근할 수 없다(403).
+- **문서 휴지통(화면·스탠드얼론)**: 글·폴더를 지우면(트리·우클릭·선택 일괄·상단 메뉴) 확인 없이 휴지통으로 가고 토스트 "'이름' 을 휴지통으로 옮겼습니다 + 되돌리기"(8초)가 뜬다. 왼쪽 사이드바 파일 탭 맨 아래 '휴지통 (N)' 단추를 누르면 파일 탭 자리에 휴지통 보기(`TrashPanel`, 서버·스탠드얼론 공용, 모드별 구현은 `TrashCtl`)가 열리고 '← 파일 목록' 으로 돌아온다. 항목 복구·완전 삭제(확인창)·여러 개 선택·비우기(확인창), 30일 뒤 자동 삭제. 복구 때 같은 이름이 있으면 `이름 (2)`. **스탠드얼론 구현**: 글 레코드에 `deletedAt`(+폴더를 지울 때 묶음 id `trashId`)만 표시하는 소프트 삭제이고 폴더(빈 폴더 포함)는 kv `trashDirs` 에 기억해 복구하면 구조째 돌아온다. 휴지통 글은 목록·검색·명령 팔레트·번들 내보내기·이름 계산·저장 경로에서 없는 글이고, 이력·코멘트 스레드·이미지(이미지 정리 참조 포함)·글감 핀은 그대로 둔다. 핀·스레드·이력의 정리는 완전 삭제(또는 30일 경과, 앱 시작·휴지통 열 때 확인) 때에만 한다. 삭제 묘비는 휴지통으로 보낼 때 남기고 복구하면 걷는다 — 번들 가져오기에서 같은 이름의 글이 이 기기의 휴지통에 있으면 번들 쪽 수정 시각이 삭제 시각보다 나중일 때만 같은 id 로 되살려 덮고(이력·핀 유지), 아니면 휴지통에 둔다. 번들 내보내기에는 휴지통 내용을 싣지 않는다. 서버 모드는 위 API 를 쓰고, 핀(경로 키)은 복구 때 이름이 바뀌었으면 새 경로로 옮기고 완전 삭제 때 뗀다(그 경로에 다른 글이 있으면 건드리지 않는다).
+- **서버 폴더 백업**: `POST /api/backup`(200MB 상한)이 `<루트>/.works-backup/md-works-YYYYMMDD-HHmmss[-n].<mwb|zip>` 로 저장. 보존 규칙: 최근 10개는 전부, 그 밖에는 최근 48시간은 시간당 최신 1개·최근 30일은 하루당 최신 1개(나머지 삭제). `GET /api/backups`(목록), `GET /api/backup/file?name=`. 자동 백업 기본 켬·15분, 변경이 있을 때만.
 
 ## 저장 구조
 
@@ -80,7 +83,8 @@ node server.js [루트폴더] [--port 5273] [--templates 템플릿폴더]   # �
 .works/versions/<글 경로(%XX 이스케이프)>/<id>.json   이력
 .works/snippets/_/<id>.json                          글감(휴지통 포함)
 .works/threads/<글 경로>/<id>.json                    코멘트 스레드
-.works-backup/md-works-YYYYMMDD-HHmmss.<mwb|zip>     폴더 백업(최근 10개)
+.works-backup/md-works-YYYYMMDD-HHmmss.<mwb|zip>     폴더 백업(최근 10개 + 시간당·하루당 1개)
+.works-trash/<YYYYMMDD-HHmmss-난수>/                    휴지통: meta.json + item/(삭제한 글·폴더) + assets/ comments* works/(이력·스레드). 30일 뒤 자동 삭제
 .comments/<글 경로>.json                              이전 방식 코멘트(읽어서 스레드로 이관)
 assets/<글 이름>/                                      글 옆 이미지
 ```
@@ -97,7 +101,7 @@ assets/<글 이름>/                                      글 옆 이미지
 | `works.design` | 디자인 설정(JSON) |
 | `works.goal.<docKey>` | 글별 목표 분량 |
 | `works.countSpaces` | 글자 수에 공백 포함 여부 |
-| `works.backup` | 마지막 변경·백업 시각, 알림 일수, 폴더 백업 설정 |
+| `works.backup` | 마지막 변경·경로별 백업 성공 시각(`lastExport`·`lastTelegram`·`lastFolder`)과 마지막 실패(`fail*At`·`fail*Msg`, 새 키 — 없으면 0/빈 값으로 읽는다), 알림 일수, 폴더 백업 설정 |
 | `works.telegram` | 텔레그램 토큰·chat_id·자동 올리기(번들 제외) |
 
 (`notes.*` 접두는 md-notes 에서 물려받은 이름. DB 이름은 md-notes 와 충돌하지 않게 `works-*` 로 바꿨다.)
@@ -107,15 +111,17 @@ assets/<글 이름>/                                      글 옆 이미지
 서버 노트 폴더 구조의 상위 집합이라 풀면 그대로 노트 폴더가 된다. 글 식별은 이름(서버는 경로).
 
 ```
-manifest.json                       {schema:'md-works-bundle', version:1, createdAt, mode, app}
+manifest.json                       {schema:'md-works-bundle', version:1, createdAt, mode, app, historyLayout:2}
 <경로>.md, assets/<문서명>/<n>.<ext>  글과 이미지
 .works/docs.json                    {<글 이름>: {updatedAt}}
-.works/versions/<글 이름>/<id>.json
+.works/versions/<글 이름>.json      글 하나의 이력 버전 레코드 배열(너무 크면 <글 이름>.2.json …)
 .works/snippets/_/<id>.json
 .works/threads/<글 이름>/<id>.json
 .works/design.json                  serializeDesign() 결과
 .works/tombstones.json              {docs:{<이름>:deletedAt}}  (현재 내보낼 때 항상 빈 값)
 ```
+
+**이력 배치**: 글 하나의 이력을 파일 하나(`.works/versions/<글 이름 %XX 이스케이프>.json`, 레코드 배열)에 묶는다. 버전마다 zip 항목을 만들면 항목 수 상한(fflate 가 zip64 를 지원하지 않아 65,535)에 걸려 글·버전이 많은 보관소의 백업이 통째로 실패했기 때문이다. 빈 이력은 파일이 없다. 묶음이 압축 전 50MB 를 넘으면 `<글 이름>.2.json`, `.3.json` … 으로 나눈다(항목 하나 상한 100MB). 읽을 때는 옛 배치(`.works/versions/<글 이름>/<id>.json`, 버전당 파일)도 지원하고, 두 배치가 섞여 있으면 같은 id 는 한 번만 쓴다. `manifest.version` 은 1 로 두고 `historyLayout: 2` 로 새 배치를 표시한다 — 옛 빌드는 더 높은 `version` 의 번들을 통째로 거부하지만, 모르는 `.works/versions/<글>.json` 항목은 무시하므로 옛 빌드에서도 글·글감·코멘트는 읽히고 이력만 빠진다. 새 번들을 풀어 서버 노트 폴더로 쓰면 글·글감·코멘트는 그대로 쓰이지만 이력은 서버 폴더 배치(버전당 파일)와 달라 앱에서 번들을 가져와 합쳐야 한다.
 
 공개 함수: `buildBundle()`, `previewBundle(bytes)`, `applyBundle(bytes, {applyDesign?})`. 암호화는 호출자(`crypto.ts`)가 한다.
 

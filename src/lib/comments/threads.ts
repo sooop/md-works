@@ -71,8 +71,14 @@ export function withMessageRemoved(t: Thread, msgId: string, now = Date.now()): 
 }
 
 // ---- 저장 (worksStore 위) ----
+/**
+ * 레코드의 docKey 를 요청한 키(파티션)로 맞춘다. 글 이름 변경 때 파티션만 옮겨지고 docKey 가 옛 경로로 남은 기존 데이터를 복구한다
+ * (그대로 두면 이후 saveThread/deleteThread 가 옛 파티션에 쓴다).
+ */
+const withKey = (t: Thread, docKey: string): Thread => (t.docKey === docKey ? t : { ...t, docKey });
+
 export const listThreads = async (docKey: string) =>
-  (await worksStore().list<Thread>('threads', docKey)).filter((t) => !t.deletedAt).sort((a, b) => a.createdAt - b.createdAt);
+  (await worksStore().list<Thread>('threads', docKey)).filter((t) => !t.deletedAt).map((t) => withKey(t, docKey)).sort((a, b) => a.createdAt - b.createdAt);
 
 export const saveThread = (t: Thread) => worksStore().put('threads', t, t.docKey);
 /**
@@ -83,13 +89,13 @@ export async function deleteThread(t: Pick<Thread, 'id' | 'docKey'>): Promise<vo
   const cur = await worksStore().get<Thread>('threads', t.id, t.docKey);
   if (!cur || cur.deletedAt) return;
   const now = Date.now();
-  await worksStore().put('threads', { ...cur, deletedAt: now, updatedAt: now }, t.docKey);
+  await worksStore().put('threads', { ...withKey(cur, t.docKey), deletedAt: now, updatedAt: now }, t.docKey);
 }
 
 async function mutate(docKey: string, id: string, fn: (t: Thread) => Thread): Promise<Thread> {
   const cur = await worksStore().get<Thread>('threads', id, docKey);
   if (!cur) throw new Error('스레드를 찾을 수 없습니다');
-  const next = fn(cur);
+  const next = fn(withKey(cur, docKey));
   await saveThread(next);
   return next;
 }

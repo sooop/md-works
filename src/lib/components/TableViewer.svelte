@@ -19,12 +19,13 @@
   import Replace from '@lucide/svelte/icons/replace';
   import Pop from './Pop.svelte';
   import { tableViewer } from '../tableViewer.svelte';
-  import { listExport, openListExport } from '../tableListUi.svelte';
+  import { openListExport } from '../tableListUi.svelte';
   import { copyAs, saveAs, COPY_KINDS, SAVE_KINDS, type CopyKind, type SaveKind, type Fmt } from '../tableTools';
   import { toAscii } from '../tableFormats';
   import { filterRows, sortRows, computeStats, fmtNum, sliceGrid } from '../tableOps';
   import { doc, toast, askConfirm, settings, persistSettings, editorBridge } from '../store.svelte';
   import { stripExt } from '../utils';
+  import { modal, isTopModal } from '../modal';
 
   const table = $derived(tableViewer.table);
 
@@ -148,14 +149,14 @@
     if (t.transpose()) close(); // 못 바꾸는 경우의 안내는 transpose 가 토스트로 알린다
   }
   const close = () => { tableViewer.table = null; };
+  let overlayEl = $state<HTMLElement>();
+
+  // Esc: 선택이 있으면 선택부터 풀고, 없으면 닫는다(열린 팝오버는 Pop 이 먼저 Esc 를 받는다. 위에 뜬 '목록으로' 창·확인창은 modal 스택이 먼저 받는다)
+  function onEsc() { if (sel) sel = null; else close(); }
 
   function onKey(e: KeyboardEvent) {
-    if (!table || listExport.rows) return; // 위에 뜬 '목록으로' 창이 키를 받는다
-    if (e.key === 'Escape') {
-      e.preventDefault(); e.stopPropagation();
-      if (copyOpen || saveOpen || codeOpen) return; // 팝오버가 먼저 닫힌다
-      if (sel) sel = null; else close();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && rect && !(e.target as HTMLElement).closest('input, textarea') && !window.getSelection()?.toString()) {
+    if (!table || !isTopModal(overlayEl)) return; // 위에 뜬 '목록으로' 창·확인창이 키를 받는다
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && rect && !(e.target as HTMLElement).closest('input, textarea') && !window.getSelection()?.toString()) {
       e.preventDefault();
       copySelection();
     }
@@ -165,8 +166,7 @@
 <svelte:window onkeydowncapture={onKey} onpointerup={() => { dragging = false; }} />
 
 {#if table}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) close(); }}>
+  <div class="overlay" transition:backdropFx bind:this={overlayEl} use:modal={{ onClose: close, onEscape: onEsc, focus: () => overlayEl }}>
     <div class="dialog tv" role="dialog" transition:modalFx aria-modal="true" aria-label="표 확대 보기">
       <header class="tv-head">
         <h2>표 {table.index} <span class="sub">{vrows.length}{filtered ? ` / ${table.rows.length}` : ''}행 × {table.header.length}열</span></h2>
@@ -289,7 +289,7 @@
             {/snippet}
           </Pop>
         </span>
-        <button class="primary" onclick={close}>닫기</button>
+        <button onclick={close}>닫기</button>
       </div>
     </div>
   </div>

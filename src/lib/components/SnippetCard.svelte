@@ -9,10 +9,13 @@
   import Undo2 from '@lucide/svelte/icons/undo-2';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import Pencil from '@lucide/svelte/icons/pencil';
-  import Sparkles from '@lucide/svelte/icons/sparkles';
+  import Layers from '@lucide/svelte/icons/layers';
+  import X from '@lucide/svelte/icons/x';
   import Check from '@lucide/svelte/icons/check';
   import { doc, settings } from '../store.svelte';
   import { tip } from '../tooltip.svelte';
+  import { tabIndent } from '../textIndent';
+  import { slideFx } from '../motion';
   import Pop from './Pop.svelte';
   import { SNIPPET_COLORS, type Snippet } from '../works/types';
   import { COLOR_HEX } from '../snippets/colors';
@@ -64,6 +67,16 @@
     if (e.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void saveEdit(); }
     else if (e.key === 'Escape') { e.stopPropagation(); editing = false; }
+  }
+  /** 접힌 카드에서 본문이 잘렸는지 재서, 잘렸을 때만 아래쪽을 흐리게 한다(더 있다는 표시) */
+  function clamp(node: HTMLElement) {
+    const check = () => node.classList.toggle('clipped', node.scrollHeight > node.clientHeight + 1);
+    const ro = new ResizeObserver(check);
+    ro.observe(node);
+    const mo = new MutationObserver(check);
+    mo.observe(node, { childList: true, subtree: true, characterData: true });
+    check();
+    return { destroy() { ro.disconnect(); mo.disconnect(); } };
   }
   let menuOpen = $state(false);
   let showSimilar = $state(false); // 메뉴의 '비슷한 글감 보기'
@@ -165,16 +178,17 @@
       onclick={(e) => { e.stopPropagation(); void detachHere(s.id); }} ondblclick={(e) => e.stopPropagation()}><Pin size={15} /></button>
   {/if}
   {#if editing}
-    <textarea class="sn-edit" bind:this={editArea} bind:value={body} onkeydown={onEditKey} rows="4" aria-label="글감 내용" placeholder="Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소  ( # 제목 · @출처 · > 인용 )"></textarea>
+    <textarea class="sn-edit" bind:this={editArea} bind:value={body} use:tabIndent={{ isNewline: (e) => e.shiftKey }} onkeydown={onEditKey} rows="4" aria-label="글감 내용" placeholder="Enter 저장 · Shift+Enter 줄바꿈 · Tab 들여쓰기 · Esc 취소  ( # 제목 · @출처 · > 인용 )"></textarea>
     <div class="sn-ops">
-      <button class="primary" onclick={saveEdit} disabled={!body.trim()}>저장</button>
+      <span class="sn-edit-keys" aria-hidden="true">Enter 저장 · Tab 들여쓰기</span>
       <button onclick={() => (editing = false)}>취소</button>
+      <button class="primary" onclick={saveEdit} disabled={!body.trim()}>저장</button>
     </div>
   {:else}
     {#if parsed.title}<div class="sn-title">{parsed.title}</div>{/if}
-    <div class="sn-body">
+    <div class="sn-body" use:clamp>
       {#each parts as p}
-        {#if p.type === 'img'}<img src={p.v} alt={p.alt} loading="lazy" />{:else}{#each bodyLines(p.v) as l}<div class={`ln ${l.kind}`}>{l.text}</div>{/each}{/if}
+        {#if p.type === 'img'}<img src={p.v} alt={p.alt} loading="lazy" />{:else}{#each bodyLines(p.v) as l}<div class={`ln ${l.kind}`} style:--d={l.depth}>{l.text}</div>{/each}{/if}
       {/each}
     </div>
     {#if parsed.source}
@@ -201,7 +215,7 @@
               <button class="pop-row" disabled={!doc.path} onclick={() => { close(); void attachHere(s.id); }}><Pin size={16} /><span class="txt"><b>이 글에 핀 꽂기</b>{#if !doc.path}<small>문서를 열면 꽂을 수 있습니다</small>{/if}</span></button>
             {/if}
             <button class="pop-row" onclick={() => { close(); void startEdit(); }}><Pencil size={16} /><span class="txt"><b>수정</b><small>카드를 더블 클릭해도 됩니다</small></span></button>
-            <button class="pop-row" class:on={showSimilar} onclick={() => { showSimilar = !showSimilar; close(); }}><Sparkles size={16} /><span class="txt"><b>비슷한 글감 {showSimilar ? '숨기기' : '보기'}</b></span>{#if showSimilar}<Check size={15} />{/if}</button>
+            <button class="pop-row" class:on={showSimilar} onclick={() => { showSimilar = !showSimilar; close(); }}><Layers size={16} /><span class="txt"><b>비슷한 글감 {showSimilar ? '숨기기' : '보기'}</b></span>{#if showSimilar}<Check size={15} />{/if}</button>
             {#if settings.snippetColors}
               <span class="sn-poplabel">색 바꾸기</span>
               <div class="sn-swatches">
@@ -216,8 +230,8 @@
       </Pop>
     </div>
     {#if showSimilar && !trashed}
-      <div class="sn-similar">
-        <h4>비슷한 글감 <button class="sn-similar-x" aria-label="비슷한 글감 닫기" use:tip={'닫기'} onclick={() => (showSimilar = false)}>✕</button></h4>
+      <div class="sn-similar" transition:slideFx>
+        <h4>비슷한 글감 <button class="sn-similar-x" aria-label="비슷한 글감 닫기" use:tip={'닫기'} onclick={() => (showSimilar = false)}><X size={12} /></button></h4>
         {#if similar.length}
           <ul>
             {#each similar as x (x.id)}
@@ -249,45 +263,53 @@
     background: color-mix(in srgb, var(--sn) 14%, var(--surface));
     border: 1px solid var(--border);
     border-left: 4px solid var(--sn);
-    border-radius: 6px;
+    border-radius: 8px;
     padding: 8px 10px;
     cursor: pointer;
+    transition: box-shadow var(--dur-2) var(--ease-out), border-color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out), opacity var(--dur-1) var(--ease-out);
     display: flex;
     flex-direction: column;
     gap: 6px;
     font-size: 13px;
   }
-  .sn-card.open { border-color: var(--sn); }
+  .sn-card:hover { box-shadow: var(--shadow-1); }
+  .sn-card.open { border-color: var(--sn); box-shadow: var(--shadow-1); }
   .sn-card { position: relative; }
   /* 메모지를 글에 꽂아 둔 핀 */
   .sn-pin {
     position: absolute; top: -8px; right: 6px; padding: 3px; border: 0; background: transparent; color: var(--danger); cursor: pointer;
-    transform: rotate(18deg); transition: transform 0.12s; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25)); border-radius: 50%;
+    transform: rotate(18deg); transition: transform var(--dur-2) var(--ease-spring); filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25)); border-radius: 50%;
   }
   .sn-pin:hover { transform: rotate(0deg) translateY(-3px) scale(1.12); background: transparent; }
-  .sn-menubtn { background: none; border: none; padding: 3px; border-radius: 4px; color: var(--muted); cursor: pointer; display: inline-flex; }
+  .sn-menubtn { background: none; border: none; padding: 3px; border-radius: 6px; color: var(--muted); cursor: pointer; display: inline-flex; opacity: 0.55; }
+  .sn-card:hover .sn-menubtn, .sn-card:focus-within .sn-menubtn, .sn-menubtn.on { opacity: 1; }
+  @media (hover: none) { .sn-menubtn { opacity: 1; } }
   .sn-menubtn:hover, .sn-menubtn.on { background: var(--hover); color: var(--text); }
   .sn-poplabel { font-size: 12px; color: var(--muted); padding: 2px 8px; }
-  .sn-similar-x { background: none; border: 0; padding: 0 4px; color: var(--muted); cursor: pointer; font-size: 11px; }
+  .sn-similar-x { background: none; border: 0; padding: 2px; border-radius: 4px; color: var(--muted); cursor: pointer; vertical-align: -2px; }
   :global(.pop-row.danger) { color: var(--danger); }
   .sn-pin :global(svg) { fill: currentColor; }
   .sn-card.selected { outline: 2px solid var(--accent); outline-offset: -1px; background: color-mix(in srgb, var(--accent) 10%, color-mix(in srgb, var(--sn) 14%, var(--surface))); }
-  .sn-card.dragging { opacity: 0.45; }
+  .sn-card.dragging { opacity: 0.4; box-shadow: none; }
   /* 삽입 위치 표시선 (카드 사이 간격 8px 의 가운데에 걸친다) */
   .sn-card.drop-before::before, .sn-card.drop-after::after {
     content: ''; position: absolute; left: 0; right: 0; height: 3px; border-radius: 2px; background: var(--accent); pointer-events: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); animation: sn-drop-in var(--dur-2) var(--ease-out);
   }
+  @keyframes sn-drop-in { from { opacity: 0; transform: scaleX(0.6); } }
   .sn-card.drop-before::before { top: -6px; }
   .sn-card.drop-after::after { bottom: -6px; }
   .sn-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .sn-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .sn-check input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--primary); }
   .sn-title { font-weight: 700; font-size: 14px; word-break: break-word; }
-  .sn-body { white-space: pre-wrap; word-break: break-word; max-height: 9em; overflow: hidden; }
-  .open .sn-body { max-height: none; }
+  .sn-body { white-space: pre-wrap; word-break: break-word; max-height: 9em; overflow: hidden; tab-size: 2; }
+  /* 잘린 카드: 마지막 줄이 흐려져 내용이 더 있음을 알린다 */
+  .sn-body:global(.clipped) { -webkit-mask-image: linear-gradient(#000 calc(100% - 2.6em), transparent); mask-image: linear-gradient(#000 calc(100% - 2.6em), transparent); }
+  .open .sn-body { max-height: none; -webkit-mask-image: none; mask-image: none; }
   .sn-body .ln { min-height: 1.2em; }
   .sn-body .ln.quote { border-left: 3px solid var(--border-strong); padding-left: 8px; color: var(--muted); }
-  .sn-body .ln.li { padding-left: 1.1em; text-indent: -0.8em; }
+  .sn-body .ln.li { padding-left: 1.1em; text-indent: -0.8em; margin-left: calc(var(--d, 0) * 1.1em); }
   .sn-body .ln.li::before { content: '•'; display: inline-block; width: 0.8em; text-indent: 0; }
   .sn-body img { display: block; max-width: 100%; max-height: 160px; border-radius: 4px; margin: 4px 0; }
   .open .sn-body img { max-height: none; }
@@ -303,17 +325,17 @@
   .sn-excerpt { font-size: 12px; font-style: italic; color: var(--muted); word-break: break-word; }
   .sn-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
   .sn-date { font-size: 11px; color: var(--muted); }
-  .sn-ops { display: flex; gap: 2px; }
-  .sn-ops button { background: none; border: none; padding: 3px; border-radius: 4px; color: var(--muted); cursor: pointer; display: inline-flex; }
-  .sn-ops button:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-  .sn-ops button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .sn-ops button.primary { padding: 4px 10px; color: var(--on-primary); background: var(--primary); }
+  .sn-ops { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
+  .sn-edit-keys { margin-right: auto; font-size: 11px; color: var(--muted); }
+  .sn-ops button { padding: 3px 10px; font-size: 12px; border-radius: 6px; }
   .sn-edit {
     width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--bg);
-    border: 1px solid var(--border-strong); border-radius: 4px; padding: 4px 6px; resize: vertical;
+    border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 8px; resize: vertical; tab-size: 2; line-height: 1.5; min-height: 7em;
   }
+  .sn-edit:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
   .sn-swatches { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 10px 8px; }
-  .dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; background: var(--c); cursor: pointer; padding: 0; }
+  .dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; background: var(--c); cursor: pointer; padding: 0; transition: transform var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out); }
+  .dot:hover:not(:disabled) { background: var(--c); transform: scale(1.15); }
   .dot.on { border-color: var(--text); }
   .sn-similar h4 { margin: 0 0 4px; font-size: 12px; color: var(--muted); }
   .sn-similar p { margin: 0; font-size: 12px; color: var(--muted); }

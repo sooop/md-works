@@ -10,6 +10,7 @@ import type { Snippet, SnippetColor, SnippetSource } from '../works/types';
 import { hasWorksStore, onWorksReady } from '../works/store';
 import { openRight } from '../rightbar/state.svelte';
 import { filterSnippets, findByPhrase, type SnippetView } from './filter';
+import { notifyTabs, onTabMessage } from '../works/tabSync';
 
 export const sn = $state({
   active: [] as Snippet[],
@@ -32,6 +33,8 @@ export const sn = $state({
 
 // 오른쪽 사이드바가 열린 채 시작하면 화면이 저장소 등록보다 먼저 떠서 첫 읽기를 건너뛴다 — 등록되면 다시 읽는다
 onWorksReady(() => void reload());
+// 다른 탭이 글감을 바꿨다: 이미 읽은 적이 있으면 다시 읽는다(글감 수정은 저장소의 최신 레코드에 적용하므로 잃는 일은 없고, 화면만 맞춘다)
+onTabMessage((m) => { if (m.t === 'snippets' && sn.loaded) void reload(); });
 
 let inflight: Promise<void> | null = null;
 let again = false;
@@ -74,6 +77,7 @@ async function run<T>(fn: () => Promise<T>, fail: string): Promise<T | undefined
   try {
     const r = await fn();
     await reload();
+    notifyTabs({ t: 'snippets' }); // 같은 출처의 다른 탭(스탠드얼론)이 목록을 다시 읽게 한다
     return r;
   } catch (e) {
     toast(`${fail}: ${errMsg(e)}`, 'error');

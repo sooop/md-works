@@ -1,6 +1,8 @@
 <script lang="ts">
   import { backdropFx, modalFx } from '../motion';
   import { tip } from '../tooltip.svelte';
+  import X from '@lucide/svelte/icons/x';
+  import { modal, isTopModal } from '../modal';
   // 본문 이미지를 팝오버로 띄워 확대·이동해 본다. 읽기 모드는 클릭, 편집 모드는 더블클릭(단일 클릭은 이미지 선택용)으로 연다.
   import { tick } from 'svelte';
 
@@ -21,12 +23,11 @@
   let ty = $state(0);
   let drag: { x: number; y: number; tx: number; ty: number; moved: boolean } | null = null;
   let closeBtn = $state<HTMLButtonElement | null>(null);
-  let opener: HTMLElement | null = null;
+  let backdropEl = $state<HTMLElement | null>(null);
 
   async function open(img: HTMLImageElement): Promise<void> {
     const url = img.currentSrc || img.src;
     if (!url) return;
-    opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     reset();
     src = url;
     await tick();
@@ -38,10 +39,7 @@
     if (scale === 1) { tx = 0; ty = 0; }
   }
   function close(): void {
-    if (src === null) return;
-    src = null;
-    opener?.focus?.();
-    opener = null;
+    src = null; // 포커스 복귀는 modal 이 맡는다
   }
 
   /**
@@ -72,10 +70,10 @@
 
   $effect(() => {
     if (src === null) return;
+    // Esc·Tab 순환은 modal 이 맡는다. 확대·축소 키는 이 창이 최상단일 때만
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-      else if (e.key === 'Tab') { e.preventDefault(); closeBtn?.focus(); }
-      else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoom(1.25); }
+      if (!isTopModal(backdropEl)) return;
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); zoom(1.25); }
       else if (e.key === '-') { e.preventDefault(); zoom(0.8); }
       else if (e.key === '0') { e.preventDefault(); reset(); }
     };
@@ -108,8 +106,7 @@
 </script>
 
 {#if src !== null}
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="lb-backdrop" transition:backdropFx role="dialog" aria-modal="true" aria-label="이미지 확대 보기" tabindex="-1" onclick={close} onwheel={onWheel}>
+  <div class="lb-backdrop" transition:backdropFx bind:this={backdropEl} use:modal={{ onClose: close }} role="dialog" aria-modal="true" aria-label="이미지 확대 보기" tabindex="-1" onwheel={onWheel}>
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
     <img
       class="lb-img"
@@ -132,7 +129,7 @@
       <button type="button" aria-label="확대" use:tip={'확대 (+)'} onclick={() => zoom(1.25)}>+</button>
     </div>
     <button bind:this={closeBtn} type="button" class="lb-close" aria-label="닫기" onclick={close}>
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+      <X size={18} />
     </button>
   </div>
 {/if}

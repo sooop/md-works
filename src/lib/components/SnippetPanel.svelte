@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
+  import { flip } from 'svelte/animate';
   import Search from '@lucide/svelte/icons/search';
   import X from '@lucide/svelte/icons/x';
   import ListChecks from '@lucide/svelte/icons/list-checks';
@@ -27,6 +28,8 @@
   } from '../snippets/state.svelte';
   import { right } from '../rightbar/state.svelte';
   import { rightPeek } from '../sidebar/state.svelte';
+  import { tabIndent } from '../textIndent';
+  import { listFx, flipFx, slideFx, LIST_FX_MAX } from '../motion';
 
   let input = $state<HTMLTextAreaElement>();
   let searchInput = $state<HTMLInputElement>();
@@ -180,6 +183,8 @@
     : '글감이 없습니다. 위 입력창에 적고 Enter 를 누르세요.',
   );
   const hasMore = $derived(!trashView && (colorsOn || reorderable));
+  /** 목록이 너무 길면 카드 들고 남·자리 이동 효과를 끈다 */
+  const fxOff = $derived(list.length > LIST_FX_MAX);
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -188,6 +193,7 @@
     <textarea
       bind:this={input}
       bind:value={text}
+      use:tabIndent={{ isNewline: (e) => e.shiftKey }}
       onkeydown={onKey}
       onpaste={onPaste}
       ondragover={(e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); }}
@@ -196,6 +202,9 @@
       placeholder="글감을 적고 Enter  ( # 제목 · @출처 · > 인용 )"
       aria-label="새 글감"
     ></textarea>
+    {#if text.trim()}
+      <p class="sn-keys" transition:slideFx aria-hidden="true"><kbd>Enter</kbd> 담기 <kbd>Shift+Enter</kbd> 줄바꿈 <kbd>Tab</kbd> 들여쓰기</p>
+    {/if}
     <div class="sn-row">
       <span class="spacer"></span>
       <!-- 키보드가 없는 터치 폭에서만 보이는 글자 버튼(아이콘 없음) — 데스크톱은 Enter 로 붙인다 -->
@@ -295,13 +304,13 @@
     ><ListChecks size={17} /></button>
   </div>
   {#if phraseMode}
-    <p class="sn-note">모든 글감을 본문 문구와의 관련도 순으로 보여 줍니다.</p>
+    <p class="sn-note" transition:slideFx>모든 글감을 본문 문구와의 관련도 순으로 보여 줍니다.</p>
   {:else if sn.view === 'doc' && !reorderable && doc.path}
-    <p class="sn-note">{hint}</p>
+    <p class="sn-note" transition:slideFx>{hint}</p>
   {/if}
 
   {#if sn.selected.length}
-    <div class="sn-selbar" role="toolbar" aria-label="선택한 글감 일괄 작업">
+    <div class="selbar" role="toolbar" aria-label="선택한 글감 일괄 작업" transition:slideFx>
       <strong>{sn.selected.length}개 선택</strong>
       <span class="spacer"></span>
       {#if sn.view === 'doc' && !phraseMode && doc.path}
@@ -345,7 +354,9 @@
     {:else if !list.length}
       <p class="empty">{emptyMsg}</p>
     {:else}
-      {#each list as s, i (s.id)}<SnippetCard {s} {reorderable} dropMark={dropMark(i)} />{/each}
+      {#each list as s, i (s.id)}
+        <div class="sn-slot" animate:flip={flipFx(fxOff)} transition:listFx={{ off: fxOff }}><SnippetCard {s} {reorderable} dropMark={dropMark(i)} /></div>
+      {/each}
     {/if}
   </div>
 </div>
@@ -356,14 +367,27 @@
   /* 노란 포스트잇 모양: 채팅 입력창처럼 보이지 않게 한다 */
   .sn-quick > textarea:first-child {
     background: color-mix(in srgb, #f6d860 24%, var(--bg)); border-color: color-mix(in srgb, #d9b93a 55%, var(--border-strong));
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.10); border-radius: 2px 2px 14px 2px; height: 220px; min-height: 120px; padding: 8px 10px; line-height: 1.5;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 10px -4px rgba(0, 0, 0, 0.14); border-radius: 2px 2px 14px 2px; height: 220px; min-height: 120px; padding: 10px 12px; line-height: 1.55;
+    tab-size: 2; transition: box-shadow var(--dur-2) var(--ease-out), border-color var(--dur-1) var(--ease-out), background-color var(--dur-2) var(--ease-out);
   }
+  /* 쓰는 동안: 메모지를 집어 든 듯 그림자가 깊어진다 */
+  .sn-quick > textarea:first-child:focus {
+    border-color: color-mix(in srgb, #d9b93a 80%, var(--border-strong));
+    background: color-mix(in srgb, #f6d860 30%, var(--bg));
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 10px 22px -8px rgba(0, 0, 0, 0.22);
+  }
+  .sn-quick textarea::placeholder { color: color-mix(in srgb, var(--muted) 80%, transparent); }
+  .sn-keys { margin: 0; padding: 0 2px; font-size: 11px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+  .sn-keys kbd { font: inherit; font-size: 10.5px; padding: 0 4px; margin-left: 6px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg); }
+  .sn-keys kbd:first-child { margin-left: 0; }
+  .sn-slot { flex: none; min-width: 0; }
+  .sn-list .empty { margin: 0; padding: 12px 4px; font-size: 13px; line-height: 1.55; color: var(--muted); }
   .sn-add-m { display: none; }
   .sn-quick textarea {
     width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; color: var(--text); background: var(--bg);
-    border: 1px solid var(--border-strong); border-radius: 4px; padding: 5px 7px; resize: vertical;
+    border: 1px solid var(--border-strong); border-radius: 6px; padding: 5px 7px; resize: vertical;
   }
-  .sn-quick textarea:focus { outline: none; border-color: var(--accent); }
+  .sn-quick textarea:focus { outline: none; }
   .sn-row { display: none; align-items: center; gap: 6px; } /* 터치 폭에서만 '글감 담기' 버튼 줄을 쓴다 */
   .sn-row .spacer { flex: 1; }
   .sn-row button { font-size: 12px; padding: 3px 8px; cursor: pointer; }
@@ -388,6 +412,7 @@
     border-left: 3px solid var(--c, var(--border)); font-size: 12.5px; line-height: 1.45; color: var(--text); cursor: pointer;
   }
   .sn-result:hover { background: var(--hover); }
+  .sn-result { transition: background-color var(--dur-1) var(--ease-out); }
   .sn-result-txt { display: block; word-break: break-word; }
   .sn-result mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
   .chip { font-size: 11px; padding: 1px 6px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
@@ -396,20 +421,11 @@
   .sn-poplabel { font-size: 12px; color: var(--muted); padding: 2px 8px; }
   .sn-swatches { display: flex; flex-wrap: wrap; gap: 8px; padding: 6px 10px 8px; }
   .sn-swatch { width: 14px; height: 14px; border-radius: 50%; background: var(--c); }
-  .dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; background: var(--c); cursor: pointer; padding: 0; }
+  .dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; background: var(--c); cursor: pointer; padding: 0; transition: transform var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out); }
+  .dot:hover:not(:disabled) { background: var(--c); transform: scale(1.15); }
   .dot.on { border-color: var(--text); }
   .sn-note { margin: 0; padding: 0 10px; font-size: 12px; color: var(--muted); }
-  .sn-selbar {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 8px; padding: 6px 8px; font-size: 12px;
-    background: var(--surface); border: 1px solid var(--accent); border-radius: 6px;
-  }
-  .sn-selbar .spacer { flex: 1; }
-  .sn-selbar > button:not(.icon-btn) {
-    display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 3px 8px; cursor: pointer;
-    background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--muted);
-  }
-  .sn-selbar > button:not(.icon-btn):hover:not(:disabled) { background: var(--hover); color: var(--text); }
-  .sn-selbar > button.danger:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
+  /* 선택 바(.selbar)는 공용 클래스 — app.css */
   @media (max-width: 720px) {
     /* 좁은 화면: 시트 높이를 글감 카드에 돌려주도록 입력창을 줄인다 */
     .sn-quick textarea:first-child { min-height: 0; height: 34px; resize: none; }
@@ -417,8 +433,8 @@
        버튼이 위로 밀려 click 이 빗나가던 결함 */
     .sn-quick:focus-within textarea:first-child { height: 160px; }
     .sn-row { display: flex; }
+    .sn-keys { display: none; }
     .sn-add-m { display: inline-block; }
-    .sn-selbar > button:not(.icon-btn) { padding: 6px 10px; }
   }
   .sn-list { flex: 1; overflow: auto; padding: 8px 8px 16px; display: flex; flex-direction: column; gap: 8px; }
 </style>

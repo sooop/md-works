@@ -1,14 +1,19 @@
 // 웹서버 버전: 파일 API 호출과 폴더 노트 앱 로직
 import {
-  doc, defaultEdit, requestEditorFocus, settings, persistSettings, toast, askPrompt, askConfirm, askChoose, errMsg,
+  doc, defaultEdit, requestEditorFocus, settings, persistSettings, toast, askPrompt, askChoose, errMsg, editorBridge,
 } from './store.svelte';
+import {
+  backoffMs, fitsKeepalive, classifySaveError, conflictAction, goneAction, leaveAction, versionLabel, saveBody,
+  CONFLICT_BUTTONS, GONE_BUTTONS, LEAVE_BUTTONS, type ErrInfo,
+} from './saveSafety';
+import { saveNamedVersion } from './namedVersion';
 import {
   basename, dirname, joinPath, safeDecode, stripExt, fileToDataUrl, imageExt,
   isExternalSrc, replaceImages, downloadText, writeClipboard, stripEmptyBlocks,
 } from './utils';
 import { exportDocx, isImportable, readImport } from './docx-flow';
 import { IMPORT_LABEL } from './pandoc/importFormats';
-import { snapshot, moveHistory, removeHistory } from './history';
+import { snapshot, moveHistory } from './history';
 import type { SearchResponse, FileHit } from './search/types';
 import { useBackend, flushComments } from './comments/store.svelte';
 import { markChanged } from './bundle/backupState.svelte';
@@ -24,6 +29,9 @@ import { serializeDesign } from './design';
 import { trackNet } from './netBusy.svelte';
 import { followRename, expandFolder } from './docTree.svelte';
 import { searchComments } from './search/commentSearch';
+import { exportSelection, type FolderExportKind } from './folderExportUi';
+import type { BulkResult } from './components/treeCtl';
+import type { TrashCtl, TrashItem } from './trash';
 
 // 새 문서를 만들 폴더(사이드바에서 선택한 폴더, 열린 문서의 폴더). 빈 문자열이면 루트.
 export const nav = $state({ dir: '', filter: '' }); // filter: 사이드바 파일명 검색어
@@ -39,19 +47,21 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
-export const tree = $state<{ nodes: TreeNode[]; root: string }>({ nodes: [], root: '' });
+// error: 서버에 연결하지 못했을 때의 이유(빈 문서 안내와 구분해 보여 주고 '다시 시도'를 준다)
+export const tree = $state<{ nodes: TreeNode[]; root: string; error: string }>({ nodes: [], root: '', error: '' });
 
 const LAST_KEY = 'notes.lastDoc';
 
+// body: 오류 응답의 JSON 본문(409 충돌의 mtime 등을 읽는 데 쓴다)
 class ApiError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
+  constructor(message: string, readonly status: number, readonly body: ErrInfo['body'] = null) { super(message); }
 }
 
 function call<T>(url: string, init?: RequestInit): Promise<T> {
   return trackNet((async () => {
     const res = await fetch(url, init);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new ApiError(data.error ?? `요청 실패 (${res.status})`, res.status);
+    if (!res.ok) throw new ApiError(data.message ?? data.error ?? `요청 실패 (${res.status})`, res.status, data && typeof data === 'object' ? data : null);
     return data as T;
   })());
 }
@@ -67,46 +77,60 @@ export async function refreshTree() {
   tree.nodes = t.children;
 }
 
+let setupDone = false;
 export async function init() {
-  useWorksStore(createSidecarStore());
-  useBundleHost(createServerHost({
-    store: worksStore,
-    // 번들을 만들거나 가져오기 전에 저장하지 않은 편집을 서버에 쓰고, 가져온 뒤에는 트리와 열린 글을 다시 읽는다
-    prepare: async () => { await flushComments(); if (doc.dirty && doc.path) await save(); },
-    afterApply: reloadAfterBundle,
-    design: { current: () => serializeDesign(designState), apply: importDesign },
-  }));
-  // 스레드는 .works/threads 에 저장된다. 이전 방식 코멘트(.comments/<경로>.json)는 문서를 열 때 이관만 한다.
-  useBackend({
-    load: async (key) => sanitize((await call<{ comments: unknown }>(`/api/comments?path=${q(key)}`)).comments),
-    clear: async (key) => { await call(`/api/comments?path=${q(key)}`, jsonInit('PUT', { comments: [] })); },
-  });
+  if (!setupDone) {
+    setupDone = true;
+    useWorksStore(createSidecarStore());
+    useBundleHost(createServerHost({
+      store: worksStore,
+      // 번들을 만들거나 가져오기 전에 저장하지 않은 편집을 서버에 쓰고, 가져온 뒤에는 트리와 열린 글을 다시 읽는다
+      prepare: async () => { await flushComments(); if (doc.dirty && doc.path) await save(); },
+      afterApply: reloadAfterBundle,
+      design: { current: () => serializeDesign(designState), apply: importDesign },
+    }));
+    // 스레드는 .works/threads 에 저장된다. 이전 방식 코멘트(.comments/<경로>.json)는 문서를 열 때 이관만 한다.
+    useBackend({
+      load: async (key) => sanitize((await call<{ comments: unknown }>(`/api/comments?path=${q(key)}`)).comments),
+      clear: async (key) => { await call(`/api/comments?path=${q(key)}`, jsonInit('PUT', { comments: [] })); },
+    });
+  }
+  await connect();
+}
+
+// 서버에 연결해 트리와 마지막 글을 읽는다. 실패하면 tree.error 에 이유를 남겨 빈 문서 안내와 구분해 보여 준다('다시 시도'는 retryConnect)
+async function connect() {
+  tree.error = '';
   try {
     const info = await call<{ root: string }>('/api/info');
     tree.root = info.root;
     await refreshTree();
     void refreshTemplates();
+    void refreshTrashCount();
     const last = localStorage.getItem(LAST_KEY);
-    if (last) await loadDoc(last).catch(() => localStorage.removeItem(LAST_KEY));
+    if (last && !doc.path) {
+      await loadDoc(last).catch((e) => {
+        if (e instanceof ApiError) { try { localStorage.removeItem(LAST_KEY); } catch { /* 무시 */ } } // 서버가 답한 오류(없는 글 등)만 잊는다. 연결 문제면 다음에 다시 연다
+      });
+    }
   } catch (e) {
-    toast(errMsg(e), 'error');
+    tree.error = errMsg(e);
+    toast(`서버에 연결하지 못했습니다: ${errMsg(e)}`, 'error');
   }
 }
+
+export const retryConnect = connect;
 
 // 번들을 가져온 뒤: 파일 트리를 다시 읽고, 열려 있는 글이 바뀌었으면 다시 연다
 async function reloadAfterBundle() {
   await refreshTree();
   if (!doc.path || doc.dirty) return;
   try {
-    const f = await call<{ content: string }>(`/api/file?path=${q(doc.path)}`);
+    const f = await call<{ content: string; mtime?: number }>(`/api/file?path=${q(doc.path)}`);
     if (f.content !== doc.content) await loadDoc(doc.path);
+    else baseMtime = f.mtime; // 내용이 같아도 번들이 파일을 다시 썼을 수 있으니 mtime 은 새로 기억한다
   } catch (e) {
-    if (e instanceof ApiError && e.status === 404) { // 번들의 삭제 반영으로 글이 사라졌다: 빈 화면으로 되돌린다
-      clearAutosave();
-      Object.assign(doc, { path: '', name: '제목 없음', content: '', dirty: false });
-      doc.key++;
-      try { localStorage.removeItem(LAST_KEY); } catch { /* 무시 */ }
-    }
+    if (e instanceof ApiError && e.status === 404) resetDoc(); // 번들의 삭제 반영으로 글이 사라졌다: 빈 화면으로 되돌린다
   }
 }
 
@@ -116,16 +140,59 @@ const AUTOSAVE_IDLE_MS = 700;
 const AUTOSAVE_MAX_MS = 10_000;
 let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 let autosaveMaxTimer: ReturnType<typeof setTimeout> | undefined;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+let snapTimer: ReturnType<typeof setTimeout> | undefined;
+
+// 문서 세대: 글을 열거나 닫거나 이름을 바꿀 때마다 오른다. 요청을 보낸 뒤 세대가 바뀌었으면 그 응답은 버린다.
+let docGen = 0;
+// 글을 열(읽을) 때 받은 디스크 mtime. 저장마다 baseMtime 으로 보내 외부 수정을 알아챈다.
+let baseMtime: number | undefined;
+let failures = 0; // 연속 저장 실패 횟수(백오프 계산)
+let holdAutosave = false; // 충돌에서 '취소'한 뒤: 사용자가 직접 저장하기 전까지 자동 저장을 멈춘다
+let busy = 0; // 이름 변경·삭제 진행 중: 자동 저장을 걸지 않는다
+let typedKey = -1; // 이 에디터(doc.key)에서 변경 통지를 받은 적이 있는지(숨김 때 에디터에서 직접 읽어도 되는지 판단)
+
+// 이력 스냅샷 요청: 이름 변경·삭제 전에 끝나길 기다리려고 추적한다
+const snaps = new Set<Promise<unknown>>();
+function trackSnap(p: Promise<unknown>) {
+  const t: Promise<unknown> = p.catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ }).finally(() => snaps.delete(t));
+  snaps.add(t);
+}
 
 function clearAutosave() {
   clearTimeout(autosaveTimer);
   clearTimeout(autosaveMaxTimer);
   autosaveMaxTimer = undefined;
 }
+function clearRetry() {
+  clearTimeout(retryTimer);
+  retryTimer = undefined;
+}
+function clearFailure() {
+  failures = 0;
+  holdAutosave = false;
+  clearRetry();
+  if (doc.saveFailed) Object.assign(doc, { saveFailed: false, saveError: '' });
+}
+
+// 열린 글을 닫고 빈 화면으로 되돌린다(삭제·사라짐·번들 반영)
+function resetDoc() {
+  clearAutosave();
+  clearFailure();
+  clearTimeout(snapTimer);
+  docGen++;
+  baseMtime = undefined;
+  Object.assign(doc, { path: '', name: '제목 없음', content: '', dirty: false });
+  doc.key++;
+  try { localStorage.removeItem(LAST_KEY); } catch { /* 무시 */ }
+}
 
 async function loadDoc(path: string) {
-  const f = await call<{ content: string }>(`/api/file?path=${q(path)}`);
+  const f = await call<{ content: string; mtime?: number }>(`/api/file?path=${q(path)}`);
   clearAutosave();
+  clearFailure();
+  docGen++;
+  baseMtime = f.mtime;
   doc.path = path;
   nav.dir = dirname(path);
   doc.name = basename(path);
@@ -134,17 +201,58 @@ async function loadDoc(path: string) {
   doc.edit = defaultEdit(); // 문서는 편집 모드로 연다(모바일은 읽기)
   doc.key++;
   const text = f.content;
-  setTimeout(() => { void snapshot(path, text).catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ }); }, 2500); // 급하지 않다: 바로 다음 클릭의 요청과 디스크를 다투지 않게 미룬다
+  const gen = docGen;
+  clearTimeout(snapTimer);
+  // 급하지 않다: 바로 다음 클릭의 요청과 디스크를 다투지 않게 미룬다. 그 사이 글이 바뀌었거나 이름이 바뀌었으면 하지 않는다
+  snapTimer = setTimeout(() => { if (gen === docGen) trackSnap(snapshot(path, text)); }, 2500);
   try { localStorage.setItem(LAST_KEY, path); } catch { /* 무시 */ }
 }
 
+// 에디터에서 지금의 마크다운을 바로 읽어 온다. 에디터의 변경 통지는 200ms 디바운스(maxWait 없음)라 연속 입력 중에는 doc.content 가 뒤처진다.
+// 이 에디터에서 한 번이라도 통지를 받은 뒤에만 믿는다(새 글을 막 열어 에디터가 아직 만들어지는 중이면 이전 글의 브리지가 남아 있을 수 있다).
+function syncFromEditor() {
+  if (typedKey !== doc.key || !doc.edit || !doc.path) return;
+  try {
+    const md = editorBridge.getMarkdown();
+    if (typeof md === 'string' && md !== doc.content) {
+      doc.content = md;
+      doc.dirty = true;
+      markChanged();
+    }
+  } catch { /* 에디터가 내려가는 중: doc.content 를 쓴다 */ }
+}
+
+// 저장을 못 하는 글에서 다른 글로 갈 때: 사라질 내용을 알리고, 복사해 둘 수 있게 한다. true 면 저장하지 않고 이동한다.
+async function offerLeave(): Promise<boolean> {
+  for (;;) {
+    const act = leaveAction(await askChoose(
+      `'${doc.name}' 을(를) 저장하지 못했습니다. 저장하지 않고 이동하면 저장하지 못한 변경이 사라집니다.`, LEAVE_BUTTONS));
+    if (act === 'leave') return true;
+    if (act === 'cancel') return false;
+    try {
+      syncFromEditor();
+      await writeClipboard(doc.content);
+      toast('내용을 클립보드에 복사했습니다');
+    } catch (e) {
+      toast(`내용을 복사하지 못했습니다: ${errMsg(e)}`, 'error');
+    }
+  }
+}
+
 // 변경이 있으면 저장/버리기/취소를 묻는다. true 면 진행해도 된다.
+// 저장이 실패하면 저장하지 않고 이동할지 묻는다(자동 저장이 켜져 있어도 저장이 계속 실패하는 글에 갇히지 않게).
 export async function guardDirty(): Promise<boolean> {
+  syncFromEditor();
   if (!doc.dirty || !doc.path) return true;
-  if (settings.autosave) return save();
-  const pick = await askChoose(`'${doc.name}' 에 저장하지 않은 변경이 있습니다.`, ['저장', '버리기', '취소']);
-  if (pick === 0) return save();
-  return pick === 1;
+  if (!settings.autosave) {
+    const pick = await askChoose(`'${doc.name}' 에 저장하지 않은 변경이 있습니다.`, ['저장', '버리기', '취소']);
+    if (pick === 1) return true;
+    if (pick !== 0) return false;
+  }
+  const r = await runSave();
+  if (r === 'ok') return true;
+  if (r === 'cancel') return false;
+  return offerLeave();
 }
 
 export async function openDoc(path: string) {
@@ -153,32 +261,161 @@ export async function openDoc(path: string) {
   try { await loadDoc(path); } catch (e) { toast(errMsg(e), 'error'); }
 }
 
-export async function save(): Promise<boolean> {
-  if (!doc.path) return false;
+type SaveResult = 'ok' | 'cancel' | 'fail';
+
+// 저장은 한 번에 하나씩 줄 세운다(앞의 응답이 mtime 을 갱신한 뒤에 다음 요청이 baseMtime 으로 나가야 스스로 충돌하지 않는다).
+// 아직 시작하지 않은 대기 요청이 있으면 그것에 합친다(시작할 때 최신 내용을 읽는다).
+let saveQueue: Promise<unknown> = Promise.resolve();
+let queued: Promise<SaveResult> | null = null;
+function runSave(opts: { keepalive?: boolean } = {}): Promise<SaveResult> {
+  if (!doc.path) return Promise.resolve('fail');
   clearAutosave();
-  doc.saving = true;
-  try {
-    const { path, content } = doc;
-    await call(`/api/file?path=${q(path)}`, jsonInit('PUT', { content }));
-    doc.dirty = false;
-    void snapshot(path, content).catch(() => { /* 무시 */ });
-    return true;
-  } catch (e) {
-    toast(`저장 실패: ${errMsg(e)}`, 'error');
-    return false;
-  } finally {
-    doc.saving = false;
+  clearRetry();
+  if (queued) return queued;
+  const p: Promise<SaveResult> = saveQueue.then(() => { queued = null; return doSave(opts); });
+  queued = p;
+  saveQueue = p.catch(() => { /* doSave 는 던지지 않는다 */ });
+  return p;
+}
+
+export async function save(): Promise<boolean> {
+  return (await runSave()) === 'ok';
+}
+
+function putFile(path: string, body: ReturnType<typeof saveBody>, keepalive: boolean) {
+  const init = jsonInit('PUT', body);
+  if (keepalive && fitsKeepalive(init.body as string)) init.keepalive = true; // 닫히는 페이지에서도 요청이 끝까지 가게(본문 64KB 제한을 넘으면 일반 요청)
+  return call<{ mtime?: number }>(`/api/file?path=${q(path)}`, init);
+}
+
+async function doSave(opts: { keepalive?: boolean }): Promise<SaveResult> {
+  if (!doc.path) return 'fail';
+  syncFromEditor();
+  const gen = docGen;
+  const path = doc.path;
+  let force = false;
+  for (;;) {
+    const content = doc.content;
+    doc.saving = true;
+    try {
+      const r = await putFile(path, saveBody(content, baseMtime, force), !!opts.keepalive && !force);
+      if (gen !== docGen) return 'ok'; // 응답을 받는 사이 글이 바뀌었다: 파일은 저장됐지만 지금 문서의 상태는 건드리지 않는다
+      baseMtime = r?.mtime;
+      if (doc.content === content) doc.dirty = false; // 저장하는 동안 더 입력했으면 그대로 변경 상태로 둔다
+      clearFailure();
+      trackSnap(snapshot(path, content));
+      return 'ok';
+    } catch (e) {
+      if (gen !== docGen) return 'cancel';
+      const failure = classifySaveError(e as ErrInfo);
+      if (failure.kind === 'other') {
+        noteFailure(e);
+        return 'fail';
+      }
+      const next = await resolveExternal(failure, path, content, gen);
+      if (next === 'force') { force = true; continue; }
+      return next === 'done' ? 'ok' : 'cancel';
+    } finally {
+      doc.saving = false;
+    }
   }
+}
+
+// 저장 실패: 첫 실패만 토스트로 알리고, 이후에는 상단바 표시로 계속 알린다. 자동 저장이 켜져 있으면 지수 백오프로 다시 시도한다.
+function noteFailure(e: unknown) {
+  const first = !doc.saveFailed;
+  failures++;
+  Object.assign(doc, { saveFailed: true, saveError: errMsg(e) });
+  if (first) toast(`저장하지 못했습니다: ${errMsg(e)}`, 'error');
+  if (settings.autosave) {
+    clearRetry();
+    retryTimer = setTimeout(() => { retryTimer = undefined; void save(); }, backoffMs(failures));
+  }
+}
+
+// 사용자가 충돌·사라짐 선택에서 '취소'하거나 처리에 실패한 뒤: 변경은 그대로 두고 표시만 남긴다. 직접 저장할 때까지 자동 저장은 멈춘다.
+function holdFailure(msg: string) {
+  holdAutosave = true;
+  clearAutosave();
+  clearRetry();
+  Object.assign(doc, { saveFailed: true, saveError: msg });
+}
+
+// 409: 디스크의 글이 우리가 읽은 뒤 바뀌었거나(conflict) 사라졌을 때(gone)의 선택. 'force' 면 같은 내용을 덮어써 다시 저장한다.
+async function resolveExternal(
+  failure: Extract<ReturnType<typeof classifySaveError>, { kind: 'conflict' | 'gone' }>,
+  path: string,
+  content: string,
+  gen: number,
+): Promise<'force' | 'done' | 'cancel'> {
+  clearAutosave();
+  const name = doc.name;
+  if (failure.kind === 'conflict') {
+    const act = conflictAction(await askChoose(`'${name}' 이(가) 다른 곳에서 수정되었습니다. 어떻게 할까요?`, CONFLICT_BUTTONS));
+    if (gen !== docGen) return 'cancel';
+    if (act === 'cancel') { holdFailure('다른 곳에서 수정되어 저장하지 못했습니다'); return 'cancel'; }
+    if (act === 'overwrite') {
+      try { // 덮어쓰기 전에 디스크 내용을 이력에 '외부 수정본'으로 남긴다
+        const disk = await call<{ content: string }>(`/api/file?path=${q(path)}`);
+        if (disk.content !== content) await saveNamedVersion(path, disk.content, versionLabel('external'));
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 404)) { // 그 사이 지워졌으면 남길 것도 없다
+          toast(`디스크 내용을 이력에 남기지 못해 덮어쓰지 않았습니다: ${errMsg(e)}`, 'error');
+          holdFailure('다른 곳에서 수정되어 저장하지 못했습니다');
+          return 'cancel';
+        }
+      }
+      return gen === docGen ? 'force' : 'cancel';
+    }
+    try { // 디스크 내용을 불러오기 전에 내 내용을 이력에 남긴다
+      await saveNamedVersion(path, content, versionLabel('mine'));
+      await loadDoc(path);
+    } catch (e) {
+      toast(`디스크 내용을 불러오지 못했습니다: ${errMsg(e)}`, 'error');
+      holdFailure('다른 곳에서 수정되어 저장하지 못했습니다');
+      return 'cancel';
+    }
+    toast('디스크의 내용을 불러왔습니다. 내 내용은 이력에 남겼습니다');
+    return 'done';
+  }
+  const act = goneAction(await askChoose(`'${name}' 이(가) 다른 곳에서 지워지거나 옮겨졌습니다. 어떻게 할까요?`, GONE_BUTTONS));
+  if (gen !== docGen) return 'cancel';
+  if (act === 'cancel') { holdFailure('다른 곳에서 지워져 저장하지 못했습니다'); return 'cancel'; }
+  if (act === 'recreate') return 'force';
+  try {
+    await saveNamedVersion(path, content, versionLabel('gone'));
+  } catch (e) {
+    toast(`내용을 이력에 남기지 못해 닫지 않았습니다: ${errMsg(e)}`, 'error');
+    holdFailure('다른 곳에서 지워져 저장하지 못했습니다');
+    return 'cancel';
+  }
+  resetDoc();
+  void refreshTree().catch(() => { /* 무시 */ });
+  toast('글을 닫았습니다. 내용은 이력에 남겼습니다');
+  return 'done';
+}
+
+function scheduleAutosave() {
+  if (!settings.autosave || !doc.path || holdAutosave || busy || failures > 0) return; // 실패 중에는 백오프 재시도가 맡는다
+  autosaveTimer = setTimeout(() => void save(), AUTOSAVE_IDLE_MS);
+  autosaveMaxTimer ??= setTimeout(() => void save(), AUTOSAVE_MAX_MS);
 }
 
 export function onEditorChange(md: string) {
   doc.content = md;
+  typedKey = doc.key;
   markChanged(); // 백업 '마지막 변경' 추적
   doc.dirty = true;
   clearTimeout(autosaveTimer);
-  if (!settings.autosave || !doc.path) return;
-  autosaveTimer = setTimeout(() => void save(), AUTOSAVE_IDLE_MS);
-  autosaveMaxTimer ??= setTimeout(() => void save(), AUTOSAVE_MAX_MS);
+  scheduleAutosave();
+}
+
+// 탭을 숨기거나 페이지를 닫을 때: 디바운스 대기 중인 입력까지 에디터에서 바로 읽어 keepalive 요청으로 저장한다.
+// 자동 저장을 끈 사용자의 의사를 존중해 켜져 있을 때만 한다.
+export function flushOnHide() {
+  if (!settings.autosave || !doc.path || holdAutosave || busy) return;
+  syncFromEditor();
+  if (doc.dirty) void runSave({ keepalive: true });
 }
 
 // 이력의 버전으로 되돌린다. 되돌리기 직전의 현재 내용도 이력에 남긴다.
@@ -302,50 +539,274 @@ export async function moveNode(node: TreeNode, destDir: string) {
   expandFolder(destDir);
 }
 
-// 이름 바꾸기·옮기기의 공통 처리: 파일을 옮기고, 이력·글감 연결·묘비·열린 문서를 새 경로로 따라가게 한다
-async function relocate(node: TreeNode, to: string) {
+/** 화면 트리(필터·정렬을 거친 사본)가 아니라 실제 트리의 노드. 폴더 아래의 묘비·이력 정리에 children 이 온전해야 한다 */
+function realNode(node: TreeNode): TreeNode {
+  const find = (list: TreeNode[]): TreeNode | undefined => {
+    for (const n of list) {
+      if (n.path === node.path) return n;
+      const hit = n.type === 'dir' && n.children ? find(n.children) : undefined;
+      if (hit) return hit;
+    }
+  };
+  return find(tree.nodes) ?? node;
+}
+
+// 한 항목 옮기기(던진다): 파일을 옮기고, 이력·글감 연결·묘비·정렬·접힘을 새 경로로 따라가게 한다. 열린 글이 영향받았으면 다시 열 새 경로를, 아니면 ''.
+// 구조 변경 구간(beginStructural/endStructural)·저장하지 않은 변경 확인·트리 갱신은 호출부가 맡는다(여럿을 옮길 때 한 번만 하려고)
+async function relocateOne(node: TreeNode, to: string): Promise<string> {
   const isFile = node.type === 'file';
-  if (affects(node.path) && !(await guardDirty())) return;
-  const moved = docPaths(node).filter((p) => /\.md$/i.test(p));
+  const moved = docPaths(realNode(node)).filter((p) => /\.md$/i.test(p));
+  await flushComments(); // 대기 중인 코멘트 저장이 옮기기 전 경로에 파일을 다시 만들지 않도록
+  await call('/api/rename', jsonInit('POST', { from: node.path, to }));
+  // 옛 이름은 '지운 글'로 기록하고(다른 기기에서 되살아나지 않게), 새 이름의 묘비가 있으면 지운다
+  await recordDocsGone(moved).catch(() => { /* 무시 */ });
+  for (const p of moved) await clearDocGone(to + p.slice(node.path.length)).catch(() => { /* 무시 */ });
+  await moveHistory(node.path, to).catch(() => { /* 무시 */ });
+  await (isFile ? reattachDoc(node.path, to) : reattachPrefix(node.path, to)).catch(() => { /* 무시 */ }); // 글감의 붙은 글 경로 갱신
+  followRename(node.path, to); // 직접 정렬 순서·접힘 상태도 새 경로를 따라간다
+  const reopen = affects(node.path) ? to + doc.path.slice(node.path.length) : '';
+  if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = to + nav.dir.slice(node.path.length);
+  return reopen;
+}
+
+// 이름 바꾸기·옮기기(하나)의 공통 처리
+async function relocate(node: TreeNode, to: string) {
+  const mine = affects(node.path);
+  if (mine && !(await guardDirty())) return;
+  if (mine) await beginStructural();
   try {
-    await flushComments(); // 대기 중인 코멘트 저장이 옮기기 전 경로에 파일을 다시 만들지 않도록
-    await call('/api/rename', jsonInit('POST', { from: node.path, to }));
-    // 옛 이름은 '지운 글'로 기록하고(다른 기기에서 되살아나지 않게), 새 이름의 묘비가 있으면 지운다
-    await recordDocsGone(moved).catch(() => { /* 무시 */ });
-    for (const p of moved) await clearDocGone(to + p.slice(node.path.length)).catch(() => { /* 무시 */ });
-    await moveHistory(node.path, to).catch(() => { /* 무시 */ });
-    await (isFile ? reattachDoc(node.path, to) : reattachPrefix(node.path, to)).catch(() => { /* 무시 */ }); // 글감의 붙은 글 경로 갱신
-    followRename(node.path, to); // 직접 정렬 순서·접힘 상태도 새 경로를 따라간다
-    const reopen = affects(node.path) ? to + doc.path.slice(node.path.length) : '';
-    if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = to + nav.dir.slice(node.path.length);
+    const reopen = await relocateOne(node, to);
     await refreshTree();
     if (reopen) { requestEditorFocus(); await loadDoc(reopen); } // 링크가 갱신된 파일을 다시 읽는다(이름 변경 직후 포커스)
   } catch (e) {
     toast(errMsg(e), 'error');
+  } finally {
+    if (mine) endStructural();
   }
 }
 
-export async function removeNode(node: TreeNode) {
-  const what = node.type === 'dir' ? `폴더 '${node.name}' 와 그 안의 모든 문서` : `문서 '${node.name}'`;
-  if (!(await askConfirm(`${what}를 삭제할까요? 되돌릴 수 없습니다.`, '삭제'))) return;
-  const gone = docPaths(node).filter((p) => /\.md$/i.test(p));
+/**
+ * 여러 항목을 destDir 로 옮긴다(트리 ctl.moveMany). 이미 그 폴더에 있거나 자기 하위로 가는 항목은 건너뛴다.
+ * 열린 글이 들어 있으면 저장하지 않은 변경을 먼저 확인하고(취소하면 0·0), 구조 변경 구간은 전체에 한 번만 건다. 트리는 마지막에 한 번 갱신한다.
+ * 항목마다 실패해도 나머지는 계속한다 — 이름이 겹치는 항목은 서버가 거절해 실패로 센다(단일 이동과 같은 규칙)
+ */
+export async function moveMany(nodes: TreeNode[], destDir: string): Promise<BulkResult> {
+  const list = nodes.map(realNode).filter((n) => {
+    const to = joinPath(destDir, n.name);
+    return !(to === n.path || destDir === n.path || destDir.startsWith(n.path + '/'));
+  });
+  if (!list.length) return { ok: 0, failed: 0 };
+  const mine = list.some((n) => affects(n.path));
+  if (mine && !(await guardDirty())) return { ok: 0, failed: 0 };
+  if (mine) await beginStructural();
+  let ok = 0, failed = 0;
+  let error: string | undefined;
   try {
-    await flushComments();
-    await call(`/api/file?path=${q(node.path)}`, { method: 'DELETE' });
-    await recordDocsGone(gone).catch(() => { /* 무시 */ }); // 다른 기기의 번들에서 되살아나지 않도록 묘비를 남긴다
-    await removeHistory(node.path).catch(() => { /* 무시 */ });
-    await (node.type === 'dir' ? reattachPrefix(node.path) : reattachDoc(node.path)).catch(() => { /* 무시 */ }); // 글감 연결 끊기
-    if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = dirname(node.path);
-    if (affects(node.path)) {
-      clearAutosave();
-      Object.assign(doc, { path: '', name: '제목 없음', content: '', dirty: false });
-      doc.key++;
-      try { localStorage.removeItem(LAST_KEY); } catch { /* 무시 */ }
+    for (const node of list) {
+      try {
+        const reopen = await relocateOne(node, joinPath(destDir, node.name));
+        ok++;
+        if (reopen) await loadDoc(reopen).catch((e) => toast(errMsg(e), 'error')); // 링크가 갱신된 파일을 다시 읽는다
+      } catch (e) {
+        failed++;
+        error ??= errMsg(e);
+      }
     }
-    await refreshTree();
-  } catch (e) {
-    toast(errMsg(e), 'error');
+    expandFolder(destDir);
+    await refreshTree().catch((e) => toast(errMsg(e), 'error'));
+  } finally {
+    if (mine) endStructural();
   }
+  return { ok, failed, error };
+}
+
+// 열린 글의 이름 변경·삭제 전: 자동 저장·재시도·지연 스냅샷을 멈추고, 진행 중인 저장과 이력 기록이 끝나길 기다린다.
+// 그래야 늦게 끝난 저장이 옛 경로의 파일(과 이력)을 다시 만들지 않는다. 세대를 올려 그 뒤에 도착하는 응답은 버린다.
+async function beginStructural() {
+  busy++;
+  clearAutosave();
+  clearRetry();
+  clearTimeout(snapTimer);
+  await saveQueue;
+  await Promise.allSettled([...snaps]);
+  docGen++;
+}
+function endStructural() {
+  busy = Math.max(0, busy - 1);
+  if (!busy && doc.path && doc.dirty) scheduleAutosave(); // 그 사이 입력한 내용은 다시 저장 대상으로
+}
+
+/**
+ * 글·폴더를 휴지통으로 보낸다 — 확인 없이(복구할 수 있다). 단일 삭제(removeNode)와 일괄 삭제(트리 ctl.removeMany)가 모두 이 함수 하나를 거친다.
+ * 서버가 파일·assets·코멘트·이력·스레드를 `.works-trash` 로 함께 옮긴다. 클라이언트는 묘비(다른 기기의 번들 병합이 되살리지 않게)를 남기고,
+ * 글감 핀은 떼지 않는다(복구하면 그대로 살아난다. 완전 삭제 때 뗀다). 선택 폴더·열린 글(닫는다)을 정리하고 트리는 마지막에 한 번 갱신한다.
+ * 구조 변경 구간(beginStructural/endStructural)은 전체에 한 번만 건다. 항목마다 실패해도 나머지는 계속하고, 성공·실패 개수와 첫 실패 이유를 돌려준다.
+ * 성공하면 '휴지통으로 옮겼습니다 + 되돌리기' 토스트를 띄운다(실패 안내는 호출부).
+ */
+export async function deletePaths(nodes: TreeNode[]): Promise<BulkResult> {
+  const list = nodes.map(realNode);
+  if (!list.length) return { ok: 0, failed: 0 };
+  const mine = list.some((n) => affects(n.path));
+  if (mine) await beginStructural();
+  let ok = 0, failed = 0;
+  let error: string | undefined;
+  const sent: { id: string; node: TreeNode; docs: number; reopen: string }[] = [];
+  try {
+    try {
+      await flushComments();
+    } catch (e) {
+      return { ok: 0, failed: list.length, error: errMsg(e) };
+    }
+    for (const node of list) {
+      const hit = affects(node.path); // 열린 글이 이 항목 안에 있는가(지우면 닫는다)
+      const gone = docPaths(node).filter((p) => /\.md$/i.test(p));
+      const reopen = hit ? doc.path : '';
+      try {
+        const r = await call<{ ok: boolean; trashId: string }>(`/api/file?path=${q(node.path)}`, { method: 'DELETE' }); // 휴지통으로 옮긴다(이력·코멘트·assets 는 서버가 함께 옮긴다)
+        await recordDocsGone(gone).catch(() => { /* 무시 */ }); // 다른 기기의 번들에서 되살아나지 않도록 묘비를 남긴다(번들이 더 늦게 수정됐으면 되살린다. 복구하면 걷는다)
+        if (nav.dir === node.path || nav.dir.startsWith(node.path + '/')) nav.dir = dirname(node.path);
+        if (hit) resetDoc();
+        if (r.trashId) sent.push({ id: r.trashId, node, docs: gone.length, reopen });
+        ok++;
+      } catch (e) {
+        failed++;
+        error ??= errMsg(e);
+      }
+    }
+    await refreshTree().catch((e) => toast(errMsg(e), 'error'));
+  } finally {
+    if (mine) endStructural();
+  }
+  if (sent.length) {
+    void refreshTrashCount();
+    const one = sent.length === 1 ? sent[0] : undefined;
+    const text = !one ? `${sent.length}개를 휴지통으로 옮겼습니다`
+      : one.node.type === 'dir' ? (one.docs ? `휴지통으로 옮겼습니다: 폴더 ${one.node.name} (글 ${one.docs}개)` : `휴지통으로 옮겼습니다: 빈 폴더 ${one.node.name}`)
+      : `휴지통으로 옮겼습니다: ${stripExt(one.node.name)}`;
+    const known = new Map(sent.map((s) => [s.id, { path: s.node.path, type: s.node.type }]));
+    const reopen = sent.find((s) => s.reopen);
+    toast(text, 'info', { action: { label: '되돌리기', run: () => void undoTrash([...known.keys()], known, reopen && { from: reopen.node.path, doc: reopen.reopen }) } });
+  }
+  return { ok, failed, error };
+}
+
+export async function removeNode(node: TreeNode) {
+  const r = await deletePaths([node]); // 복구할 수 있으므로 확인은 묻지 않는다
+  if (r.failed && r.error) toast(r.error, 'error');
+}
+
+// ---- 휴지통 ----
+/** 휴지통에 든 항목 수(사이드바의 '휴지통 (N)' 단추) */
+export const trash = $state({ count: 0 });
+let trashKnown = new Map<string, { path: string; type: 'file' | 'dir' }>(); // 마지막으로 읽은 항목(복구·완전 삭제 뒤처리에 원래 경로가 필요하다)
+
+export async function refreshTrashCount() {
+  try { trash.count = (await call<{ items: TrashItem[] }>('/api/trash')).items.length; } catch { /* 다음에 다시 읽는다 */ }
+}
+
+const findNode = (path: string, list: TreeNode[] = tree.nodes): TreeNode | undefined => {
+  for (const n of list) {
+    if (n.path === path) return n;
+    const hit = n.type === 'dir' && n.children ? findNode(path, n.children) : undefined;
+    if (hit) return hit;
+  }
+};
+
+/**
+ * 복구: 서버가 원래 자리에 되돌린다(같은 이름이 있으면 '이름 (2)'). 되돌린 뒤 트리를 다시 읽고,
+ * 경로가 바뀌었으면 글감 핀을 새 경로로 옮기고(원래 경로에 다른 글이 없을 때만), 복구된 글의 삭제 묘비를 걷는다.
+ * 코멘트·이력·스레드는 서버가 경로에 맞춰 옮기므로 새 경로로 그대로 읽힌다.
+ */
+async function restoreIds(ids: string[], known: Map<string, { path: string; type: 'file' | 'dir' }> = trashKnown): Promise<{ ok: number; failed: number; error?: string; paths: string[]; from: string[] }> {
+  let ok = 0, failed = 0;
+  let error: string | undefined;
+  const paths: string[] = [];
+  const from: string[] = [];
+  const back: { to: string; type: 'file' | 'dir'; was?: string }[] = [];
+  for (const id of ids) {
+    try {
+      const r = await call<{ ok: boolean; path: string; type: 'file' | 'dir' }>('/api/trash/restore', jsonInit('POST', { id }));
+      paths.push(r.path);
+      from.push(known.get(id)?.path ?? r.path);
+      back.push({ to: r.path, type: r.type, was: known.get(id)?.path });
+      ok++;
+    } catch (e) {
+      failed++;
+      error ??= errMsg(e);
+    }
+  }
+  if (ok) {
+    await refreshTree().catch((e) => toast(errMsg(e), 'error'));
+    for (const b of back) {
+      const node = findNode(b.to);
+      for (const p of node ? docPaths(node).filter((x) => /\.md$/i.test(x)) : [b.to]) await clearDocGone(p).catch(() => { /* 무시 */ });
+      if (b.was && b.was !== b.to && !findNode(b.was)) await (b.type === 'dir' ? reattachPrefix(b.was, b.to) : reattachDoc(b.was, b.to)).catch(() => { /* 무시 */ });
+      for (const [id, k] of known) if (k.path === b.was) trashKnown.delete(id);
+    }
+    markChanged();
+  }
+  void refreshTrashCount();
+  return { ok, failed, ...(error ? { error } : {}), paths, from };
+}
+
+/** 휴지통으로 보낸 것을 되돌린다(토스트의 '되돌리기'). 열려 있던 글이 닫혔고 지금 열린 글이 없으면 다시 연다 */
+async function undoTrash(ids: string[], known: Map<string, { path: string; type: 'file' | 'dir' }>, reopen?: { from: string; doc: string }) {
+  const r = await restoreIds(ids, known);
+  if (!r.ok) { toast(`되돌리지 못했습니다: ${r.error ?? '알 수 없는 오류'}`, 'error'); return; }
+  const renamed = r.paths.some((p, i) => p !== r.from[i]);
+  toast(r.failed ? `${r.ok}개를 되돌렸고 ${r.failed}개는 되돌리지 못했습니다: ${r.error ?? ''}` : `되돌렸습니다${renamed ? ' (같은 이름이 있어 이름이 바뀌었습니다)' : ''}`, r.failed ? 'error' : 'info');
+  if (reopen && !doc.path) {
+    const i = r.from.indexOf(reopen.from);
+    if (i >= 0) {
+      const target = r.paths[i] + reopen.doc.slice(reopen.from.length);
+      if (findNode(target)) await openDoc(target).catch(() => { /* 무시 */ });
+    }
+  }
+}
+
+/** 완전 삭제 뒤처리: 그 경로에 다른 글이 없으면 글감 핀을 뗀다(지운 글의 이력·스레드·코멘트는 서버가 함께 지웠다) */
+async function afterPurge(ids: string[]) {
+  for (const id of ids) {
+    const k = trashKnown.get(id);
+    if (!k) continue;
+    trashKnown.delete(id);
+    if (findNode(k.path)) continue; // 같은 경로에 새로 만든 글이 있으면 그 글의 핀이다
+    await (k.type === 'dir' ? reattachPrefix(k.path) : reattachDoc(k.path)).catch(() => { /* 무시 */ });
+  }
+}
+
+/** 사이드바 휴지통 보기에 연결하는 구현(30일 자동 비움은 서버가 하므로 목록만 다시 읽는다) */
+export const trashCtl: TrashCtl = {
+  async list() {
+    const { items } = await call<{ items: TrashItem[] }>('/api/trash');
+    trashKnown = new Map(items.map((i) => [i.id, { path: i.path, type: i.type }]));
+    trash.count = items.length;
+    return items;
+  },
+  restore: async (ids) => { const { from: _f, ...r } = await restoreIds(ids); void _f; return r; },
+  async purge(ids) {
+    const failed: string[] = [];
+    for (const id of ids) {
+      try { await call(`/api/trash?id=${q(id)}`, { method: 'DELETE' }); } catch (e) { failed.push(errMsg(e)); }
+    }
+    await afterPurge(ids);
+    void refreshTrashCount();
+    if (failed.length) throw new Error(failed[0]);
+  },
+  async empty() {
+    await call('/api/trash', { method: 'DELETE' });
+    await afterPurge([...trashKnown.keys()]);
+    trash.count = 0;
+  },
+};
+
+/**
+ * 선택한 글·폴더를 파일 하나로 내려받는다(트리 ctl.downloadMany). format: 'zip'(기본) · 'json' · 'md'.
+ * nodes 는 트리가 정렬한 노드를 그대로 받는다(연결된 MD 의 순서가 화면 순서가 되도록)
+ */
+export async function downloadMany(nodes: TreeNode[], format = 'zip') {
+  const kind: FolderExportKind = format === 'json' || format === 'md' ? format : 'zip';
+  await exportSelection(kind, nodes);
 }
 
 // ---- 이미지 ----

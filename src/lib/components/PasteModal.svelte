@@ -1,6 +1,8 @@
 <script lang="ts">
   import { backdropFx, modalFx } from '../motion';
   import { guessTitle } from '../utils';
+  import { modal, isTopModal, confirmDiscard } from '../modal';
+  import ModalClose from './ModalClose.svelte';
 
   interface Props {
     open: boolean;
@@ -13,6 +15,8 @@
   let name = $state('');
   let nameTouched = false;
   let textEl = $state<HTMLTextAreaElement>();
+  let overlayEl = $state<HTMLElement>();
+  let asking = false;
 
   // 열 때마다 초기화하고 입력란에 포커스
   $effect(() => {
@@ -37,20 +41,29 @@
     await onCreate(n, t);
   }
 
+  // Esc·백드롭·X·취소: 붙여넣은 내용이 있으면 버릴지 먼저 묻는다
+  async function requestClose() {
+    if (asking) return;
+    if (text.trim()) {
+      asking = true;
+      const ok = await confirmDiscard().finally(() => { asking = false; });
+      if (!ok) return;
+    }
+    onClose();
+  }
+
   function onKey(e: KeyboardEvent) {
-    if (!open) return;
-    if (e.key === 'Escape') { e.preventDefault(); onClose(); }
-    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void create(); }
+    if (!open || !isTopModal(overlayEl)) return; // 위에 뜬 확인창이 키를 받는다
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void create(); }
   }
 </script>
 
 <svelte:window onkeydown={onKey} />
 
 {#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+  <div class="overlay" transition:backdropFx bind:this={overlayEl} use:modal={{ onClose: requestClose, focus: 'textarea' }}>
     <div class="dialog wide" role="dialog" transition:modalFx aria-modal="true" aria-label="붙여넣어 새 문서 만들기">
-      <h2>붙여넣어 새 문서 만들기</h2>
+      <div class="dlg-head"><h2>붙여넣어 새 문서 만들기</h2><ModalClose onclick={requestClose} /></div>
       <textarea
         bind:this={textEl}
         bind:value={text}
@@ -64,7 +77,7 @@
       </label>
       <div class="actions">
         <span class="hint">Ctrl+Enter 로 만들기 (문서 이름에서는 Enter)</span>
-        <button onclick={onClose}>취소</button>
+        <button onclick={requestClose}>취소</button>
         <button class="primary" disabled={!text.trim()} onclick={create}>만들기</button>
       </div>
     </div>

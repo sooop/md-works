@@ -45,10 +45,17 @@ function loadSettings() {
 
 export const settings = $state(loadSettings());
 
+let settingsWarned = false;
 export function persistSettings() {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  } catch { /* 저장소를 못 쓰는 환경 */ }
+  } catch {
+    // 저장소를 못 쓰는 환경: 세션당 한 번만 알린다(설정을 바꿀 때마다 띄우면 거슬린다)
+    if (!settingsWarned) {
+      settingsWarned = true;
+      toast('설정을 저장하지 못했습니다(저장 공간 부족 또는 비공개 모드)', 'error');
+    }
+  }
 }
 
 export function applyTheme() {
@@ -65,6 +72,8 @@ export const doc = $state({
   content: '',
   dirty: false,
   saving: false,
+  saveFailed: false, // 저장하지 못한 상태(상단바 '저장하지 못함' 표시, 성공하면 해제)
+  saveError: '', // 마지막 저장 실패 이유
   edit: true, // 편집 모드 여부. 기본은 편집이고, 문서를 열 때마다 편집으로 초기화한다(읽기 전환은 토글/Ctrl+Alt+E)
 });
 
@@ -124,15 +133,32 @@ export async function withStatus<T>(text: string, fn: (set: (t: string) => void)
 }
 
 // ---- 토스트 ----
-export const toasts = $state<{ id: number; text: string; kind: 'info' | 'error' }[]>([]);
+export interface ToastAction { label: string; run: () => void }
+export const toasts = $state<{ id: number; text: string; kind: 'info' | 'error'; action?: ToastAction }[]>([]);
 let toastId = 0;
-export function toast(text: string, kind: 'info' | 'error' = 'info') {
+const toastTimers = new Map<number, ReturnType<typeof setTimeout>>();
+/** action 이 있으면 누를 시간을 주려고 8초 동안 보인다 */
+export function toast(text: string, kind: 'info' | 'error' = 'info', opts: { action?: ToastAction } = {}) {
   const id = ++toastId;
-  toasts.push({ id, text, kind });
-  setTimeout(() => {
-    const i = toasts.findIndex((t) => t.id === id);
-    if (i >= 0) toasts.splice(i, 1);
-  }, kind === 'error' ? 6000 : 3000);
+  toasts.push({ id, text, kind, ...(opts.action ? { action: opts.action } : {}) });
+  releaseToast(id, opts.action ? 8000 : kind === 'error' ? 6000 : 3000);
+}
+/** 토스트를 바로 닫는다(눌러서 닫기) */
+export function dismissToast(id: number) {
+  clearTimeout(toastTimers.get(id));
+  toastTimers.delete(id);
+  const i = toasts.findIndex((t) => t.id === id);
+  if (i >= 0) toasts.splice(i, 1);
+}
+/** 마우스를 올려 읽는 동안에는 사라지지 않게 타이머를 멈춘다 */
+export function holdToast(id: number) {
+  clearTimeout(toastTimers.get(id));
+  toastTimers.delete(id);
+}
+/** ms 뒤에 닫히도록 타이머를 (다시) 건다 */
+export function releaseToast(id: number, ms = 2000) {
+  clearTimeout(toastTimers.get(id));
+  toastTimers.set(id, setTimeout(() => dismissToast(id), ms));
 }
 
 // ---- 대화상자 (Promise 기반) ----
@@ -143,10 +169,12 @@ export const dialog = $state<{
   input: boolean;
   value: string;
   buttons: string[];
+  /** 되돌릴 수 없는 동작의 확인: 확정 단추를 위험색으로 칠하고 기본 포커스를 취소에 둔다 */
+  danger: boolean;
   resolve: (r: { button: number; value: string }) => void;
-}>({ open: false, title: '', message: '', input: false, value: '', buttons: [], resolve: () => {} });
+}>({ open: false, title: '', message: '', input: false, value: '', buttons: [], danger: false, resolve: () => {} });
 
-function ask(opts: { title?: string; message?: string; input?: boolean; value?: string; buttons: string[] }) {
+function ask(opts: { title?: string; message?: string; input?: boolean; value?: string; buttons: string[]; danger?: boolean }) {
   return new Promise<{ button: number; value: string }>((resolve) => {
     Object.assign(dialog, {
       open: true,
@@ -155,6 +183,7 @@ function ask(opts: { title?: string; message?: string; input?: boolean; value?: 
       input: opts.input ?? false,
       value: opts.value ?? '',
       buttons: opts.buttons,
+      danger: opts.danger ?? false,
       resolve: (r: { button: number; value: string }) => {
         dialog.open = false;
         resolve(r);
@@ -168,8 +197,9 @@ export async function askPrompt(title: string, value = ''): Promise<string | nul
   return r.button === 1 ? r.value.trim() : null;
 }
 
-export async function askConfirm(message: string, okLabel = '확인'): Promise<boolean> {
-  return (await ask({ message, buttons: ['취소', okLabel] })).button === 1;
+/** danger 를 생략하면 확정 단추가 '삭제'일 때 위험 동작으로 본다 */
+export async function askConfirm(message: string, okLabel = '확인', danger = okLabel === '삭제'): Promise<boolean> {
+  return (await ask({ message, buttons: ['취소', okLabel], danger })).button === 1;
 }
 
 // 버튼 라벨 목록 중 누른 인덱스, 닫으면 -1

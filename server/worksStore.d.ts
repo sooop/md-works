@@ -14,5 +14,11 @@ export interface WorksFs {
   movePart(coll: string, from: string, to: string): Promise<void>;
   moveDoc(fromRel: string, toRel: string, isFile: boolean): Promise<void>;
   deleteDoc(relPath: string, isFile: boolean): Promise<void>;
+  partPath(coll: string, part: string): Promise<string>;
+  importPart(coll: string, srcDir: string, part: string): Promise<void>;
 }
 export function createWorksFs(safe: (rel: string, opts?: { mustExist?: boolean }) => Promise<string>): WorksFs;
+export function withFileLock<T>(file: string, fn: () => Promise<T>): Promise<T>;
+export function writeFileAtomicUnlocked(file: string, data: string | Uint8Array, encoding?: BufferEncoding): Promise<void>;
+export function writeFileAtomic(file: string, data: string | Uint8Array, encoding?: BufferEncoding): Promise<void>;
+export function writeFileExclusive(file: string, data: string | Uint8Array): Promise<void>;

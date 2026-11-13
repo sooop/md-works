@@ -3,7 +3,11 @@ import { untrack } from 'svelte';
 // 앱 공용 툴팁: 네이티브 title 대신 `use:tip={...}` 로 붙인다. 표시는 TooltipHost 하나가 맡는다.
 // 터치 입력에는 띄우지 않고(길게 눌러도 가려질 뿐), 키보드 포커스는 :focus-visible 일 때만 보여 준다.
 
-export type TipContent = string | { title: string; lines?: string[]; kbd?: string } | null | undefined;
+/**
+ * delay: 표시까지의 지연(ms, 기본 380). warm: false 이면 직전 툴팁을 닫은 직후에도 지연 없이 띄우지 않는다
+ * (행이 촘촘한 목록에서 마우스가 지나가는 행마다 연달아 뜨는 것을 막는다). quiet: true 를 돌려주는 동안에는 띄우지 않는다
+ */
+export type TipContent = string | { title: string; lines?: string[]; kbd?: string; delay?: number; warm?: boolean; quiet?: () => boolean } | null | undefined;
 type TipBody = { title: string; lines: string[]; kbd: string };
 
 export const tipState = $state<{ body: TipBody | null; rect: { x: number; y: number; w: number; h: number } | null }>({ body: null, rect: null });
@@ -53,18 +57,26 @@ export function tip(node: HTMLElement, initial: TipContent) {
   function schedule() {
     clearTimeout(timer);
     if (!normalize(content) || dragging) return;
-    if (Date.now() - lastHide < WARM_MS) show();
-    else timer = setTimeout(show, SHOW_DELAY);
+    const o = typeof content === 'object' && content ? content : null;
+    if (o?.quiet?.()) return;
+    if (o?.warm !== false && Date.now() - lastHide < WARM_MS) show();
+    else timer = setTimeout(show, o?.delay ?? SHOW_DELAY);
   }
-  const enter = (e: PointerEvent) => { if (e.pointerType !== 'touch') schedule(); };
+  // Ctrl/Shift 를 누른 채 들어오면 여러 개를 고르는 중이므로 띄우지 않는다
+  const enter = (e: PointerEvent) => { if (e.pointerType !== 'touch' && !e.ctrlKey && !e.shiftKey && !e.metaKey) schedule(); };
   const focus = () => { if (node.matches(':focus-visible')) schedule(); };
   const key = (e: KeyboardEvent) => { if (e.key === 'Escape') hideTip(); };
+  // 포커스를 가진 요소가 지워질 때의 blur 는 Svelte 가 DOM 을 정리하는 도중에 동기로 불려 상태를 바꿀 수 없다(state_unsafe_mutation).
+  // 그때는 다음 틱에, 그사이 다른 요소의 툴팁이 뜨지 않았을 때만 치운다
+  const blur = () => {
+    try { hideTip(); } catch { queueMicrotask(() => { if (!shownFor) { tipState.body = null; tipState.rect = null; } }); }
+  };
 
   node.addEventListener('pointerenter', enter);
   node.addEventListener('pointerleave', hideTip);
   node.addEventListener('pointerdown', hideTip);
   node.addEventListener('focus', focus);
-  node.addEventListener('blur', hideTip);
+  node.addEventListener('blur', blur);
   node.addEventListener('keydown', key);
   return {
     // 내용이 바뀌었을 때: 이 요소의 툴팁이 떠 있는 경우에만 갱신한다(다른 요소의 툴팁을 가로채지 않게, 반응 추적 없이)
@@ -74,7 +86,7 @@ export function tip(node: HTMLElement, initial: TipContent) {
       node.removeEventListener('pointerleave', hideTip);
       node.removeEventListener('pointerdown', hideTip);
       node.removeEventListener('focus', focus);
-      node.removeEventListener('blur', hideTip);
+      node.removeEventListener('blur', blur);
       node.removeEventListener('keydown', key);
       if (shownFor === node) hideTip();
     },

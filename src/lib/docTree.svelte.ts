@@ -1,6 +1,6 @@
 // 글 목록 트리의 화면 상태: 정렬 기준, 접힌 폴더, 폴더별 직접 순서. 이 브라우저에만 저장한다(번들에는 싣지 않는다).
 // 서버 모드와 단일 모드는 같은 브라우저에서 번갈아 쓸 수 있어 저장 키를 모드별로 나눈다.
-import { renameInOrders, reorder, withParents, type OrderMap, type SortMode } from './docTree';
+import { renameInOrders, reorder, reorderMany, withParents, type OrderMap, type SortMode } from './docTree';
 
 export const SORT_LABEL: Record<SortMode, string> = { name: '이름순', mtime: '최근 수정순', manual: '직접 정렬' };
 
@@ -69,6 +69,11 @@ export function moveInOrder(dir: string, siblings: string[], name: string, befor
   treeUi.orders = { ...treeUi.orders, [dir]: reorder(siblings, name, before) };
   write('orders', treeUi.orders);
 }
+/** dir 폴더 안에서 여러 항목(names)을 before 앞으로 한 덩어리로 옮긴다(상대 순서 유지). siblings 는 지금 화면에 보이는 형제 이름 순서 */
+export function moveManyInOrder(dir: string, siblings: string[], names: string[], before?: string) {
+  treeUi.orders = { ...treeUi.orders, [dir]: reorderMany(siblings, names, before) };
+  write('orders', treeUi.orders);
+}
 /** 항목 이름을 바꾸거나 옮겼을 때 저장된 순서·접힘 상태를 따라 바꾼다 (경로는 폴더 경로 또는 폴더/이름) */
 export function followRename(from: string, to: string) {
   treeUi.orders = renameInOrders(treeUi.orders, from, to);
@@ -76,3 +81,6 @@ export function followRename(from: string, to: string) {
   treeUi.collapsed = treeUi.collapsed.map((p) => (p === from || p.startsWith(from + '/') ? to + p.slice(from.length) : p));
   write('collapsed', treeUi.collapsed);
 }
+
+/** 키보드 조작: 트리 전체에서 Tab 정지점은 하나(roving tabindex). last = 마지막으로 포커스된 항목, stop = 지금 tabindex 0 인 항목(DocTree 가 계산해 채운다) */
+export const treeKb = $state<{ last: string; stop: string }>({ last: '', stop: '' });

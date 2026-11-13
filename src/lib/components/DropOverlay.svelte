@@ -6,6 +6,9 @@
     // 드롭 이벤트 안에서 동기적으로 요청해 둔 File System Access 핸들 (미지원이면 null)
     handle: Promise<any>; // eslint-disable-line @typescript-eslint/no-explicit-any
   }
+  import FileDown from '@lucide/svelte/icons/file-down';
+  import { overlayFx } from '../motion';
+
   let { onDrop }: { onDrop: (items: DropItem[]) => void } = $props();
 
   let dragging = $state(false);
@@ -54,5 +57,11 @@
 <svelte:window ondragentercapture={enter} ondragleavecapture={leave} ondragovercapture={over} ondropcapture={drop} />
 
 {#if dragging}
-  <div class="drop-overlay">.md · .txt · .docx · .html · .odt · .epub 등 · .zip 파일을 (백업 .mwb · 조각 .mwb.001… 은 가져오기로) 여기에 놓아 새 문서 만들기</div>
+  <div class="drop-overlay" transition:overlayFx>
+    <div class="drop-card">
+      <FileDown size={30} />
+      <strong>여기에 놓아 새 문서 만들기</strong>
+      <span>.md · .txt · .docx · .html · .odt · .epub 등과 .zip 을 받습니다. 백업(.mwb)과 조각(.mwb.001…)은 가져오기로 넘어갑니다.</span>
+    </div>
+  </div>
 {/if}

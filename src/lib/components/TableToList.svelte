@@ -7,6 +7,8 @@
   import { listExport } from '../tableListUi.svelte';
   import { doc, editorBridge, toast } from '../store.svelte';
   import { downloadBlob, stripExt, writeClipboard } from '../utils';
+  import { modal } from '../modal';
+  import ModalClose from './ModalClose.svelte';
 
   const FORMATS: { v: 'json' | 'yaml' | 'md'; l: string }[] = [
     { v: 'json', l: 'JSON' }, { v: 'yaml', l: 'YAML' }, { v: 'md', l: '마크다운 목록' },
@@ -45,20 +47,12 @@
   function insertCode() {
     if (editorBridge.insertCode?.(EXT[base].lang, text)) { toast('문서에 코드 블록으로 넣었습니다'); close(); }
   }
-
-  function onKey(e: KeyboardEvent) {
-    if (!listExport.rows || e.isComposing) return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-  }
 </script>
 
-<svelte:window onkeydowncapture={onKey} />
-
 {#if listExport.rows}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) close(); }}>
+  <div class="overlay" transition:backdropFx use:modal={{ onClose: close }}>
     <div class="dialog wide ttl" role="dialog" transition:modalFx aria-modal="true" aria-label="표를 목록으로 내보내기">
-      <h2>표 {listExport.index} 를 목록으로 <span class="sub">{listExport.rows.length - 1}행 × {listExport.rows[0]?.length ?? 0}열</span></h2>
+      <div class="dlg-head"><h2>표 {listExport.index} 를 목록으로 <span class="sub">{listExport.rows.length - 1}행 × {listExport.rows[0]?.length ?? 0}열</span></h2><ModalClose onclick={close} /></div>
 
       <div class="opts">
         <div class="seg" role="radiogroup" aria-label="출력 형식">

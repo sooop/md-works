@@ -45,16 +45,16 @@ describe('POST /api/backup · GET /api/backups', () => {
     expect((await post(new Uint8Array())).status).toBe(400);
   });
 
-  it('최근 10개만 남기고 오래된 것을 지운다(같은 초 충돌은 번호로 구분)', async () => {
+  it('최근 10개는 전부, 그 밖은 같은 시간대의 최신 1개만 남긴다(같은 초 충돌은 번호로 구분)', async () => {
     const dir = path.join(root, '.works-backup');
     await fs.rm(dir, { recursive: true, force: true });
     const names: string[] = [];
     for (let i = 0; i < 13; i++) names.push((await (await post(MWB)).json()).name);
     const left = await list();
-    expect(left.length).toBe(10);
-    // 최신순, 가장 오래된 3개는 삭제
-    expect(left.map((x) => x.name)).toEqual(names.slice(3).reverse());
-    expect((await fs.readdir(dir)).length).toBe(10);
+    // 13개가 한 시간 안: 최근 10개 + 나머지 3개 중 최신 1개(names[2]) = 11, 가장 오래된 2개는 삭제
+    expect(left.length).toBe(11);
+    expect(left.map((x) => x.name)).toEqual(names.slice(2).reverse());
+    expect((await fs.readdir(dir)).length).toBe(11);
   });
 
   it('목록은 이름 규칙에 맞는 파일만 보여 준다', async () => {

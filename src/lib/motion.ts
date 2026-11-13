@@ -8,6 +8,7 @@ export const MOTION = {
   modal: { ms: 400, scale: 0.95, backdropDelay: 110 },
   panel: { ms: 220, x: 40 },
   toast: { ms: 200, y: 8 },
+  list: { ms: 220 },
   flash: { ms: 900, alpha: 0.17, ring: 1 },
   insert: { appearMs: 260, gapMs: 0 },
   remove: { holdMs: 600, fadeMs: 190 },
@@ -112,6 +113,25 @@ export function slideFx(node: Element, _?: unknown, { direction }: Dir = { direc
   };
 }
 export const toastFx = (n: Element, _: unknown, o: Dir) => mover(n, { ms: MOTION.toast.ms, y: MOTION.toast.y }, o);
+/** 화면 전체를 덮는 안내(파일 놓기 등): 살짝 커지며 나타난다 */
+export const overlayFx = (n: Element, _: unknown, o: Dir) => mover(n, { ms: MOTION.list.ms, scale: 0.985 }, o);
+
+// ---- 목록 항목(카드)의 들고 남: flash 없이 흐려지며 나타나고 사라진다. 보기 전환·검색처럼 여러 장이 한꺼번에 바뀔 때 쓴다 ----
+/** 이 수를 넘는 목록은 항목마다 위치를 재는 비용이 커서 효과를 끈다 */
+export const LIST_FX_MAX = 80;
+/** `{#each}` 항목에 transition:listFx 로 붙인다(자리 이동은 animate:flip 이 맡는다). off 이면 길이 0 */
+export function listFx(_node: Element, p: { off?: boolean } | undefined, { direction }: Dir): Fx {
+  if (!animOn() || p?.off) return NONE;
+  const out = direction === 'out', red = reduced();
+  return {
+    duration: dur(out ? MOTION.list.ms * 0.75 : MOTION.list.ms, out),
+    easing: easeOut,
+    // animate:flip 이 같은 요소의 transform 을 쓰므로 겹치지 않게 개별 속성(scale·translate)으로 움직인다
+    css: (t, u) => red ? `opacity:${t}` : `opacity:${t};scale:${1 - 0.04 * u};translate:0 ${out ? 0 : -6 * u}px`,
+  };
+}
+/** animate:flip 의 인자: 다른 항목이 빠지거나 끼어들 때 남은 항목이 미끄러져 자리를 잡는다 */
+export const flipFx = (off = false) => ({ duration: animOn() && !reduced() && !off ? MOTION.list.ms : 0, easing: easeOut });
 
 // ---- 삽입·삭제 (flash 와 순서가 있는 효과) ----
 export type FlashKind = 'info' | 'success' | 'accent' | 'warn' | 'danger';

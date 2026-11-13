@@ -197,3 +197,124 @@ export function concatBytes(chunks: Uint8Array[]): Uint8Array {
   for (const c of chunks) { out.set(c, off); off += c.length; }
   return out;
 }
+
+// ---- 경로별(내보내기·텔레그램·폴더) 성공/실패 기록 ----
+/** 한 경로의 기록: 마지막 성공 시각과, 그 뒤로 계속 실패 중이면 마지막 실패(시각·이유). 성공하면 실패 기록은 지운다 */
+export interface PathStatus {
+  lastSuccess: number;
+  failAt: number;
+  failMsg: string;
+}
+export const FAIL_MSG_MAX = 200;
+
+/** 성공을 기록한다. at 은 번들을 만들기 시작한 시각이어야 한다(만드는 중 생긴 변경이 '백업됨'으로 덮이지 않게) */
+export function recordSuccess(s: PathStatus, at: number): PathStatus {
+  return { lastSuccess: Math.max(s.lastSuccess, at), failAt: 0, failMsg: '' };
+}
+/** 실패를 기록한다. 마지막 성공 시각은 그대로 둔다 */
+export function recordFailure(s: PathStatus, at: number, msg: string): PathStatus {
+  const m = msg.length > FAIL_MSG_MAX ? `${msg.slice(0, FAIL_MSG_MAX)}…` : msg;
+  return { lastSuccess: s.lastSuccess, failAt: at, failMsg: m };
+}
+/** 마지막 성공 뒤로 실패 중인가 */
+export const isFailing = (s: PathStatus): boolean => s.failAt > 0 && s.failAt > s.lastSuccess;
+
+/** 텔레그램이 '오래됨'이 되는 기준: 설정 간격의 3배와 24시간 중 큰 값 */
+export const TELEGRAM_STALE_FACTOR = 3;
+export const telegramStaleMs = (intervalMin: number): number => Math.max(TELEGRAM_STALE_FACTOR * intervalMin * MIN_MS, DAY_MS);
+
+export interface TelegramStaleInput {
+  /** 자동 올리기가 켜져 있고 쓸 수 있는 상태(키·토큰·chat_id 있음) */
+  enabled: boolean;
+  now: number;
+  lastChange: number;
+  lastSuccess: number;
+  /** 마지막 실패 시각(없으면 0) */
+  failAt: number;
+  intervalMin: number;
+  /** 성공 기록이 없을 때 기준으로 삼는 시각 */
+  since: number;
+}
+
+/**
+ * 텔레그램 자동 올리기가 오래 성공하지 못했는가. 올릴 변경이 없으면(쓰지 않는 중) 오래됨이 아니다.
+ * 성공 기록이 없을 때는 실제로 실패한 적이 있어야 한다(막 켠 직후 첫 시도 전에 배지가 깜박이지 않게).
+ */
+export function isTelegramStale({ enabled, now, lastChange, lastSuccess, failAt, intervalMin, since }: TelegramStaleInput): boolean {
+  if (!enabled) return false;
+  if (!needsBackup(lastChange, lastSuccess)) return false;
+  if (lastSuccess <= 0 && failAt <= 0) return false;
+  const ref = lastSuccess > 0 ? lastSuccess : since;
+  return now - ref > telegramStaleMs(intervalMin);
+}
+
+/** 상단바 배지·시작 알림의 최종 판정: 전체 백업이 오래됐거나 텔레그램 자동 올리기가 오래 실패 중. 알림 끔(days<=0)이면 둘 다 아니다 */
+export function isAnyStale(n: NotifyInput, tg: TelegramStaleInput): boolean {
+  if (n.days <= 0) return false;
+  return isBackupStale(n) || isTelegramStale(tg);
+}
+
+// ---- 저장값(localStorage 'works.backup') 읽기: 옛 값(실패 기록이 없던 형식)도 그대로 읽는다 ----
+export interface BackupPersisted {
+  lastChange: number;
+  lastExport: number;
+  lastTelegram: number;
+  lastFolder: number;
+  /** 이 상태를 처음 만든 시각 — 백업 기록이 없을 때 알림 기준 */
+  since: number;
+  notifyDays: number;
+  folderAuto: boolean;
+  folderIntervalMin: number;
+  failExportAt: number;
+  failExportMsg: string;
+  failTelegramAt: number;
+  failTelegramMsg: string;
+  failFolderAt: number;
+  failFolderMsg: string;
+}
+
+/** 저장된 JSON 문자열을 읽는다. 없거나 깨졌거나 필드가 모자라면 기본값으로 채운다(옛 키 lastChange·lastExport·lastTelegram·lastFolder·since·notifyDays·folderAuto·folderIntervalMin 호환) */
+export function parsePersisted(raw: string | null | undefined, o: { now: number; folderDefaultMin: number; minAutoMin: number }): BackupPersisted {
+  const base: BackupPersisted = {
+    lastChange: 0, lastExport: 0, lastTelegram: 0, lastFolder: 0, since: o.now,
+    notifyDays: DEFAULT_NOTIFY_DAYS, folderAuto: true, folderIntervalMin: o.folderDefaultMin,
+    failExportAt: 0, failExportMsg: '', failTelegramAt: 0, failTelegramMsg: '', failFolderAt: 0, failFolderMsg: '',
+  };
+  let j: Record<string, unknown>;
+  try {
+    const p = JSON.parse(raw ?? '{}');
+    if (!p || typeof p !== 'object') return base;
+    j = p as Record<string, unknown>;
+  } catch {
+    return base;
+  }
+  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, FAIL_MSG_MAX + 1) : '');
+  return {
+    lastChange: num(j.lastChange, 0),
+    lastExport: num(j.lastExport, 0),
+    lastTelegram: num(j.lastTelegram, 0),
+    lastFolder: num(j.lastFolder, 0),
+    since: num(j.since, base.since),
+    notifyDays: num(j.notifyDays, base.notifyDays),
+    folderAuto: j.folderAuto !== false,
+    folderIntervalMin: clampInterval(num(j.folderIntervalMin, base.folderIntervalMin), o.minAutoMin, o.folderDefaultMin),
+    failExportAt: num(j.failExportAt, 0), failExportMsg: str(j.failExportMsg),
+    failTelegramAt: num(j.failTelegramAt, 0), failTelegramMsg: str(j.failTelegramMsg),
+    failFolderAt: num(j.failFolderAt, 0), failFolderMsg: str(j.failFolderMsg),
+  };
+}
+
+// ---- 결과 안내 경로: 창이 열려 있으면 창 안 상단 영역, 닫혀 있으면 토스트 ----
+export type NoticeKind = 'success' | 'error';
+/**
+ * 하나의 규칙: 창이 열려 있는 동안의 결과는 창 안(notice), 창 밖에서 일어난 자동 동작은 실패만 토스트(성공은 조용히).
+ * 창이 닫혀 있을 때 사용자가 직접 한 동작은 없다(창에서만 시작할 수 있다).
+ */
+export function routeNotice(windowOpen: boolean, kind: NoticeKind): 'notice' | 'toast' | 'none' {
+  if (windowOpen) return 'notice';
+  return kind === 'error' ? 'toast' : 'none';
+}
+
+/** 서버 폴더 백업 파일명 → 형식 라벨 */
+export const folderBackupKind = (name: string): 'mwb' | 'zip' => (/\.mwb$/i.test(name) ? 'mwb' : 'zip');

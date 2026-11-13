@@ -1,6 +1,7 @@
 <script lang="ts">
   import CommentItem from './CommentItem.svelte';
   import { cm, isLost } from '../comments/store.svelte';
+  import Switch from './Switch.svelte';
 
   // 본문 위치 순으로 보여 주고, 위치를 잃은 코멘트는 맨 아래에 모은다
   const shown = $derived(cm.items.filter((c) => !(cm.hideResolved && c.resolved)));
@@ -18,7 +19,7 @@
     <div class="cm-head">
       <span>{cm.items.length ? `${cm.items.length}개` : ''}</span>
       {#if resolvedCount}
-        <label class="check"><input type="checkbox" bind:checked={cm.hideResolved} />해결된 것 숨기기</label>
+        <Switch bind:checked={cm.hideResolved}>해결된 것 숨기기</Switch>
       {/if}
     </div>
     <div class="cm-list">

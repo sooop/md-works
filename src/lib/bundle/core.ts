@@ -2,7 +2,7 @@
 // 저장소·zip 세부는 host.ts / parse.ts 에, 병합 규칙은 merge.ts 에 있다. 여기는 그 조립이다.
 import { zipSync, type Zippable } from 'fflate';
 import type { BundleSummary, DocAction, MergePreview, MergeResult } from './api';
-import { BUNDLE_SCHEMA, BUNDLE_VERSION, BundleError, MAX_ENTRIES, isDocName, parseBundle, type ParsedBundle } from './parse';
+import { BUNDLE_SCHEMA, BUNDLE_VERSION, BundleError, HISTORY_LAYOUT, MAX_ENTRIES, VERSION_CHUNK_BYTES, isDocName, parseBundle, type ParsedBundle } from './parse';
 import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from './host';
 import { classifyDoc, mergeRecords, mergeTombstones, mergeVersions, preMergeVersion, type RecordMerge, type TombstoneMerge, type VersionMerge } from './merge';
 import { listTombstones, nameKey, tombId } from './tombstones';
@@ -24,7 +24,25 @@ function designIO(host: BundleHost) {
 }
 
 // ---- 만들기 ----
-export async function buildBundleWith(host: BundleHost, now = Date.now()): Promise<{ bytes: Uint8Array; summary: BundleSummary }> {
+/**
+ * 글 하나의 이력 레코드(JSON 문자열)를 파일 몇 개로 묶는다. 한 파일은 `[rec,rec,…]` 배열이고 압축 전 크기가 chunkBytes 를 넘기지 않게 나눈다
+ * (레코드 하나가 혼자 넘는 경우는 그 레코드 하나만 담은 파일). 빈 이력은 파일이 없다.
+ */
+export function packVersions(recs: string[], chunkBytes = VERSION_CHUNK_BYTES): string[] {
+  const out: string[] = [];
+  let cur: string[] = [];
+  let size = 2;
+  for (const r of recs) {
+    const n = enc.encode(r).length + 1;
+    if (cur.length && size + n > chunkBytes) { out.push(`[${cur.join(',')}]`); cur = []; size = 2; }
+    cur.push(r);
+    size += n;
+  }
+  if (cur.length) out.push(`[${cur.join(',')}]`);
+  return out;
+}
+
+export async function buildBundleWith(host: BundleHost, now = Date.now(), opts: { chunkBytes?: number } = {}): Promise<{ bytes: Uint8Array; summary: BundleSummary }> {
   await host.prepare();
   const store = host.store;
   const files: Zippable = {};
@@ -47,6 +65,7 @@ export async function buildBundleWith(host: BundleHost, now = Date.now()): Promi
     addAssets(body.assets);
     docMeta[info.name] = { updatedAt: info.updatedAt };
 
+    const vrecs: string[] = [];
     for (const v of await store.list<Version>('versions', info.key)) {
       if (!ID_RE.test(v.id)) continue;
       let rec: Version = { ...v, docKey: info.name };
@@ -60,9 +79,11 @@ export async function buildBundleWith(host: BundleHost, now = Date.now()): Promi
           }
         } catch { continue; /* 깨진 이력은 내보내지 않는다 */ }
       }
-      put(`.works/versions/${encPart(info.name)}/${v.id}.json`, JSON.stringify(rec));
+      vrecs.push(JSON.stringify(rec));
       nVersions++;
     }
+    // 글 하나의 이력은 파일 하나(`<글>.json`, 너무 크면 `<글>.2.json` …)로 묶는다 — 버전마다 zip 항목을 만들면 항목 수 상한(65,535)에 걸린다
+    packVersions(vrecs, opts.chunkBytes).forEach((text, i) => put(`.works/versions/${encPart(info.name)}${i ? `.${i + 1}` : ''}.json`, text));
     for (const t of await store.list<Thread>('threads', info.key)) {
       if (!ID_RE.test(t.id)) continue;
       put(`.works/threads/${encPart(info.name)}/${t.id}.json`, JSON.stringify({ ...t, docKey: info.name }));
@@ -90,11 +111,11 @@ export async function buildBundleWith(host: BundleHost, now = Date.now()): Promi
     if (isDocName(t.name) && !live.has(nameKey(t.name))) tombDocs[t.name] = Math.max(tombDocs[t.name] ?? 0, t.deletedAt);
   }
   put('.works/tombstones.json', JSON.stringify({ docs: tombDocs }, null, 2));
-  put('manifest.json', JSON.stringify({ schema: BUNDLE_SCHEMA, version: BUNDLE_VERSION, createdAt: now, mode: host.mode, app: 'md-works' }, null, 2));
+  put('manifest.json', JSON.stringify({ schema: BUNDLE_SCHEMA, version: BUNDLE_VERSION, createdAt: now, mode: host.mode, app: 'md-works', historyLayout: HISTORY_LAYOUT }, null, 2));
   for (const [path, data] of assets) files[path] = [data, { level: 0 }]; // 이미지는 이미 압축돼 있다
 
   if (Object.keys(files).length > MAX_ENTRIES) {
-    throw new BundleError(`번들 항목이 ${MAX_ENTRIES}개를 넘어 만들 수 없습니다 (글 ${infos.length}편의 이력·스레드·이미지가 너무 많습니다)`);
+    throw new BundleError(`번들 항목이 ${MAX_ENTRIES}개를 넘어 만들 수 없습니다 (글 ${infos.length}편의 스레드·글감·이미지가 너무 많습니다)`);
   }
   const bytes = zipSync(files, { level: 6 });
   return {

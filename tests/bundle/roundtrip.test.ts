@@ -45,20 +45,23 @@ describe('번들 만들기', () => {
     expect(names).toContain('.works/docs.json');
     expect(names).toContain('.works/design.json');
     expect(names).toContain('.works/tombstones.json');
-    expect(names).toContain('.works/versions/첫 글.md/v1.json');
+    expect(names).toContain('.works/versions/첫 글.md.json'); // 글 하나의 이력은 파일 하나
+    expect(names.filter((n) => n.startsWith('.works/versions/'))).toEqual(['.works/versions/첫 글.md.json']); // 버전마다 항목을 만들지 않고, 이력 없는 글(둘째)은 파일이 없다
     expect(names).toContain('.works/threads/첫 글.md/t1.json');
     expect(names).toContain('.works/snippets/_/s1.json');
     const manifest = JSON.parse(strFromU8(f['manifest.json']));
-    expect(manifest).toMatchObject({ schema: 'md-works-bundle', version: 1, createdAt: T + 1, mode: 'html' });
+    expect(manifest).toMatchObject({ schema: 'md-works-bundle', version: 1, createdAt: T + 1, mode: 'html', historyLayout: 2 });
     expect(JSON.parse(strFromU8(f['.works/docs.json']))['첫 글.md']).toEqual({ updatedAt: T + 10 });
     expect(strFromU8(f['첫 글.md'])).toContain('![그림](<assets/첫 글/1.png>)');
     // docKey 는 id 가 아니라 글 이름으로 바뀐다
-    expect(JSON.parse(strFromU8(f['.works/versions/첫 글.md/v1.json'])).docKey).toBe('첫 글.md');
+    const packed = JSON.parse(strFromU8(f['.works/versions/첫 글.md.json'])) as { id: string; docKey: string; name?: string }[];
+    expect(packed.map((v) => v.id).sort()).toEqual(['v1', 'v2']);
+    expect(packed.every((v) => v.docKey === '첫 글.md')).toBe(true);
     expect(JSON.parse(strFromU8(f['.works/threads/첫 글.md/t1.json'])).docKey).toBe('첫 글.md');
     expect(JSON.parse(strFromU8(f['.works/snippets/_/s1.json'])).attachedDocs.sort()).toEqual(['둘째.md', '첫 글.md']);
     expect(JSON.parse(strFromU8(f['.works/snippets/_/s2.json'])).trashedFrom).toEqual(['둘째.md']);
     // 이력 버전 속 이미지도 상대 경로가 되고(이미지 id 파일명) 이미지는 번들에 들어간다
-    const v2 = JSON.parse(strFromU8(f['.works/versions/첫 글.md/v2.json']));
+    const v2 = packed.find((v) => v.id === 'v2') as unknown as { enc: string };
     expect(v2.enc).toBe('deflate-b64');
     expect(summary).toMatchObject({ docs: 2, images: 2, versions: 2, snippets: 2, threads: 1 });
     expect(summary.bytes).toBe(bytes.length);
@@ -74,8 +77,8 @@ describe('번들 만들기', () => {
       await fs.mkdir(path.dirname(abs), { recursive: true });
       await fs.writeFile(abs, data);
     }
-    // 서버 API 가 같은 사이드카를 그대로 읽는다
-    expect((await srv.store.list('versions', '첫 글.md')).map((v) => v.id).sort()).toEqual(['v1', 'v2']);
+    // 서버 API 가 같은 사이드카를 그대로 읽는다 (이력은 글당 묶음 파일이라 서버 폴더 배치와 다르다 — 가져오기로 합쳐야 한다)
+    expect((await srv.store.list('versions', '첫 글.md')).map((v) => v.id).sort()).toEqual([]);
     expect((await srv.store.list('threads', '첫 글.md')).length).toBe(1);
     expect((await srv.store.list('snippets')).length).toBe(2);
     expect(await srv.names()).toEqual(['둘째.md', '첫 글.md']);
@@ -123,8 +126,13 @@ describe('왕복(내보내기 → 가져오기 후 동일)', () => {
     // 다시 내보내면 같은 번들 내용(이미지 id 와 생성 시각만 다르다)
     const again = files((await buildBundleWith(b.host, T + 1)).bytes);
     const orig = files(bytes);
-    for (const p of ['첫 글.md', '둘째.md', 'assets/첫 글/1.png', '.works/docs.json', '.works/snippets/_/s1.json', '.works/snippets/_/s2.json', '.works/threads/첫 글.md/t1.json', '.works/versions/첫 글.md/v1.json']) {
-      if (p.endsWith('.json')) expect(JSON.parse(strFromU8(again[p])), p).toEqual(JSON.parse(strFromU8(orig[p])));
+    for (const p of ['첫 글.md', '둘째.md', 'assets/첫 글/1.png', '.works/docs.json', '.works/snippets/_/s1.json', '.works/snippets/_/s2.json', '.works/threads/첫 글.md/t1.json', '.works/versions/첫 글.md.json']) {
+      if (p.startsWith('.works/versions/')) {
+        // v2 는 이미지 id 가 새로 매겨져 압축본이 다르다 — 이미지가 없는 v1 은 같아야 하고, 묶음의 id 목록도 같아야 한다
+        const pick = (z: Record<string, Uint8Array>) => (JSON.parse(strFromU8(z[p])) as { id: string }[]).sort((x, y) => x.id.localeCompare(y.id));
+        expect(pick(again).map((v) => v.id), p).toEqual(pick(orig).map((v) => v.id));
+        expect(pick(again)[0], p).toEqual(pick(orig)[0]);
+      } else if (p.endsWith('.json')) expect(JSON.parse(strFromU8(again[p])), p).toEqual(JSON.parse(strFromU8(orig[p])));
       else expect(strFromU8(again[p]), p).toBe(strFromU8(orig[p]));
     }
     expect(again['assets/첫 글/1.png']).toEqual(PNG);

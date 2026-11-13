@@ -3,6 +3,7 @@ import { zipSync } from 'fflate';
 import {
   needsBackup, isUploadDue, isBackupStale, clampInterval, formatAgo, classifyBytes, isBundleZip, splitBundleFiles, isBundleFile,
   DAY_MS, MIN_MS, SERVER_BACKUP_NAME_RE,
+  recordSuccess, recordFailure, isFailing, isTelegramStale, isAnyStale, telegramStaleMs, parsePersisted, routeNotice, folderBackupKind, FAIL_MSG_MAX,
 } from '../../src/lib/bundle/backupLogic';
 import { encryptBundle } from '../../src/lib/bundle/crypto';
 import { trackWrites } from '../../src/lib/works/track';
@@ -138,5 +139,87 @@ describe('쓰기 감지 래퍼(trackWrites)', () => {
     expect(on).not.toHaveBeenCalled();
     const { store: s2 } = fake();
     await expect(trackWrites(s2, () => { throw new Error('x'); }).put('snippets', {} as never)).resolves.toBeUndefined();
+  });
+});
+
+describe('경로별 성공/실패 기록', () => {
+  const none = { lastSuccess: 0, failAt: 0, failMsg: '' };
+  it('실패는 마지막 성공을 건드리지 않고, 성공하면 실패 기록이 지워진다', () => {
+    const ok = recordSuccess(none, 100);
+    const bad = recordFailure(ok, 200, '네트워크 오류');
+    expect(bad).toEqual({ lastSuccess: 100, failAt: 200, failMsg: '네트워크 오류' });
+    expect(isFailing(bad)).toBe(true);
+    const back = recordSuccess(bad, 300);
+    expect(back).toEqual({ lastSuccess: 300, failAt: 0, failMsg: '' });
+    expect(isFailing(back)).toBe(false);
+  });
+  it('성공 시각은 뒤로 가지 않고, 긴 이유는 잘린다', () => {
+    expect(recordSuccess({ ...none, lastSuccess: 500 }, 100).lastSuccess).toBe(500);
+    expect(recordFailure(none, 1, 'x'.repeat(1000)).failMsg.length).toBe(FAIL_MSG_MAX + 1);
+  });
+  it('성공 기록이 없어도 실패하면 실패 중이다', () => expect(isFailing(recordFailure(none, 5, 'e'))).toBe(true));
+});
+
+describe('텔레그램 오래됨 판정', () => {
+  const base = { enabled: true, now: NOW, lastChange: NOW - MIN_MS, lastSuccess: NOW - 4 * DAY_MS, failAt: NOW - MIN_MS, intervalMin: 30, since: NOW - 9 * DAY_MS };
+  it('기준은 간격의 3배와 24시간 중 큰 값', () => {
+    expect(telegramStaleMs(30)).toBe(DAY_MS);
+    expect(telegramStaleMs(24 * 60)).toBe(3 * DAY_MS);
+  });
+  it('마지막 성공이 기준을 넘고 올릴 변경이 있으면 오래됨', () => expect(isTelegramStale(base)).toBe(true));
+  it('기준 안이면 아니다', () => expect(isTelegramStale({ ...base, lastSuccess: NOW - 20 * 60 * MIN_MS })).toBe(false));
+  it('자동 올리기가 꺼져 있으면 아니다', () => expect(isTelegramStale({ ...base, enabled: false })).toBe(false));
+  it('올릴 변경이 없으면(성공 이후 변경 없음) 아니다', () => expect(isTelegramStale({ ...base, lastChange: NOW - 5 * DAY_MS })).toBe(false));
+  it('성공 기록이 없고 실패한 적도 없으면 아니다(막 켠 직후), 실패한 적이 있으면 since 기준', () => {
+    expect(isTelegramStale({ ...base, lastSuccess: 0, failAt: 0 })).toBe(false);
+    expect(isTelegramStale({ ...base, lastSuccess: 0 })).toBe(true);
+    expect(isTelegramStale({ ...base, lastSuccess: 0, since: NOW - 2 * MIN_MS })).toBe(false);
+  });
+  it('isAnyStale: 텔레그램만 오래돼도 배지, 알림 끔이면 둘 다 아니다', () => {
+    const n = { now: NOW, lastChange: NOW - MIN_MS, lastBackup: NOW - MIN_MS, days: 7, since: 0 }; // 다른 경로로 방금 백업함
+    expect(isAnyStale(n, base)).toBe(true);
+    expect(isAnyStale(n, { ...base, enabled: false })).toBe(false);
+    expect(isAnyStale({ ...n, days: 0 }, base)).toBe(false);
+  });
+});
+
+describe('저장값 읽기(옛 localStorage 호환)', () => {
+  const o = { now: 1234, folderDefaultMin: 15, minAutoMin: 5 };
+  it('옛 형식(실패 기록 없음)을 그대로 읽고 새 필드는 기본값', () => {
+    const old = JSON.stringify({ lastChange: 5, lastExport: 1, lastTelegram: 2, lastFolder: 3, since: 9, notifyDays: 3, folderAuto: false, folderIntervalMin: 40 });
+    expect(parsePersisted(old, o)).toEqual({
+      lastChange: 5, lastExport: 1, lastTelegram: 2, lastFolder: 3, since: 9, notifyDays: 3, folderAuto: false, folderIntervalMin: 40,
+      failExportAt: 0, failExportMsg: '', failTelegramAt: 0, failTelegramMsg: '', failFolderAt: 0, failFolderMsg: '',
+    });
+  });
+  it('없거나 깨진 값은 기본값', () => {
+    for (const raw of [null, undefined, '', '{', 'null', '[1]', '"x"']) {
+      const p = parsePersisted(raw as string | null, o);
+      expect(p.since).toBe(1234);
+      expect(p.lastTelegram).toBe(0);
+      expect(p.folderAuto).toBe(true);
+      expect(p.notifyDays).toBe(7);
+    }
+  });
+  it('타입이 틀린 필드는 기본값, 간격은 최소값 보정, 새 필드는 읽는다', () => {
+    const p = parsePersisted(JSON.stringify({ lastTelegram: 'x', folderIntervalMin: 1, failTelegramAt: 77, failTelegramMsg: '실패', failFolderMsg: 3 }), o);
+    expect(p.lastTelegram).toBe(0);
+    expect(p.folderIntervalMin).toBe(5);
+    expect(p.failTelegramAt).toBe(77);
+    expect(p.failTelegramMsg).toBe('실패');
+    expect(p.failFolderMsg).toBe('');
+  });
+});
+
+describe('결과 안내 경로', () => {
+  it('창이 열려 있으면 안내 영역, 닫혀 있으면 실패만 토스트(성공은 조용히)', () => {
+    expect(routeNotice(true, 'success')).toBe('notice');
+    expect(routeNotice(true, 'error')).toBe('notice');
+    expect(routeNotice(false, 'error')).toBe('toast');
+    expect(routeNotice(false, 'success')).toBe('none');
+  });
+  it('폴더 백업 형식 라벨', () => {
+    expect(folderBackupKind('md-works-20260101-000000.mwb')).toBe('mwb');
+    expect(folderBackupKind('md-works-20260101-000000-2.zip')).toBe('zip');
   });
 });

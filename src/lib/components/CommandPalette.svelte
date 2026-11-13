@@ -8,6 +8,7 @@
   import { palette, closePalette, togglePalette, type Command } from '../commands/registry.svelte';
   import { rankCommands } from '../commands/rank';
   import { tip } from '../tooltip.svelte';
+  import { modal } from '../modal';
 
   let { commands, docCommands }: { commands: () => Command[]; docCommands: () => Command[] } = $props();
 
@@ -48,7 +49,7 @@
     else if (e.key === 'Home' && !query) { e.preventDefault(); sel = 0; scrollToSel(); }
     else if (e.key === 'End' && !query) { e.preventDefault(); sel = results.length - 1; scrollToSel(); }
     else if (e.key === 'Enter') { e.preventDefault(); run(results[sel]); }
-    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePalette(); }
+    // Esc 는 modal 이 맡는다(한글 조합 중에는 무시)
   }
 
   // 전역 단축키: Ctrl+K, Ctrl+Space (한글 조합 중에는 건드리지 않는다)
@@ -61,8 +62,7 @@
 <svelte:window onkeydowncapture={onKey} />
 
 {#if palette.open}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay cp-overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) closePalette(); }}>
+  <div class="overlay cp-overlay" transition:backdropFx use:modal={{ onClose: closePalette, focus: 'input' }}>
     <div class="cp" role="dialog" transition:modalFx aria-modal="true" aria-label="명령 팔레트">
       <div class="cp-input">
         <Search size={16} />
@@ -76,6 +76,7 @@
       <ul class="cp-list" id="cp-list" role="listbox" bind:this={listEl}>
         {#each results as c, i (c.id)}
           {#if i === 0 || results[i - 1].group !== c.group}<li class="cp-group" role="presentation">{c.group}</li>{/if}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
           <li id={`cp-${i}`} role="option" aria-selected={i === sel} class:sel={i === sel}
             onmousemove={() => { if (sel !== i) sel = i; }} onclick={() => run(c)}>
             <span class="t">{c.title}</span>
@@ -92,7 +93,7 @@
 {/if}
 
 <style>
-  .cp-overlay { align-items: start; padding-top: 12vh; background: rgba(20, 20, 19, 0.35); }
+  .cp-overlay { align-items: start; padding-top: 12vh; }
   .cp {
     width: min(620px, calc(100vw - 24px)); max-height: min(560px, 76vh); display: flex; flex-direction: column;
     background: var(--bg); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden;

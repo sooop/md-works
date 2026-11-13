@@ -3,6 +3,7 @@
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { toast, errMsg, askConfirm } from '../store.svelte';
 import { anchorOf, flatten, locate, MAX_QUOTE } from './anchor';
+import { notifyTabs, onTabMessage } from '../works/tabSync';
 import { attachComments, type CommentCtl, type Entry } from './pmComments';
 import type { Thread } from '../works/types';
 import { newId } from '../works/types';
@@ -55,6 +56,7 @@ function persistNow() {
     .then(async () => {
       for (const t of puts) await saveThread(t);
       for (const t of dels) await deleteThread(t);
+      notifyTabs({ t: 'threads', keys: [...new Set([...puts, ...dels].map((t) => t.docKey))] }); // 다른 탭이 같은 글의 코멘트를 다시 읽게 한다
     })
     .catch((e) => { toast(`코멘트를 저장하지 못했습니다: ${errMsg(e)}`, 'error'); });
 }
@@ -63,6 +65,29 @@ function persist(id: string) {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persistNow, 400);
 }
+
+/**
+ * 다른 탭이 이 글의 코멘트를 바꿨다: 이 탭에 저장 대기 중인 변경·입력 중인 초안이 없을 때만 저장소에서 다시 읽는다
+ * (스레드는 통째로 저장하므로 낡은 사본이 다른 탭의 답글을 덮어쓰지 않게 하는 용도). 내용이 같으면 아무것도 하지 않는다.
+ */
+async function reloadThreads(key: string) {
+  if (!cur || cur.key !== key || !cm.loaded) return;
+  await pending;
+  if (!cur || cur.key !== key || dirty.size || removed.size || cm.draft) return; // 이 탭도 편집 중이면 건드리지 않는다
+  const list = await listThreads(key);
+  if (!cur || cur.key !== key || dirty.size || removed.size || cm.draft) return;
+  if (JSON.stringify(list) === JSON.stringify($state.snapshot(cm.items))) return;
+  const flat = flatten(cur.ctl.doc());
+  const ranges: Record<string, Range> = {};
+  for (const c of list) {
+    const loc = cm.ranges[c.id] ?? locate(flat, c.anchor);
+    if (loc) ranges[c.id] = loc;
+  }
+  cm.items = list;
+  cm.ranges = ranges;
+  push();
+}
+onTabMessage((m) => { if (m.t === 'threads' && cur && m.keys.includes(cur.key)) void reloadThreads(cur.key).catch(() => { /* 다음 알림 때 다시 읽는다 */ }); });
 
 /** 대기 중인 저장을 즉시 끝낸다 (서버 모드에서 이름 변경·삭제 전에 호출) */
 export async function flushComments() {

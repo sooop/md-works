@@ -1,10 +1,11 @@
 // 번들(백업·동기화) 공개 계약. 구현은 bundle/core(작업 P2a), 암호화·전송·UI 는 작업 P2b 가 이 계약에만 의존한다.
 // 번들 = 글(.md)·이미지·이력·글감·스레드·디자인을 담은 zip. 서버 노트 폴더 구조의 상위 집합이라 풀면 그대로 노트 폴더가 된다.
 //
-//   manifest.json                       {schema:'md-works-bundle', version:1, createdAt, mode, app}
+//   manifest.json                       {schema:'md-works-bundle', version:1, createdAt, mode, app, historyLayout:2}
 //   <경로>.md, assets/<문서명>/<n>.<ext>  글과 이미지(기존 archive.ts 와 같은 형식)
 //   .works/docs.json                    {<글 이름(경로)>: {updatedAt}}  — 글 식별은 이름(서버는 경로)
-//   .works/versions/<글 이름>/<id>.json 서버 사이드카와 같은 배치(파티션 = 글 이름). 스탠드얼론 id 는 내보낼 때 이름으로 바꾼다
+//   .works/versions/<글 이름>.json      글 하나의 이력 버전 레코드 배열(historyLayout 2). 너무 크면 <글 이름>.2.json … 으로 나눈다. 빈 이력은 파일이 없다.
+//                                       옛 배치(.works/versions/<글 이름>/<id>.json, 버전당 파일)도 읽는다. 스탠드얼론 id 는 내보낼 때 이름으로 바꾼다
 //   .works/snippets/_/<id>.json
 //   .works/threads/<글 이름>/<id>.json
 //   .works/design.json                  serializeDesign() 결과
@@ -59,6 +60,14 @@ export interface MergeResult {
 /** 현재 보관소를 번들(zip 바이트)로 만든다. 암호화는 호출자(작업 P2b)가 한다. */
 export async function buildBundle(): Promise<{ bytes: Uint8Array; summary: BundleSummary }> {
   return buildBundleWith(bundleHost());
+}
+
+/**
+ * 번들을 만들기 전 준비(열린 글·코멘트 저장)만 먼저 한다. 이 과정의 쓰기는 사용자 변경이 아니라서,
+ * 호출자가 이 동안만 '변경 기록'을 건너뛸 수 있게 buildBundle 과 따로 둔다(buildBundle 도 안에서 다시 부르지만 이미 저장돼 있어 쓰는 것이 없다).
+ */
+export async function prepareBundle(): Promise<void> {
+  await bundleHost().prepare();
 }
 
 /** 번들을 읽어 병합했을 때 무엇이 바뀌는지 미리 계산한다. 아무것도 쓰지 않는다. */

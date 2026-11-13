@@ -88,6 +88,20 @@ export function reorder(current: string[], name: string, before?: string): strin
   return rest;
 }
 
+/**
+ * `names`(여러 항목)를 `before` 앞에 한 덩어리로 끼운 순서. names 의 상대 순서를 유지하고, current 에 없는 이름은 무시한다
+ * (before 가 names 에 들었거나 없으면 맨 뒤). current 는 지금 화면에 보이는 형제 이름 순서
+ */
+export function reorderMany(current: string[], names: string[], before?: string): string[] {
+  const move = new Set(names);
+  const block = current.filter((n) => move.has(n));
+  const rest = current.filter((n) => !move.has(n));
+  const at = before === undefined ? -1 : rest.indexOf(before);
+  if (at < 0) rest.push(...block);
+  else rest.splice(at, 0, ...block);
+  return rest;
+}
+
 const parentOf = (p: string) => (p.lastIndexOf('/') < 0 ? '' : p.slice(0, p.lastIndexOf('/')));
 const leaf = (p: string) => p.slice(p.lastIndexOf('/') + 1);
 

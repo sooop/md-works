@@ -23,8 +23,11 @@ export interface StandaloneHostOptions {
   setImporting?: (on: boolean) => void;
 }
 
-interface Rec { id: string; name: string; folder?: string; content: string; updated: number }
+interface Rec { id: string; name: string; folder?: string; content: string; updated: number; deletedAt?: number; trashId?: string }
 const fullOf = (r: Rec) => fullPath(r.folder ?? '', r.name);
+const isTrashed = (r: Rec) => typeof r.deletedAt === 'number';
+/** 휴지통 표시를 걷어 낸다 */
+const revived = (r: Rec): Rec => { const { deletedAt: _d, trashId: _t, ...rest } = r; void _d; void _t; return rest; };
 interface Img { id: string; blob: Blob; created: number }
 
 const IMG_MIME: Record<string, string> = {
@@ -81,7 +84,9 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
       r.onerror = () => reject(r.error);
     });
   }
-  const allDocs = () => req<Rec[]>('docs', 'readonly', (s) => s.getAll());
+  const rawDocs = () => req<Rec[]>('docs', 'readonly', (s) => s.getAll());
+  /** 번들에 실리고 비교 대상이 되는 글: 휴지통의 글은 뺀다(지운 글로 다룬다) */
+  const allDocs = async () => (await rawDocs()).filter((r) => !isTrashed(r));
   const loadImage = async (id: string) => (await req<Img | undefined>('images', 'readonly', (s) => s.get(id)))?.blob ?? null;
 
   let lower = new Map<string, string>(); // 소문자 이름 → 실제 이름 (대소문자만 다른 이름이 두 글이 되지 않도록)
@@ -96,7 +101,8 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
 
     async prepare() {
       await opts.prepare?.();
-      lower = new Map((await allDocs()).map((r) => [fullOf(r).toLowerCase(), fullOf(r)]));
+      // 휴지통의 글 이름도 담아 둔다(보통 글이 우선): 번들이 휴지통 글을 되살릴 때 같은 이름(대소문자)으로 맞춘다
+      lower = new Map([...(await rawDocs())].sort((a, b) => Number(isTrashed(b)) - Number(isTrashed(a))).map((r) => [fullOf(r).toLowerCase(), fullOf(r)] as const));
     },
     normalizeName(name) {
       const p = normalizePath(name);
@@ -142,6 +148,7 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
         return `idb:${id}`;
       };
       let byName: Map<string, Rec> | undefined;
+      let inTrash: Map<string, Rec> | undefined; // 같은 이름으로 휴지통에 있는 글(가장 최근에 지운 것)
       return {
         async text(srcPath, text) {
           if (!text.includes('![')) return text;
@@ -159,10 +166,17 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
           return r.text;
         },
         async putDoc(_src, name, content, updatedAt) {
-          byName ??= new Map((await allDocs()).map((r) => [fullOf(r), r]));
-          const cur = byName.get(name);
+          if (!byName || !inTrash) {
+            const recs = await rawDocs();
+            byName = new Map(recs.filter((r) => !isTrashed(r)).map((r) => [fullOf(r), r]));
+            inTrash = new Map(recs.filter(isTrashed).sort((a, b) => a.deletedAt! - b.deletedAt!).map((r) => [fullOf(r), r]));
+          }
+          // 이 이름의 글이 없고 휴지통에 같은 이름의 글이 있으면 그 글을 되살려 덮는다(id 를 지켜 이력·스레드·핀이 이어진다).
+          // 번들이 삭제 시각보다 오래됐으면 계획 단계의 묘비 규칙이 이 글을 건너뛰므로 여기까지 오지 않는다
+          const cur = byName.get(name) ?? inTrash.get(name);
           const { folder, name: leaf } = splitPath(name);
-          const rec: Rec = cur ? { ...cur, content, updated: updatedAt } : { id: uuid(), name: leaf, ...(folder ? { folder } : {}), content, updated: updatedAt };
+          const rec: Rec = cur ? { ...revived(cur), content, updated: updatedAt } : { id: uuid(), name: leaf, ...(folder ? { folder } : {}), content, updated: updatedAt };
+          inTrash.delete(name);
           await req('docs', 'readwrite', (s) => s.put(rec));
           byName.set(name, rec);
           return rec.id;

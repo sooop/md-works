@@ -1,5 +1,6 @@
-// 폴더 내보내기: 호스트(listDocs/readDoc)만으로 폴더 하나를 백업 JSON · MD zip · 연결된 MD 로 만든다. 두 모드가 같은 코드로 동작한다.
-// 에셋 경로는 폴더 접두어를 떼어 쓴다. 글 본문의 이미지 링크는 글 기준 상대 경로라 글·에셋에서 같은 접두어를 떼면 링크가 그대로 유효하다.
+// 폴더 내보내기: 호스트(listDocs/readDoc)만으로 폴더 하나(또는 선택한 여러 글·폴더)를 백업 JSON · MD zip · 연결된 MD 로 만든다. 두 모드가 같은 코드로 동작한다.
+// 에셋 경로는 기준 폴더(base) 접두어를 떼어 쓴다. 글 본문의 이미지 링크는 글 기준 상대 경로라 글·에셋에서 같은 접두어를 떼면 링크가 그대로 유효하다.
+// 여러 뿌리 항목은 그 항목들의 공통 상위 폴더를 base 로 삼아 폴더 구조를 유지한다(폴더 하나만 내보낼 때는 그 폴더 자신이 base).
 import { zipSync, type Zippable } from 'fflate';
 import type { BundleHost, HostDocInfo } from './bundle/host';
 import { BUNDLE_SCHEMA, BUNDLE_VERSION, BundleError } from './bundle/parse';
@@ -49,28 +50,59 @@ export function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-/** 폴더 안의 글(하위 폴더 포함)과 그 에셋을 읽는다. 대기 중인 편집은 먼저 저장한다 */
-export async function collectFolder(host: BundleHost, folderPath: string): Promise<FolderData> {
-  const folder = trimDir(folderPath);
+/** 내보낼 뿌리 항목. path 는 host 글 이름 기준(글은 .md 를 포함한 경로, 폴더는 폴더 경로) */
+export interface ExportRoot { path: string; type: 'file' | 'dir' }
+
+const parentOf = (p: string) => (p.lastIndexOf('/') < 0 ? '' : p.slice(0, p.lastIndexOf('/')));
+const segsOf = (p: string) => p.split('/').filter(Boolean);
+
+/**
+ * 내보내기의 기준 폴더(zip·JSON 안의 경로는 이 폴더 아래의 상대 경로가 된다).
+ * 폴더 하나면 그 폴더 자신, 글 하나면 그 글이 든 폴더, 여럿이면 뿌리들이 든 폴더들의 공통 상위 폴더('' = 최상위)
+ */
+export function exportBase(roots: ExportRoot[]): string {
+  if (!roots.length) return '';
+  if (roots.length === 1) return roots[0].type === 'dir' ? trimDir(roots[0].path) : parentOf(trimDir(roots[0].path));
+  const lists = roots.map((r) => segsOf(parentOf(trimDir(r.path))));
+  const common = lists[0].slice();
+  for (const l of lists.slice(1)) {
+    let i = 0;
+    while (i < common.length && i < l.length && common[i] === l[i]) i++;
+    common.length = i;
+  }
+  return common.join('/');
+}
+
+/** 뿌리 항목들에 속한 글(폴더는 하위 포함)과 그 에셋을 읽는다. 대기 중인 편집은 먼저 저장한다 */
+export async function collectRoots(host: BundleHost, roots: ExportRoot[], base = exportBase(roots)): Promise<FolderData> {
+  const folder = trimDir(base);
   await host.prepare();
-  const prefix = folder + '/';
-  const infos = (await host.listDocs()).filter((d) => d.name.startsWith(prefix) && /\.md$/i.test(d.name)).sort((a, b) => byName(a.name, b.name));
+  const prefix = folder ? folder + '/' : '';
+  const dirs = roots.filter((r) => r.type === 'dir').map((r) => trimDir(r.path)).filter(Boolean).map((p) => p + '/');
+  const files = new Set(roots.filter((r) => r.type === 'file').map((r) => trimDir(r.path)));
+  const infos = (await host.listDocs())
+    .filter((d) => /\.md$/i.test(d.name) && d.name.startsWith(prefix) && (files.has(d.name) || dirs.some((p) => d.name.startsWith(p))))
+    .sort((a, b) => byName(a.name, b.name));
   const docs: FolderDoc[] = [];
   const assets = new Map<string, Uint8Array>();
   for (const info of infos) {
     const body = await host.readDoc(info);
     docs.push({ rel: info.name.slice(prefix.length), info, content: body.content });
-    // 폴더 밖을 가리키는 에셋은 폴더 기준 경로로 만들 수 없어 담지 않는다
+    // 기준 폴더 밖을 가리키는 에셋은 상대 경로로 만들 수 없어 담지 않는다
     for (const a of body.assets) if (a.path.startsWith(prefix)) assets.set(a.path.slice(prefix.length), a.data);
   }
   return { folder, docs, assets };
 }
 
+/** 폴더 안의 글(하위 폴더 포함)과 그 에셋을 읽는다 */
+export const collectFolder = (host: BundleHost, folderPath: string): Promise<FolderData> => collectRoots(host, [{ path: folderPath, type: 'dir' }]);
+
 export const folderLeaf = (folder: string) => basename(trimDir(folder));
 
 /** 백업 JSON: 글 + 이미지 + 코멘트(이력·글감 제외) */
-export async function exportFolderJson(host: BundleHost, folderPath: string, now = Date.now()): Promise<{ text: string; count: number }> {
-  const data = await collectFolder(host, folderPath);
+export const exportFolderJson = (host: BundleHost, folderPath: string, now = Date.now()) => exportRootsJson(host, [{ path: folderPath, type: 'dir' }], now);
+export async function exportRootsJson(host: BundleHost, roots: ExportRoot[], now = Date.now()): Promise<{ text: string; count: number }> {
+  const data = await collectRoots(host, roots);
   const docs: FolderJsonDoc[] = [];
   for (const d of data.docs) {
     const threads = (await host.store.list<Thread>('threads', d.info.key)).map((t) => ({ ...t, docKey: d.rel }));
@@ -83,8 +115,9 @@ export async function exportFolderJson(host: BundleHost, folderPath: string, now
 }
 
 /** MD 압축: `이름.md` + `assets/<문서명>/<번호>.<확장자>` (기존 zip 가져오기가 받는 구조). 코멘트는 담지 않는다 */
-export async function exportFolderZip(host: BundleHost, folderPath: string): Promise<{ bytes: Uint8Array; count: number }> {
-  const data = await collectFolder(host, folderPath);
+export const exportFolderZip = (host: BundleHost, folderPath: string) => exportRootsZip(host, [{ path: folderPath, type: 'dir' }]);
+export async function exportRootsZip(host: BundleHost, roots: ExportRoot[]): Promise<{ bytes: Uint8Array; count: number }> {
+  const data = await collectRoots(host, roots);
   const enc = new TextEncoder();
   const files: Zippable = {};
   for (const d of data.docs) files[d.rel] = enc.encode(d.content);
@@ -93,7 +126,8 @@ export async function exportFolderZip(host: BundleHost, folderPath: string): Pro
 }
 
 /** order(host 글 이름 순서)대로 글을 잇는다. 목록에 없는 글은 뒤에 이름순. 이미지는 data URI 로 인라인 */
-export function linkDocs(data: FolderData, order: string[]): string {
+export function linkDocs(data: FolderData, order: string[], opts: { heading?: boolean } = {}): string {
+  const heading = opts.heading !== false;
   const rank = new Map(order.map((n, i) => [n, i]));
   const docs = [...data.docs].sort((a, b) => {
     const ra = rank.get(a.info.name);
@@ -117,7 +151,8 @@ export function linkDocs(data: FolderData, order: string[]): string {
   const sections = docs.map((d) => {
     const dir = dirname(d.rel);
     const body = d.content.replace(/\r\n/g, '\n').replace(/^\n+|\s+$/g, '');
-    return `# ${stripMd(d.rel)}\n\n${inlineSync(body, (src) => (isExternalSrc(src) ? null : dataUri(joinPath(dir, safeDecode(src.replace(/[?#].*$/, ''))))))}`;
+    const text = inlineSync(body, (src) => (isExternalSrc(src) ? null : dataUri(joinPath(dir, safeDecode(src.replace(/[?#].*$/, ''))))));
+    return heading ? `# ${stripMd(d.rel)}\n\n${text}` : text;
   });
   return sections.join('\n\n---\n\n') + '\n';
 }
@@ -131,9 +166,18 @@ function inlineSync(md: string, fn: (src: string) => string | null): string {
   });
 }
 
-export async function exportFolderLinked(host: BundleHost, folderPath: string, order: string[]): Promise<{ text: string; count: number }> {
-  const data = await collectFolder(host, folderPath);
-  return { text: data.docs.length ? linkDocs(data, order) : '', count: data.docs.length };
+export const exportFolderLinked = (host: BundleHost, folderPath: string, order: string[]) => exportRootsLinked(host, [{ path: folderPath, type: 'dir' }], order);
+/** 글이 하나뿐이면 제목 줄 없이 그 글 본문만(이미지는 data URI) — 글 하나의 '.md 내려받기' 와 같은 결과 */
+export async function exportRootsLinked(host: BundleHost, roots: ExportRoot[], order: string[]): Promise<{ text: string; count: number }> {
+  const data = await collectRoots(host, roots);
+  const single = roots.length === 1 && roots[0].type === 'file';
+  return { text: data.docs.length ? linkDocs(data, order, { heading: !single }) : '', count: data.docs.length };
+}
+
+/** 선택 내려받기 파일 이름: md-works-선택-YYYYMMDD-HHmm.확장자 */
+export function selectionFileName(ext: string, now = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `md-works-선택-${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}.${ext}`;
 }
 
 // ---- 가져오기: 백업 JSON → 기존 번들(zip) 바이트 ----

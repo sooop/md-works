@@ -7,6 +7,8 @@
   import { importToGrid, type InputFormat, type ImportResult } from '../tableList';
   import { listImport } from '../tableListUi.svelte';
   import { editorBridge, toast } from '../store.svelte';
+  import { modal, isTopModal, confirmDiscard } from '../modal';
+  import ModalClose from './ModalClose.svelte';
 
   const MAX_ROWS = 3000;
   const PREVIEW_ROWS = 8;
@@ -19,6 +21,9 @@
   let headerText = $state('');
   let textEl = $state<HTMLTextAreaElement>();
   let replaceOrig = $state(false); // 코드 블록에서 열었을 때: 원본 코드 블록을 표로 교체
+  let startText = ''; // 열릴 때 미리 채워진 내용(코드 블록에서 열었을 때). 이 값 그대로면 버려도 잃는 게 없다
+  let overlayEl = $state<HTMLElement>();
+  let asking = false;
 
   // 입력 중 깨진 JSON 에서 매 글자마다 계산하지 않도록 잠깐 기다린다
   let live = $state('');
@@ -34,7 +39,7 @@
       const s = listImport.src;
       // 여는 순간에만 비운다. text 를 읽는 쓰기가 의존성이 되면 타이핑·붙여넣기마다 다시 비워진다
       untrack(() => {
-        text = s?.text ?? ''; live = text; html = undefined; headerText = ''; replaceOrig = s?.replaceDefault ?? false;
+        text = s?.text ?? ''; startText = text; live = text; html = undefined; headerText = ''; replaceOrig = s?.replaceDefault ?? false;
         if (s) listImport.format = s.format; // 코드 블록 언어에 맞춘다
       });
       void tick().then(() => textEl?.focus());
@@ -72,10 +77,20 @@
     if (editorBridge.insertTable(grid)) { toast(`${grid.length - 1}행 × ${grid[0].length}열 표를 넣었습니다`); close(); }
   }
 
+  // Esc·백드롭·X·취소: 직접 넣은 내용이 있으면 버릴지 먼저 묻는다
+  async function requestClose() {
+    if (asking) return;
+    if (text.trim() && text !== startText) {
+      asking = true;
+      const ok = await confirmDiscard().finally(() => { asking = false; });
+      if (!ok) return;
+    }
+    close();
+  }
+
   function onKey(e: KeyboardEvent) {
-    if (!listImport.open || e.isComposing) return;
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
-    else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); insert(); }
+    if (!listImport.open || e.isComposing || !isTopModal(overlayEl)) return; // 위에 뜬 확인창이 키를 받는다
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); insert(); }
   }
   const srcName = $derived(listImport.src?.label ?? '코드 블록');
   // 입력란에서 Tab 은 포커스 이동 대신 공백 4칸 들여쓰기(여러 줄 선택이면 줄마다, Shift+Tab 은 내어쓰기) — 중첩 목록을 쓰기 위함
@@ -104,10 +119,9 @@
 <svelte:window onkeydowncapture={onKey} />
 
 {#if listImport.open}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) close(); }}>
+  <div class="overlay" transition:backdropFx bind:this={overlayEl} use:modal={{ onClose: requestClose, focus: 'textarea' }}>
     <div class="dialog wide ltt" role="dialog" transition:modalFx aria-modal="true" aria-label="목록·표 글자에서 표 만들기">
-      <h2>목록·표 글자에서 표 만들기</h2>
+      <div class="dlg-head"><h2>목록·표 글자에서 표 만들기</h2><ModalClose onclick={requestClose} /></div>
       <textarea
         bind:this={textEl}
         bind:value={text}
@@ -172,7 +186,7 @@
         {:else}
           <span class="hint">Ctrl+Enter 로 삽입 · 커서 위치(코드·표 안이면 그 뒤)에 들어갑니다</span>
         {/if}
-        <button onclick={close}>취소</button>
+        <button onclick={requestClose}>취소</button>
         <button class="primary" disabled={!grid} onclick={insert}>표 삽입</button>
       </div>
     </div>
@@ -188,7 +202,7 @@
   .inline select, .inline .hdr { margin: 0; width: auto; padding: 3px 6px; font-size: 13px; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 6px; }
   .inline .hdr { width: 150px; }  .preview { min-height: 56px; margin-bottom: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 13px; display: flex; flex-direction: column; gap: 6px; }
   .muted { color: var(--muted); }
-  .err { color: var(--danger, #c0392b); white-space: pre-wrap; }
+  .err { color: var(--danger); white-space: pre-wrap; }
   .meta { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
   .chip { background: var(--accent-soft); color: var(--text); border-radius: 10px; padding: 1px 8px; }
   .scroll { max-height: 220px; overflow: auto; }

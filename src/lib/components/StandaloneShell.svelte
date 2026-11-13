@@ -38,6 +38,7 @@
   import FindBar from './FindBar.svelte';
   import StatusBar from './StatusBar.svelte';
   import SheetBackdrop from './SheetBackdrop.svelte';
+  import SaveFailBadge from './SaveFailBadge.svelte';
   import { panelFx } from '../motion';
   import SearchPanel from './SearchPanel.svelte';
   import Search from '@lucide/svelte/icons/search';
@@ -53,8 +54,11 @@
   import { doc } from '../store.svelte';
   import {
     lib, docUpdatedAt, docFullPath, renameDocBy, renameFolder, removeFolder, moveFolder, moveDoc, createFolder, init, save, flush, exportMd, copyMd, exportAll, openPicker, openDoc, createDoc, removeDoc, onEditorChange,
-    upload, resolveUrl, importFiles, createFromText, exportDocxCurrent, tpl, pickTemplate, clearTemplate, restoreVersion, searchLibrary, renameCurrent,
+    upload, resolveUrl, importFiles, createFromText, exportDocxCurrent, tpl, pickTemplate, clearTemplate, restoreVersion, searchLibrary, renameCurrent, retrySave,
+    trash, trashCtl, removeNodes, moveNodes, downloadNodes,
   } from '../standalone-mode.svelte';
+  import TrashPanel from './TrashPanel.svelte';
+  import TrashFooter from './TrashFooter.svelte';
   import { stripExt, fmtDateTime } from '../utils';
   import { ui, searchShortcut } from '../search/state.svelte';
   import { matchName } from '../search/nameMatch';
@@ -75,6 +79,7 @@
   function closePeeks() { if (!viewport.mobile) { closeLeft(); rightPeek.open = false; } }
   let historyOpen = $state(false);
   let pasteOpen = $state(false);
+  let trashOpen = $state(false); // 파일 탭 자리에 휴지통 보기를 연다
 
   const templateOptions = $derived([
     { id: '', label: '기본 템플릿' },
@@ -117,6 +122,9 @@
     rename: (n, input) => (n.type === 'dir' ? renameFolder(n.path, input) : renameDocBy(n.path, input)),
     remove: async (n) => { if (n.type === 'dir') await removeFolder(n.path); else { const m = metaOf(n.path); if (m) await removeDoc(m); } },
     move: (n, dest) => (n.type === 'dir' ? moveFolder(n.path, dest) : moveDoc(n.path, dest)),
+    removeMany: (ns) => removeNodes(ns),
+    moveMany: (ns, dest) => moveNodes(ns, dest),
+    downloadMany: (ns, format) => downloadNodes(ns, format),
     tipLines: (n) => [docFullPath(n.path), ...(docUpdatedAt(n.path) ? [`수정 ${fmtDateTime(docUpdatedAt(n.path))}`] : [])],
   };
 
@@ -141,9 +149,13 @@
   }
   // 입력 후 디바운스 대기 중인 내용을 탭을 숨기거나 닫을 때 바로 기록한다
   function onHide() { void flush(); }
+  // 저장하지 못한 변경이 있는 채로 닫으면 사라지므로 경고한다
+  function onBeforeUnload(e: BeforeUnloadEvent) {
+    if (doc.saveFailed) e.preventDefault();
+  }
 </script>
 
-<svelte:window onkeydown={onKey} onpagehide={onHide} />
+<svelte:window onkeydown={onKey} onpagehide={onHide} onbeforeunload={onBeforeUnload} />
 <svelte:document onvisibilitychange={() => { if (document.visibilityState === 'hidden') onHide(); }} />
 
 <div class="shell">
@@ -178,7 +190,12 @@
         <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} use:tip={{ title: '모든 문서에서 검색', kbd: 'Ctrl+Shift+F' }}>검색</button>
       </div>
       <div class="tabpane" hidden={ui.tab !== 'files'}>
-        <DocTree nodes={treeNodes} ctl={treeCtl} bind:filter={lib.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx · .html · .odt · .epub 등 · 백업 .zip 파일을 끌어다 놓으세요. 문서는 이 브라우저에 보관됩니다." />
+        {#if trashOpen}
+          <TrashPanel ctl={trashCtl} onBack={() => (trashOpen = false)} />
+        {:else}
+          <DocTree nodes={treeNodes} ctl={treeCtl} bind:filter={lib.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx · .html · .odt · .epub 등 · 백업 .zip 파일을 끌어다 놓으세요. 문서는 이 브라우저에 보관됩니다." />
+          <TrashFooter count={trash.count} onOpen={() => (trashOpen = true)} />
+        {/if}
       </div>
       <div class="tabpane" hidden={ui.tab !== 'search'}>
         <SearchPanel run={searchLibrary} onOpen={openDoc} activeId={doc.path} />
@@ -197,6 +214,7 @@
       {#if doc.path}<PathBadges folder={splitPath(docFullPath(doc.path)).folder} onPick={pickCrumb} />{/if}
       <DocTitle title={doc.path ? stripExt(doc.name) : '문서를 선택하세요'} editable={!!doc.path} onRename={renameCurrent} />
       <span class="spacer"></span>
+      <SaveFailBadge onRetry={() => void retrySave()} />
       {#if doc.path}
         <ModeToggle />
         <HistoryPanel docKey={doc.path} {resolveUrl} onRestore={restoreVersion} current={doc.content} bind:open={historyOpen} />

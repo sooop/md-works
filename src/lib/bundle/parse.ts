@@ -10,7 +10,7 @@ export class BundleError extends Error {}
 /** 압축을 푼 뒤 합계 상한 (zip 폭탄 방어. archive.ts 와 같다) */
 export const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 /**
- * zip 항목 수 상한 (글 + 이미지 + 이력·스레드·글감 레코드가 모두 항목 하나씩이다).
+ * zip 항목 수 상한 (글 + 이미지 + 글별 이력 파일 + 스레드·글감 레코드가 모두 항목 하나씩이다).
  * fflate 는 zip64 를 지원하지 않아 항목 수가 65535 를 넘으면 끝 디렉터리의 16비트 개수가 넘쳐 읽을 수 없다 — 만들 때도 같은 상한을 지킨다.
  */
 export const MAX_ENTRIES = 65_535;
@@ -19,7 +19,15 @@ export const MAX_TEXT_ENTRY_BYTES = 100 * 1024 * 1024;
 
 export const WORKS_DIR = '.works';
 export const BUNDLE_SCHEMA = 'md-works-bundle';
+/**
+ * manifest.version. 1 로 둔다 — 옛 빌드는 자기보다 높은 version 이면 번들 전체(글·글감·코멘트 포함)를 거부하기 때문이다.
+ * 이력을 글당 파일 하나로 묶은 새 배치는 별도 필드 historyLayout 으로 표시하고, 옛 빌드는 모르는 `.works/versions/<글>.json` 항목을 무시한다(이력만 못 읽는다).
+ */
 export const BUNDLE_VERSION = 1;
+/** manifest.historyLayout: 2 = 글 하나의 이력을 `.works/versions/<글>.json`(배열)에 묶는다. 없으면 옛 배치(버전당 파일) */
+export const HISTORY_LAYOUT = 2;
+/** 글 하나의 이력을 한 파일에 묶을 때 파일(압축 전) 크기 목표. 넘으면 `<글>.2.json`, `<글>.3.json` … 으로 나눈다(항목 상한 100MB 보다 넉넉히 낮게) */
+export const VERSION_CHUNK_BYTES = 50 * 1024 * 1024;
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|avif|bmp)$/i;
 const DOC_EXT_RE = /\.md$/i;
@@ -77,6 +85,7 @@ type Kind =
   | { k: 'manifest' } | { k: 'docs' } | { k: 'design' } | { k: 'tombstones' }
   | { k: 'doc' } | { k: 'asset' }
   | { k: 'version' | 'thread'; part: string; id: string }
+  | { k: 'versions'; part: string; seq: number }
   | { k: 'snippet'; id: string };
 
 function classify(path: string): Kind | null {
@@ -86,6 +95,12 @@ function classify(path: string): Kind | null {
     if (f.length === 1 && f[0] === 'docs.json') return { k: 'docs' };
     if (f.length === 1 && f[0] === 'design.json') return { k: 'design' };
     if (f.length === 1 && f[0] === 'tombstones.json') return { k: 'tombstones' };
+    // 새 배치: 글 하나의 이력 묶음. `<글>.json`(= 1번) 또는 나뉜 `<글>.N.json`(N ≥ 2). 글 이름은 항상 .md 로 끝나 모호하지 않다
+    if (f.length === 2 && f[0] === 'versions') {
+      const m = /^(.+\.md)(?:\.(\d{1,6}))?\.json$/i.exec(f[1]);
+      if (m) return { k: 'versions', part: m[1], seq: m[2] ? Number(m[2]) : 1 };
+      return null;
+    }
     if (f.length === 3 && f[2].endsWith('.json')) {
       const id = f[2].slice(0, -5);
       if (!ID_RE.test(id)) return null;
@@ -194,7 +209,8 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
   };
 
   let docMeta: Record<string, unknown> = {};
-  const sidecars: { kind: Extract<Kind, { part: string }>; data: Uint8Array }[] = [];
+  const sidecars: { kind: Extract<Kind, { k: 'version' | 'thread' }>; data: Uint8Array }[] = [];
+  const packs: { part: string; seq: number; data: Uint8Array }[] = [];
   const snippetData: { id: string; data: Uint8Array }[] = [];
   for (const [name, data] of Object.entries(entries)) {
     const kind = kinds.get(name);
@@ -212,6 +228,7 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
         break;
       }
       case 'version': case 'thread': sidecars.push({ kind, data }); break;
+      case 'versions': packs.push({ part: kind.part, seq: kind.seq, data }); break;
       case 'snippet': snippetData.push({ id: kind.id, data }); break;
       default: break;
     }
@@ -223,16 +240,38 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
     if (t !== undefined) doc.updatedAt = t;
   }
 
+  // 이력: 새 배치(글당 묶음)를 먼저, 그다음 옛 배치(버전당 파일). 같은 id 는 처음 것 하나만 둔다(섞인 번들도 된다)
+  const seenV = new Map<string, Set<string>>();
+  const addVersion = (docName: string, rec: Version) => {
+    const seen = seenV.get(docName) ?? new Set<string>();
+    seenV.set(docName, seen);
+    if (seen.has(rec.id)) return;
+    seen.add(rec.id);
+    const list = out.versions.get(docName) ?? [];
+    list.push(rec);
+    out.versions.set(docName, list);
+  };
+  packs.sort((a, b) => (a.part < b.part ? -1 : a.part > b.part ? 1 : a.seq - b.seq));
+  for (const { part, data } of packs) {
+    const docName = decPart(part);
+    if (!isDocName(docName)) continue;
+    const j = jsonOf(data);
+    if (!Array.isArray(j)) continue; // 배열이 아니면 그 묶음은 버린다
+    for (const item of j) {
+      const rec = cleanVersion(item, docName);
+      if (rec) addVersion(docName, rec);
+    }
+  }
   for (const { kind, data } of sidecars) {
     const docName = decPart(kind.part);
     if (!isDocName(docName)) continue; // 글 이름으로 풀리지 않는 파티션은 버린다
     const j = jsonOf(data);
     const rec = kind.k === 'version' ? cleanVersion(j, docName) : cleanThread(j, docName);
     if (!rec || rec.id !== kind.id) continue;
-    const bucket = (kind.k === 'version' ? out.versions : out.threads) as Map<string, unknown[]>;
-    const list = bucket.get(docName) ?? [];
-    list.push(rec);
-    bucket.set(docName, list);
+    if (kind.k === 'version') { addVersion(docName, rec as Version); continue; }
+    const list = out.threads.get(docName) ?? [];
+    list.push(rec as Thread);
+    out.threads.set(docName, list);
   }
   for (const { id, data } of snippetData) {
     const s = cleanSnippet(jsonOf(data));

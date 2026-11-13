@@ -23,6 +23,7 @@
   import { buildFontFamily, FALLBACK_CODE } from '../design/fontStack';
   import { serializeDesign, parseDesign } from '../design/io';
   import CodeSample from './CodeSample.svelte';
+  import Switch from './Switch.svelte';
   import { CODE_THEMES, HL_KEYS, HL_LABELS, type HlKey } from '../design/codeThemes';
   import { codeSel, customCode, AUTO, setCodeTheme, duplicateCodeTheme, setCodeColor, renameCodeTheme, deleteCodeTheme, currentCodeTheme } from '../design/codeTheme.svelte';
   import { contrastRatio } from '../design/colors';
@@ -83,8 +84,8 @@
     el.value = fmt(design.typography[k] as number); // 클램프된 값으로 되돌려 표시
   }
   function onStr(k: TypoKey, e: Event) { setTypo(k, (e.currentTarget as HTMLInputElement).value as never); }
-  function onBool(k: TypoKey, e: Event) { setTypo(k, (e.currentTarget as HTMLInputElement).checked as never); }
-  function toggleFull() { setTypo('contentWidth', (t.contentWidth > 0 ? 0 : 860) as never); }
+  function onBool(k: TypoKey, v: boolean) { setTypo(k, v as never); }
+  function setFull(full: boolean) { setTypo('contentWidth', (full ? 0 : 860) as never); }
 
   const palette = $derived(design.palettes[mode]);
   const warnings = $derived(contrastWarnings(palette));
@@ -159,7 +160,7 @@
 {/snippet}
 
 {#snippet check(k: TypoKey, label: string)}
-  <label class="chk"><input type="checkbox" checked={t[k] as boolean} onchange={(e) => onBool(k, e)} /><span>{label}</span></label>
+  <Switch checked={t[k] as boolean} onchange={(v) => onBool(k, v)}>{label}</Switch>
 {/snippet}
 
 <div class="design-editor">
@@ -295,7 +296,7 @@
           </div>
         </div>
         {#if t.contentWidth > 0}{@render numRow('contentWidth', '본문 폭', 'px')}{/if}
-        <label class="chk"><input type="checkbox" checked={t.contentWidth === 0} onchange={toggleFull} /><span>본문 폭을 창 폭에 맞추기</span></label>
+        <Switch checked={t.contentWidth === 0} onchange={setFull}>본문 폭을 창 폭에 맞추기</Switch>
 
         <div class="preview" aria-label="미리보기">
           <div class="pv-h" style={headStyle}>미리보기 제목 Preview 123</div>
@@ -467,8 +468,6 @@
   .dp-body input[type='text'], .dp-body input[type='number'] {
     padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); width: auto; margin: 0;
   }
-  .chk { display: flex; align-items: center; gap: 8px; font-size: 14px; white-space: nowrap; }
-  .chk input[type="checkbox"] { width: auto; margin: 0; padding: 0; flex: none; }
   .hint { margin: 0; font-size: 12px; color: var(--muted); }
   .hgrid { display: grid; grid-template-columns: 40px repeat(3, minmax(70px, 1fr)); gap: 6px 8px; align-items: center; }
   .hgrid .lbl { width: auto; }

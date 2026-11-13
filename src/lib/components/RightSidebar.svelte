@@ -3,6 +3,7 @@
   // 닫혀 있거나 집중 모드이면 오른쪽 가장자리에 마우스를 대면 팝오버로 나타난다.
   import Pin from '@lucide/svelte/icons/pin';
   import PinOff from '@lucide/svelte/icons/pin-off';
+  import X from '@lucide/svelte/icons/x';
   import SnippetPanel from './SnippetPanel.svelte';
   import CommentsPanel from './CommentsPanel.svelte';
   import OutlinePanel from './OutlinePanel.svelte';
@@ -42,7 +43,7 @@
           use:tip={peek ? { title: '본문 옆에 고정', lines: ['지금은 마우스가 벗어나면 닫힙니다'] } : { title: '고정됨', lines: ['누르면 숨기고, 오른쪽 가장자리에 마우스를 대면 나타납니다'] }}
           onclick={() => { if (peek) pinRight(); else closeRight(); }}>{#if peek}<PinOff size={16} />{:else}<Pin size={16} />{/if}</button>
       {:else}
-        <button class="icon-btn rs-close" aria-label="오른쪽 패널 닫기" use:tip={'닫기'} onclick={closeRight}>✕</button>
+        <button class="icon-btn rs-close" aria-label="오른쪽 패널 닫기" use:tip={'닫기'} onclick={closeRight}><X size={18} /></button>
       {/if}
     </div>
     <div class="tabpane" hidden={right.tab !== 'snippets'}><SnippetPanel /></div>

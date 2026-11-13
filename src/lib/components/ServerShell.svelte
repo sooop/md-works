@@ -36,6 +36,7 @@
   import FindBar from './FindBar.svelte';
   import StatusBar from './StatusBar.svelte';
   import SheetBackdrop from './SheetBackdrop.svelte';
+  import SaveFailBadge from './SaveFailBadge.svelte';
   import { panelFx } from '../motion';
   import SearchPanel from './SearchPanel.svelte';
   import Search from '@lucide/svelte/icons/search';
@@ -50,8 +51,11 @@
   import {
     tree, nav, templates, init, openDoc, save, onEditorChange, upload, resolveUrl, createDoc, createFolder,
     convertImages, createFromText, handleDrop, exportDocxCurrent, exportMdCurrent, copyMdCurrent, refreshTemplates, selectTemplate,
-    restoreVersion, searchFiles, renameCurrent, renameNodeBy, removeNode, moveNode,
+    restoreVersion, searchFiles, renameCurrent, renameNodeBy, removeNode, moveNode, deletePaths, moveMany, downloadMany, flushOnHide, retryConnect,
+    trash, trashCtl,
   } from '../server-mode.svelte';
+  import TrashPanel from './TrashPanel.svelte';
+  import TrashFooter from './TrashFooter.svelte';
   import { stripExt, dirname } from '../utils';
   import { ui, searchShortcut } from '../search/state.svelte';
   import { fmtDateTime } from '../utils';
@@ -72,6 +76,7 @@
   function closePeeks() { if (!viewport.mobile) { closeLeft(); rightPeek.open = false; } }
   let historyOpen = $state(false);
   let pasteOpen = $state(false);
+  let trashOpen = $state(false); // 파일 탭 자리에 휴지통 보기를 연다
 
   const templateOptions = $derived([
     { id: '', label: '기본 템플릿' },
@@ -119,6 +124,9 @@
     rename: (n, input) => renameNodeBy(n, input),
     remove: (n) => removeNode(n),
     move: (n, dest) => moveNode(n, dest),
+    removeMany: (ns) => deletePaths(ns), // 휴지통으로 보낸다(확인 없이, 되돌리기 토스트)
+    moveMany: (ns, dest) => moveMany(ns, dest),
+    downloadMany: (ns, format) => downloadMany(ns, format),
     tipLines: (n) => [n.path, ...(n.mtime ? [`수정 ${fmtDateTime(n.mtime)}`] : [])],
   };
 
@@ -145,11 +153,14 @@
     }
   }
   function onBeforeUnload(e: BeforeUnloadEvent) {
-    if (doc.dirty) e.preventDefault();
+    if (doc.dirty || doc.saveFailed) e.preventDefault();
   }
+  // 탭을 숨기거나 닫을 때 입력 중인 내용을 바로 저장한다
+  function onHide() { flushOnHide(); }
 </script>
 
-<svelte:window onkeydown={onKey} onbeforeunload={onBeforeUnload} />
+<svelte:window onkeydown={onKey} onbeforeunload={onBeforeUnload} onpagehide={onHide} />
+<svelte:document onvisibilitychange={() => { if (document.visibilityState === 'hidden') onHide(); }} />
 
 <div class="shell">
   <SnippetShortcuts />
@@ -186,7 +197,19 @@
         <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} use:tip={{ title: '모든 문서에서 검색', kbd: 'Ctrl+Shift+F' }}>검색</button>
       </div>
       <div class="tabpane" hidden={ui.tab !== 'files'}>
-        <DocTree nodes={tree.nodes} ctl={treeCtl} bind:filter={nav.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx · .html · .odt · .epub 등의 파일을 끌어다 놓으세요." />
+        {#if tree.error}
+          <!-- 연결 실패는 빈 문서 안내와 다르다: 이유와 '다시 시도'를 보여 준다 -->
+          <div class="conn-error" role="alert">
+            <strong>서버에 연결하지 못했습니다</strong>
+            <p>{tree.error}</p>
+            <button onclick={() => void retryConnect()}>다시 시도</button>
+          </div>
+        {:else if trashOpen}
+          <TrashPanel ctl={trashCtl} onBack={() => (trashOpen = false)} />
+        {:else}
+          <DocTree nodes={tree.nodes} ctl={treeCtl} bind:filter={nav.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx · .html · .odt · .epub 등의 파일을 끌어다 놓으세요." />
+          <TrashFooter count={trash.count} onOpen={() => (trashOpen = true)} />
+        {/if}
       </div>
       <div class="tabpane" hidden={ui.tab !== 'search'}>
         <SearchPanel run={searchFiles} onOpen={openDoc} activeId={doc.path} />
@@ -206,6 +229,7 @@
       <DocTitle title={doc.path ? stripExt(doc.name) : '문서를 선택하세요'} editable={!!doc.path} dirty={doc.dirty} onRename={renameCurrent} />
       <span class="spacer"></span>
       {#if doc.path}
+        <SaveFailBadge onRetry={() => void save()} />
         <ModeToggle />
         <!-- 자동 저장이 켜져 있으면(기본) 저장 단추는 필요 없다. Ctrl+S 는 항상 된다 -->
         {#if !settings.autosave}

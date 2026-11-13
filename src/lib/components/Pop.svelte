@@ -63,7 +63,9 @@
   .pop-panel :global(.pop-row) {
     display: flex; align-items: center; gap: 10px; text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: 8px; width: 100%;
   }
-  .pop-panel :global(.pop-row:hover) { background: var(--hover); }
+  .pop-panel :global(.pop-row:hover:not(:disabled)) { background: var(--hover); }
+  .pop-panel :global(.pop-row svg) { color: var(--muted); }
+  .pop-panel :global(.pop-row.on svg), .pop-panel :global(.pop-row.danger svg) { color: inherit; }
   .pop-panel :global(.pop-row.on) { background: var(--accent-soft); }
   .pop-panel :global(.pop-row .txt) { display: flex; flex-direction: column; flex: 1; min-width: 0; }
   .pop-panel :global(.pop-row small) { color: var(--muted); font-size: 11.5px; line-height: 1.35; }

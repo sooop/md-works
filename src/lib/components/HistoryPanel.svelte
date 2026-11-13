@@ -5,7 +5,10 @@
   import { listVersions, setVersionName, type Version } from '../history';
   import { diffText, applyHunks, blocksOf, displayBlock, displaySegs, isEmptyBlock } from '../history/diff';
   import { toast, errMsg } from '../store.svelte';
+  import PinIcon from '@lucide/svelte/icons/pin';
   import { relTime } from '../utils';
+  import { modal } from '../modal';
+  import ModalClose from './ModalClose.svelte';
 
   interface Props {
     docKey: string; // 이력을 조회할 문서 키 (스탠드얼론: 문서 id, 서버: 파일 경로)
@@ -89,13 +92,10 @@
   const noUpload = async () => { throw new Error('이력 미리보기에서는 이미지를 추가할 수 없습니다'); };
 </script>
 
-<svelte:window onkeydown={(e) => { if (open && e.key === 'Escape') open = false; }} />
-
 {#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
+  <div class="overlay" transition:backdropFx use:modal={{ onClose: () => (open = false) }}>
     <div class="dialog history" role="dialog" transition:modalFx aria-modal="true" aria-label="버전 이력">
-      <h2>버전 이력 <span class="sub">24시간 이내 전부 · 이후 시간당/일당 1개로 정리 · 이름 붙인 버전은 보존 · 노트 폴더(.works)와 함께 보관됩니다</span></h2>
+      <div class="dlg-head"><h2>버전 이력 <span class="sub">24시간 이내 전부 · 이후 시간당/일당 1개로 정리 · 이름 붙인 버전은 보존 · 노트 폴더(.works)와 함께 보관됩니다</span></h2><ModalClose onclick={() => (open = false)} /></div>
       {#if loading}
         <p class="muted">불러오는 중…</p>
       {:else if !versions.length}
@@ -107,7 +107,7 @@
               <li>
                 <button class:active={v.id === selectedId} onclick={() => (selectedId = v.id)} use:tip={new Date(v.ts).toLocaleString('ko-KR')}>
                   <span class="vtitle">
-                    {#if v.name}<span class="pin" use:tip={'이름을 붙인 버전'}>📌 {v.name}</span>{/if}
+                    {#if v.name}<span class="pin" use:tip={'이름을 붙인 버전'}><PinIcon size={12} /> {v.name}</span>{/if}
                     <span>{relTime(v.ts)}</span>
                   </span>
                   <span class="muted">{v.content.length.toLocaleString('ko-KR')}자</span>
@@ -188,13 +188,14 @@
   .name-input { width: 160px; }
   .vtitle { display: flex; flex-direction: column; min-width: 0; }
   .pin { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pin :global(svg) { vertical-align: -1px; color: var(--accent); }
   .pad { padding: 8px 16px 0; margin: 0; }
   .hunk { margin: 10px 16px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .hunk-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 12px; background: var(--hover); cursor: pointer; }
   .hunk-head input[type="checkbox"] { width: auto; margin: 0; padding: 0; flex: none; }
   .hunk-head span { white-space: nowrap; }
   .block { margin: 0; padding: 8px 12px; white-space: pre-wrap; word-break: break-word; font: inherit; font-size: 13px; border-top: 1px solid var(--border); }
-  del { background: rgba(220, 60, 60, 0.18); text-decoration: line-through; }
-  ins { background: rgba(60, 170, 90, 0.22); text-decoration: none; }
+  del { background: color-mix(in srgb, var(--fx-danger) 18%, transparent); text-decoration: line-through; }
+  ins { background: color-mix(in srgb, var(--fx-success) 22%, transparent); text-decoration: none; }
   .dim { opacity: 0.55; font-style: italic; }
 </style>

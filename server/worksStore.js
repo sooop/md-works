@@ -15,6 +15,58 @@ export class WorksError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
+// ---- 원자적 쓰기 ----
+// 같은 폴더의 숨김 임시 파일에 쓴 뒤 rename 으로 바꿔치기한다(쓰는 도중 죽어도 원본이 반쯤 잘린 채 남지 않는다).
+// 임시 이름이 '.' 로 시작하고 .md/.json 이 아니어서 트리·검색·번들 목록·사이드카 목록에 잡히지 않는다.
+// 같은 경로에 대한 쓰기는 프로세스 안에서 Promise 체인으로 직렬화한다(Windows·macOS 는 대소문자 무시 키).
+const locks = new Map();
+const lockKey = (file) => (process.platform === 'win32' || process.platform === 'darwin' ? file.toLowerCase() : file);
+const tmpName = (file) => path.join(path.dirname(file), `.${process.pid}-${Math.random().toString(36).slice(2)}.tmp`);
+
+/** 같은 경로에 대한 fn 실행을 한 번에 하나씩 순서대로 돌린다(충돌 검사와 쓰기를 한 덩어리로 묶을 때 쓴다) */
+export function withFileLock(file, fn) {
+  const key = lockKey(file);
+  const run = (locks.get(key) ?? Promise.resolve()).then(fn);
+  const tail = run.then(() => {}, () => {});
+  locks.set(key, tail);
+  void tail.then(() => { if (locks.get(key) === tail) locks.delete(key); });
+  return run;
+}
+
+/** 락 없이 임시 파일 + rename 으로 쓴다. 실패하면 임시 파일을 지운다. 이미 withFileLock 안에 있을 때 쓴다 */
+export async function writeFileAtomicUnlocked(file, data, encoding) {
+  const tmp = tmpName(file);
+  try {
+    await fs.writeFile(tmp, data, encoding);
+    await fs.rename(tmp, file);
+  } catch (e) {
+    await fs.rm(tmp, { force: true }).catch(() => {});
+    throw e;
+  }
+}
+
+export const writeFileAtomic = (file, data, encoding) => withFileLock(file, () => writeFileAtomicUnlocked(file, data, encoding));
+
+/** 이미 있으면 EEXIST 로 실패하는 원자적 쓰기(백업·이미지 이름 충돌 방지). 완성된 내용만 최종 이름으로 나타난다 */
+export function writeFileExclusive(file, data) {
+  return withFileLock(file, async () => {
+    const tmp = tmpName(file);
+    try {
+      await fs.writeFile(tmp, data);
+      try {
+        await fs.link(tmp, file); // 대상이 있으면 EEXIST
+      } catch (e) {
+        if (e.code === 'EEXIST') throw e;
+        // 하드링크를 못 쓰는 파일 시스템: 존재 확인 뒤 rename
+        if (await fs.access(file).then(() => true, () => false)) throw Object.assign(new Error('이미 존재함'), { code: 'EEXIST' });
+        await fs.rename(tmp, file);
+      }
+    } finally {
+      await fs.rm(tmp, { force: true }).catch(() => {});
+    }
+  });
+}
+
 // 파일 시스템에 쓸 수 없는 글자(윈도 기준)와 맨 앞 '.', 끝의 '.'·공백만 %XX 로 바꾼다 (한글 등은 그대로 둔다)
 export const encPart = (s) =>
   s.replace(/[\\/:*?"<>|%\x00-\x1f]/g, (c) => '%' + c.charCodeAt(0).toString(16).padStart(2, '0'))
@@ -70,10 +122,7 @@ export function createWorksFs(safe) {
     if (typeof rec.updatedAt !== 'number' || !Number.isFinite(rec.updatedAt)) throw new WorksError(400, 'updatedAt 필요');
     const d = await partDir(coll, p);
     await fs.mkdir(d, { recursive: true });
-    const file = `${d}/${rec.id}.json`;
-    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(rec), 'utf8');
-    await fs.rename(tmp, file);
+    await writeFileAtomic(`${d}/${rec.id}.json`, JSON.stringify(rec), 'utf8');
   }
 
   async function remove(coll, part, id) {
@@ -99,16 +148,38 @@ export function createWorksFs(safe) {
     await fs.rm(await partDir(coll, p), { recursive: true, force: true });
   }
 
-  // from 파티션의 레코드를 to 로 옮긴다. to 에 같은 id 가 있으면 덮어쓴다.
+  // 레코드의 docKey 를 파티션(문서 경로)에 맞춘다. 이름 변경 뒤 옛 경로가 남으면 이후 저장·삭제가 옛 파티션으로 간다.
+  async function rekey(dir, names, docKey) {
+    for (const n of names) {
+      if (!n.endsWith('.json')) continue;
+      const f = `${dir}/${n}`;
+      try {
+        const rec = JSON.parse(await fs.readFile(f, 'utf8'));
+        if (rec && typeof rec === 'object' && rec.docKey !== docKey) await writeFileAtomic(f, JSON.stringify({ ...rec, docKey }), 'utf8');
+      } catch { /* 깨진 파일은 건너뛴다 */ }
+    }
+  }
+  const sameEntry = async (x, y) => {
+    const [sx, sy] = await Promise.all([fs.stat(x, { bigint: true }), fs.stat(y, { bigint: true })]).catch(() => []);
+    return !!sx && sx.ino !== 0n && sx.ino === sy.ino && sx.dev === sy.dev;
+  };
+
+  // from 파티션의 레코드를 to 로 옮긴다. to 에 같은 id 가 있으면 덮어쓴다. threads 는 레코드의 docKey 도 to 로 고친다.
   async function movePart(coll, from, to) {
     const a = await partDir(coll, check(coll, from));
     const b = await partDir(coll, check(coll, to));
     if (a === b) return;
     const files = (await readDir(a)).filter((e) => e.isFile());
     if (!files.length) return;
-    await fs.mkdir(b, { recursive: true });
-    for (const e of files) await fs.rename(`${a}/${e.name}`, `${b}/${e.name}`);
-    await fs.rm(a, { recursive: true, force: true });
+    // 대소문자만 다른 이름(a.md → A.md)은 대소문자를 구분하지 않는 파일 시스템에서 같은 폴더다 — 파일을 옮기고 a 를 지우면 전부 사라지므로 폴더 이름만 바꾼다
+    if (await sameEntry(a, b)) {
+      await fs.rename(a, b);
+    } else {
+      await fs.mkdir(b, { recursive: true });
+      for (const e of files) await fs.rename(`${a}/${e.name}`, `${b}/${e.name}`);
+      await fs.rm(a, { recursive: true, force: true });
+    }
+    if (coll === 'threads') await rekey(b, files.map((e) => e.name), to);
   }
 
   // 문서(또는 폴더)의 이름 변경·삭제에 맞춰 문서별 파티션을 따라 옮기거나 지운다. 폴더는 접두사로 찾는다.
@@ -129,5 +200,22 @@ export function createWorksFs(safe) {
     }
   }
 
-  return { list, get, put, remove, parts, removePart, movePart, moveDoc, deleteDoc };
+  // 휴지통 이동·복구용: 파티션 폴더의 절대 경로
+  const partPath = (coll, part) => partDir(coll, check(coll, part));
+
+  // 바깥(휴지통)에 있는 파티션 폴더 srcDir 를 part 파티션으로 들여온다. 이미 있으면 파일 단위로 덮어쓴다. threads 는 docKey 도 part 로 고친다.
+  async function importPart(coll, srcDir, part) {
+    const b = await partDir(coll, check(coll, part));
+    const files = (await readDir(srcDir)).filter((e) => e.isFile());
+    if (!(await fs.access(b).then(() => true, () => false))) {
+      await fs.mkdir(path.dirname(b), { recursive: true });
+      await fs.rename(srcDir, b);
+    } else {
+      for (const e of files) await fs.rename(`${srcDir}/${e.name}`, `${b}/${e.name}`);
+      await fs.rm(srcDir, { recursive: true, force: true });
+    }
+    if (coll === 'threads') await rekey(b, files.map((e) => e.name), part);
+  }
+
+  return { list, get, put, remove, parts, removePart, movePart, moveDoc, deleteDoc, partPath, importPart };
 }

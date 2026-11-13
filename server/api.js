@@ -4,8 +4,9 @@ import path from 'node:path';
 import { createReadStream } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
+import { randomBytes } from 'node:crypto';
 import { buildMatcher } from './searchCore.js';
-import { createWorksFs, WorksError } from './worksStore.js';
+import { COLLS, createWorksFs, encPart, WorksError, withFileLock, writeFileAtomic, writeFileAtomicUnlocked, writeFileExclusive } from './worksStore.js';
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.bmp']);
 const MIME = {
@@ -17,17 +18,72 @@ const MAX_UPLOAD = 50 * 1024 * 1024;
 const SKIP_DIRS = new Set(['node_modules', 'assets']);
 const COMMENTS_DIR = '.comments'; // 코멘트 사이드카: .comments/<문서 경로>.json (숨김 폴더라 트리·검색에서 제외된다)
 const SEARCH = { perFile: 50, total: 500, maxBytes: 2 * 1024 * 1024, timeoutMs: 8000 };
-// 노트 폴더 백업: 번들(.mwb 암호화 / .zip)을 숨김 폴더에 쌓고 최근 KEEP_BACKUPS 개만 남긴다(트리·검색에서 제외된다)
+// 노트 폴더 백업: 번들(.mwb 암호화 / .zip)을 숨김 폴더에 쌓고 보존 규칙(아래 backupsToDelete)대로 솎아 낸다(트리·검색에서 제외된다)
 const BACKUP_DIR = '.works-backup';
 const MAX_BACKUP = 200 * 1024 * 1024;
+// 보존 규칙: 최근 KEEP_BACKUPS 개는 전부, 그 밖에는 최근 48시간은 시간당 최신 1개, 최근 30일은 하루당 최신 1개, 나머지는 지운다
 const KEEP_BACKUPS = 10;
+const BACKUP_HOURLY_MS = 48 * 3600_000;
+const BACKUP_DAILY_MS = 30 * 24 * 3600_000;
+// 문서 휴지통: <루트>/.works-trash/<id>/ (meta.json + 옮겨 온 내용). 이 기간이 지난 항목은 서버 시작·목록 조회 때 지운다
+const TRASH_DIR = '.works-trash';
+export const TRASH_KEEP_MS = 30 * 24 * 3600_000;
+const TRASH_ID_RE = /^\d{8}-\d{6}-[0-9a-f]{6}$/;
 const BACKUP_NAME_RE = /^md-works-\d{8}-\d{6}(-\d+)?\.(mwb|zip)$/;
 // 이름 안의 시각(+같은 초 충돌 번호)으로 만든 정렬 키 — 클수록 최신
 const backupKey = (n) => { const m = /^md-works-(\d{8}-\d{6})(?:-(\d+))?\./.exec(n); return m ? m[1] + String(m[2] ?? 1).padStart(6, '0') : ''; };
+// 백업 이름의 시각(로컬 시각으로 기록된다)을 ms 로. 못 읽으면 mtime
+export function backupTime(name, mtime = 0) {
+  const m = /^md-works-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/.exec(name);
+  return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : mtime;
+}
+// 순수 함수: 백업 목록 {name, time(ms)} → 지울 이름 목록. 같은 초 충돌 번호가 큰 쪽을 더 새것으로 본다.
+export function backupsToDelete(items, now, { keepRecent = KEEP_BACKUPS } = {}) {
+  const sorted = [...items].sort((a, b) => (b.time - a.time) || (backupKey(a.name) < backupKey(b.name) ? 1 : -1));
+  const p2 = (n) => String(n).padStart(2, '0');
+  const hourKey = (t) => { const d = new Date(t); return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}`; };
+  const dayKey = (t) => hourKey(t).slice(0, 8);
+  const hours = new Set();
+  const days = new Set();
+  const del = [];
+  sorted.forEach((it, i) => {
+    if (i < keepRecent) return;
+    const age = now - it.time;
+    if (age <= BACKUP_HOURLY_MS) {
+      const k = hourKey(it.time);
+      if (hours.has(k)) del.push(it.name); else hours.add(k);
+    } else if (age <= BACKUP_DAILY_MS) {
+      const k = dayKey(it.time);
+      if (days.has(k)) del.push(it.name); else days.add(k);
+    } else {
+      del.push(it.name);
+    }
+  });
+  return del;
+}
 const SEARCH_WORKER = fileURLToPath(new URL('./searchWorker.js', import.meta.url));
 
+// extra: 응답 JSON 에 덧붙일 필드. 기본 응답은 { error: 메시지 } 이고, extra.error 가 있으면 그 값(오류 코드)으로 대체된다
 class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, extra) { super(message); this.status = status; this.extra = extra; }
+}
+
+// 외부 수정 충돌 검사에서 baseMtime 과 디스크 mtime 이 이 값(ms) 이하로 다르면 같은 것으로 본다(파일 시스템 시각 정밀도 차이)
+const MTIME_TOLERANCE = 2;
+
+// 링크 안의 assets 폴더 이름 인코딩: 원래 링크가 쓰던 형태를 유지한다.
+// encodeURIComponent 형태 / 아카이브 형태(한글·공백은 그대로, ()%#? 만 인코딩) / 그 밖의 부분 인코딩(%XX 가 있으면 전체 인코딩으로)
+const encArchive = (s) => s.replace(/[()%#?]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+const safeDecode = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+function relinkAssets(text, oldName, newName) {
+  return text.replace(/(?<![A-Za-z0-9_])assets\/([^/\r\n)"'<>]+)\//g, (all, seg) => {
+    if (safeDecode(seg) !== oldName) return all;
+    const next = seg === encodeURIComponent(oldName) ? encodeURIComponent(newName)
+      : seg === encArchive(oldName) ? encArchive(newName)
+      : /%[0-9a-fA-F]{2}/.test(seg) ? encodeURIComponent(newName)
+      : encArchive(newName);
+    return `assets/${next}/`;
+  });
 }
 
 // Windows 예약 장치 이름(CON, NUL, COM1 …)이거나 끝이 점·공백인 경로 구성요소인가.
@@ -61,9 +117,11 @@ export function createApi(rootInput, opts = {}) {
     return !!m && allowedHosts.has(m[1].toLowerCase());
   };
   const templatesDir = opts.templatesDir ? path.resolve(opts.templatesDir) : null;
+  const now = () => (opts.now ?? Date.now)(); // 테스트에서 시각을 주입할 수 있게
 
   // 루트 기준 상대경로(슬래시)를 절대경로로 변환한다. symlink 를 해석해 루트 밖이면 거부한다.
-  async function safe(relPath, { mustExist = true } = {}) {
+  // trash: true 는 휴지통 코드만 쓴다. 그 밖의 모든 API 는 .works-trash 아래(symlink 로 돌아가는 경우 포함)를 403 으로 막는다.
+  async function safe(relPath, { mustExist = true, trash = false } = {}) {
     if (typeof relPath !== 'string' || relPath.includes('\0')) throw new HttpError(400, '잘못된 경로');
     // 입력 단계: 어떤 구성요소에도 ':' 불가(`a.md:x` 대체 데이터 스트림, `C:x.md` 드라이브 상대 경로는 resolve 가 ':' 를 지워 버리므로 원문에서 막는다)
     if (relPath.includes(':')) throw new HttpError(400, '경로에 ":" 를 쓸 수 없음');
@@ -72,6 +130,8 @@ export function createApi(rootInput, opts = {}) {
     const fold = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
     if (!(fold(abs) === fold(root) || fold(abs).startsWith(fold(root) + path.sep))) throw new HttpError(403, '루트 밖 경로는 허용되지 않음');
     // 모든 구성요소: 대체 데이터 스트림(`a.md:x`)·드라이브 문자(`C:x`)의 ':' 와 Windows 예약 장치 이름·끝 점/공백 거부
+    const isTrashSeg = (s) => s.toLowerCase() === TRASH_DIR;
+    if (!trash && isTrashSeg(path.relative(root, abs).split(/[\\/]/)[0])) throw new HttpError(403, '휴지통은 직접 접근할 수 없음');
     for (const s of path.relative(root, abs).split(/[\\/]/)) {
       if (!s) continue;
       if (s.includes(':')) throw new HttpError(400, '경로에 ":" 를 쓸 수 없음');
@@ -101,6 +161,7 @@ export function createApi(rootInput, opts = {}) {
     if (!(real === realRoot || real.startsWith(realRoot + path.sep))) {
       throw new HttpError(403, '루트 밖 경로는 허용되지 않음');
     }
+    if (!trash && isTrashSeg(path.relative(realRoot, real).split(/[\\/]/)[0])) throw new HttpError(403, '휴지통은 직접 접근할 수 없음');
     return abs;
   }
 
@@ -143,12 +204,6 @@ export function createApi(rootInput, opts = {}) {
       await fs.mkdir(path.dirname(b), { recursive: true });
       await fs.rename(a, b);
     } catch { /* 코멘트가 없으면 그대로 */ }
-  }
-  async function removeComments(relPath, isFile) {
-    try {
-      const target = await safe(`${COMMENTS_DIR}/${relPath}${isFile ? '.json' : ''}`, { mustExist: false });
-      await fs.rm(target, { recursive: true, force: true });
-    } catch { /* 무시 */ }
   }
   const cleanComment = (c) => {
     if (!c || typeof c !== 'object' || typeof c.quote !== 'string' || !c.quote || typeof c.id !== 'string') return null;
@@ -283,7 +338,7 @@ export function createApi(rootInput, opts = {}) {
     if (!isMwb && !isZip) throw new HttpError(400, '번들(.mwb 또는 zip) 형식이 아님');
     const dir = await safe(BACKUP_DIR, { mustExist: false });
     await fs.mkdir(dir, { recursive: true });
-    const d = new Date();
+    const d = new Date(now());
     const p2 = (n) => String(n).padStart(2, '0');
     const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
     const ext = isMwb ? 'mwb' : 'zip';
@@ -292,12 +347,183 @@ export function createApi(rootInput, opts = {}) {
     const top = used.reduce((m, n) => Math.max(m, Number(/-(\d+)\.(mwb|zip)$/.exec(n)?.[1] ?? 1)), used.length ? 1 : 0);
     let name = top ? `md-works-${stamp}-${top + 1}.${ext}` : `md-works-${stamp}.${ext}`;
     for (let i = top + 2; ; i++) {
-      try { await fs.writeFile(await safe(`${BACKUP_DIR}/${name}`, { mustExist: false }), body, { flag: 'wx' }); break; }
+      try { await writeFileExclusive(await safe(`${BACKUP_DIR}/${name}`, { mustExist: false }), body); break; }
       catch (e) { if (e.code !== 'EEXIST') throw e; name = `md-works-${stamp}-${i}.${ext}`; }
     }
     const all = await listBackups(dir);
-    for (const old of all.slice(KEEP_BACKUPS)) await fs.rm(path.join(dir, old.name), { force: true });
-    return { name, size: body.length, kept: Math.min(all.length, KEEP_BACKUPS) };
+    const drop = new Set(backupsToDelete(all.map((b) => ({ name: b.name, time: backupTime(b.name, b.mtime) })), now()));
+    drop.delete(name); // 방금 쓴 것은 시각이 어긋나(시계 변경 등) 있어도 지우지 않는다
+    for (const old of drop) await fs.rm(path.join(dir, old), { force: true });
+    return { name, size: body.length, kept: all.length - drop.size };
+  }
+
+  // ---- 문서 휴지통 ----
+  // <루트>/.works-trash/<id>/meta.json            { version, id, path, name, type, deletedAt, docs, parts:[{coll,part}] }
+  //                        item/<원래 이름>        글 파일 또는 폴더 통째(.md 가 아닌 파일 포함)
+  //                        assets/                 글의 assets/<글 이름>/ (글 삭제일 때만)
+  //                        comments(.json)         이전 방식 코멘트 사이드카
+  //                        works/<coll>/<encPart(파티션)>/   이력·스레드 파티션
+  // 이 폴더는 safe() 가 trash:true 없이는 막으므로 다른 API 로는 닿지 않는다.
+  const present = (p) => fs.lstat(p).then(() => true, () => false);
+  const docColls = Object.keys(COLLS).filter((c) => COLLS[c]);
+  const trashRoot = () => safe(TRASH_DIR, { mustExist: false, trash: true });
+  const trashItem = (id) => {
+    if (typeof id !== 'string' || !TRASH_ID_RE.test(id)) throw new HttpError(400, '잘못된 휴지통 id');
+    return safe(`${TRASH_DIR}/${id}`, { mustExist: false, trash: true });
+  };
+  async function readMeta(td) {
+    try {
+      const m = JSON.parse(await fs.readFile(path.join(td, 'meta.json'), 'utf8'));
+      if (m && typeof m.path === 'string' && typeof m.name === 'string' && (m.type === 'file' || m.type === 'dir') && Number.isFinite(m.deletedAt)) return m;
+    } catch { /* 깨졌거나 없음 */ }
+    return null;
+  }
+  // 폴더 안의 .md 수(검색과 같은 제외 규칙, symlink 는 따라가지 않는다)
+  async function countDocs(dirAbs) {
+    let n = 0;
+    for (const e of await fs.readdir(dirAbs, { withFileTypes: true }).catch(() => [])) {
+      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
+      if (e.isDirectory()) n += await countDocs(path.join(dirAbs, e.name));
+      else if (e.isFile() && isMd(e.name)) n++;
+    }
+    return n;
+  }
+  // 여러 조각을 rename 으로 옮기다 실패하면 이미 옮긴 것을 되돌린다
+  async function moveAll(steps) {
+    const done = [];
+    try {
+      for (const s of steps) {
+        await fs.mkdir(path.dirname(s.to), { recursive: true });
+        await fs.rename(s.from, s.to);
+        done.push(s);
+      }
+    } catch (e) {
+      for (const s of done.reverse()) await fs.rename(s.to, s.from).catch(() => {});
+      if (e.code === 'ENOTDIR' || e.code === 'EEXIST') throw new HttpError(409, '대상 위치를 쓸 수 없음');
+      throw e;
+    }
+  }
+
+  async function trashMove(relInput) {
+    const abs = await safe(relInput);
+    if (abs === root) throw new HttpError(400, '루트는 삭제할 수 없음');
+    const relp = rel(abs);
+    if (relp.split('/').some((s) => s.startsWith('.'))) throw new HttpError(400, '숨김 항목은 삭제할 수 없음');
+    const st = await fs.stat(abs);
+    const isFile = !st.isDirectory();
+    if (isFile && !isMd(abs)) throw new HttpError(400, '.md 파일만 허용');
+    const t = now();
+    const iso = new Date(t).toISOString(); // YYYY-MM-DDTHH:mm:ss.sssZ
+    const stamp = `${iso.slice(0, 10).replaceAll('-', '')}-${iso.slice(11, 19).replaceAll(':', '')}`;
+    await fs.mkdir(await trashRoot(), { recursive: true });
+    let id; let td;
+    for (;;) {
+      id = `${stamp}-${randomBytes(3).toString('hex')}`;
+      td = await trashItem(id);
+      try { await fs.mkdir(td); break; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+    }
+    try {
+      const steps = [{ from: abs, to: path.join(td, 'item', path.basename(abs)) }];
+      const parts = [];
+      if (isFile) {
+        const a = docAssetsDir(abs);
+        if (await present(a)) steps.push({ from: a, to: path.join(td, 'assets') });
+      }
+      const cm = await safe(`${COMMENTS_DIR}/${relp}${isFile ? '.json' : ''}`, { mustExist: false }).catch(() => null);
+      if (cm && (await present(cm))) steps.push({ from: cm, to: path.join(td, isFile ? 'comments.json' : 'comments') });
+      for (const coll of docColls) {
+        for (const p of await works.parts(coll)) {
+          if (!(isFile ? p === relp : p.startsWith(relp + '/'))) continue;
+          parts.push({ coll, part: p });
+          steps.push({ from: await works.partPath(coll, p), to: path.join(td, 'works', coll, encPart(p)) });
+        }
+      }
+      const meta = { version: 1, id, path: relp, name: path.basename(abs), type: isFile ? 'file' : 'dir', deletedAt: t, docs: isFile ? 1 : await countDocs(abs), parts };
+      await fs.writeFile(path.join(td, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+      await moveAll(steps);
+    } catch (e) {
+      await fs.rm(td, { recursive: true, force: true }).catch(() => {});
+      throw e;
+    }
+    return id;
+  }
+
+  // 30일이 지난 항목(meta 가 깨졌으면 폴더 mtime 기준)을 지운다
+  async function purgeTrash() {
+    const base = await trashRoot();
+    let n = 0;
+    for (const e of await fs.readdir(base, { withFileTypes: true }).catch(() => [])) {
+      if (!e.isDirectory() || !TRASH_ID_RE.test(e.name)) continue;
+      const td = path.join(base, e.name);
+      const at = (await readMeta(td))?.deletedAt ?? (await fs.stat(td).catch(() => null))?.mtimeMs;
+      if (at !== undefined && now() - at > TRASH_KEEP_MS) { await fs.rm(td, { recursive: true, force: true }); n++; }
+    }
+    return n;
+  }
+
+  async function listTrash() {
+    await purgeTrash().catch(() => {});
+    const base = await trashRoot();
+    const items = [];
+    for (const e of await fs.readdir(base, { withFileTypes: true }).catch(() => [])) {
+      if (!e.isDirectory() || !TRASH_ID_RE.test(e.name)) continue;
+      const m = await readMeta(path.join(base, e.name));
+      if (m) items.push({ id: e.name, path: m.path, name: m.name, type: m.type, deletedAt: m.deletedAt, docs: Number.isFinite(m.docs) ? m.docs : 0 });
+    }
+    return items.sort((a, b) => (b.deletedAt - a.deletedAt) || (a.id < b.id ? 1 : -1));
+  }
+
+  async function restoreTrash(id) {
+    const td = await trashItem(id);
+    return withFileLock(td, async () => {
+      const meta = await readMeta(td);
+      if (!meta) throw new HttpError(404, '휴지통에 없는 항목');
+      const isFile = meta.type === 'file';
+      await safe(meta.path, { mustExist: false }); // meta 도 신뢰하지 않는다(경로 탈출·예약어 검사)
+      const src = (await fs.readdir(path.join(td, 'item')).catch(() => []))[0];
+      if (!src) throw new HttpError(404, '휴지통 항목의 내용이 없음');
+      // 같은 이름이 있으면 '이름 (2).md' / '폴더 (2)' 로 비켜 간다(글이면 assets 폴더가 겹치는 경우도)
+      const dirPart = meta.path.includes('/') ? meta.path.slice(0, meta.path.lastIndexOf('/') + 1) : '';
+      const name = meta.path.slice(dirPart.length);
+      const ext = isFile ? name.slice(-3) : '';
+      const stem = isFile ? name.slice(0, -3) : name;
+      let newRel = meta.path;
+      let abs = await safe(newRel, { mustExist: false });
+      for (let n = 2; (await present(abs)) || (isFile && (await present(docAssetsDir(abs)))); n++) {
+        if (n > 1000) throw new HttpError(409, '같은 이름이 너무 많음');
+        newRel = `${dirPart}${stem} (${n})${ext}`;
+        abs = await safe(newRel, { mustExist: false });
+      }
+      const steps = [{ from: path.join(td, 'item', src), to: abs }];
+      if (isFile && (await present(path.join(td, 'assets')))) steps.push({ from: path.join(td, 'assets'), to: docAssetsDir(abs) });
+      const cmSrc = path.join(td, isFile ? 'comments.json' : 'comments');
+      if (await present(cmSrc)) {
+        const cmDst = await safe(`${COMMENTS_DIR}/${newRel}${isFile ? '.json' : ''}`, { mustExist: false });
+        await fs.rm(cmDst, { recursive: true, force: true });
+        steps.push({ from: cmSrc, to: cmDst });
+      }
+      await moveAll(steps);
+      // 이력·스레드 파티션: 이름이 바뀌었으면 파티션 이름(과 스레드 docKey)도 새 경로에 맞춘다
+      for (const { coll, part } of Array.isArray(meta.parts) ? meta.parts : []) {
+        if (!docColls.includes(coll) || typeof part !== 'string' || !(isFile ? part === meta.path : part.startsWith(meta.path + '/'))) continue;
+        const sd = path.join(td, 'works', coll, encPart(part));
+        if (!(await present(sd))) continue;
+        await works.importPart(coll, sd, isFile ? newRel : newRel + part.slice(meta.path.length)).catch(() => { /* 사이드카는 부가 데이터 */ });
+      }
+      if (isFile && newRel !== meta.path) {
+        const oldName = path.basename(meta.path, path.extname(meta.path));
+        const newName = path.basename(newRel, path.extname(newRel));
+        if (oldName !== newName) {
+          await withFileLock(abs, async () => {
+            const text = await fs.readFile(abs, 'utf8');
+            const next = relinkAssets(text, oldName, newName);
+            if (next !== text) await writeFileAtomicUnlocked(abs, next, 'utf8');
+          });
+        }
+      }
+      await fs.rm(td, { recursive: true, force: true });
+      return { ok: true, path: newRel, type: meta.type };
+    });
   }
 
   const routes = {
@@ -346,7 +572,7 @@ export function createApi(rootInput, opts = {}) {
       const clean = comments.map(cleanComment).filter(Boolean);
       if (!clean.length) { await fs.rm(file, { force: true }); return { ok: true }; }
       await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.writeFile(file, JSON.stringify({ version: 1, comments: clean }, null, 2), 'utf8');
+      await writeFileAtomic(file, JSON.stringify({ version: 1, comments: clean }, null, 2), 'utf8');
       return { ok: true };
     },
 
@@ -401,9 +627,12 @@ export function createApi(rootInput, opts = {}) {
       const mtime = q.get('mtime');
       if (mtime !== null && !(Number.isFinite(Number(mtime)) && Number(mtime) > 0 && Number(mtime) <= MAX_MTIME)) throw new HttpError(400, '잘못된 mtime');
       await fs.mkdir(path.dirname(abs), { recursive: true });
-      await fs.writeFile(abs, content, 'utf8');
-      if (mtime !== null) { const t = new Date(Number(mtime)); await fs.utimes(abs, t, t); }
-      return { mtime: Math.round((await fs.stat(abs)).mtimeMs) };
+      // mtime 지정(utimes)까지 한 덩어리로 직렬화한다
+      return withFileLock(abs, async () => {
+        await writeFileAtomicUnlocked(abs, content, 'utf8');
+        if (mtime !== null) { const t = new Date(Number(mtime)); await fs.utimes(abs, t, t); }
+        return { mtime: Math.round((await fs.stat(abs)).mtimeMs) };
+      });
     },
 
     'PUT /api/bundle/asset': async (req, q) => {
@@ -411,7 +640,7 @@ export function createApi(rootInput, opts = {}) {
       const abs = await safe(p, { mustExist: false });
       const body = await readBody(req, MAX_UPLOAD);
       await fs.mkdir(path.dirname(abs), { recursive: true });
-      await fs.writeFile(abs, body);
+      await writeFileAtomic(abs, body);
       return { ok: true };
     },
 
@@ -425,11 +654,22 @@ export function createApi(rootInput, opts = {}) {
     'PUT /api/file': async (req, q) => {
       const abs = await safe(q.get('path'), { mustExist: false });
       if (!isMd(abs)) throw new HttpError(400, '.md 파일만 허용');
-      const { content } = await readJson(req);
+      const { content, baseMtime, force } = await readJson(req);
       if (typeof content !== 'string') throw new HttpError(400, 'content 필요');
+      if (baseMtime !== undefined && (typeof baseMtime !== 'number' || !Number.isFinite(baseMtime))) throw new HttpError(400, 'baseMtime 은 숫자여야 함');
       await fs.mkdir(path.dirname(abs), { recursive: true });
-      await fs.writeFile(abs, content, 'utf8');
-      return { mtime: (await fs.stat(abs)).mtimeMs };
+      // 충돌 검사와 쓰기를 같은 락 안에서 해 그 사이에 다른 저장이 끼어들지 못하게 한다
+      return withFileLock(abs, async () => {
+        if (baseMtime !== undefined && force !== true) {
+          const st = await fs.stat(abs).catch(() => null);
+          if (!st) throw new HttpError(409, '글이 삭제되었거나 이동되었습니다', { error: 'gone', message: '글이 삭제되었거나 이름이 바뀌었습니다' });
+          if (Math.abs(st.mtimeMs - baseMtime) > MTIME_TOLERANCE) {
+            throw new HttpError(409, '외부에서 수정되었습니다', { error: 'conflict', mtime: st.mtimeMs, message: '열어 둔 뒤 다른 곳에서 글이 수정되었습니다' });
+          }
+        }
+        await writeFileAtomicUnlocked(abs, content, 'utf8');
+        return { mtime: (await fs.stat(abs)).mtimeMs };
+      });
     },
 
     'POST /api/create': async (req) => {
@@ -451,7 +691,13 @@ export function createApi(rootInput, opts = {}) {
       const { from, to } = await readJson(req);
       const src = await safe(from);
       const dst = await safe(to, { mustExist: false });
-      if (await exists(dst)) throw new HttpError(409, '대상이 이미 존재함');
+      // 대소문자만 바꾸는 이름 변경(a.md → A.md)은 대소문자를 구분하지 않는 파일 시스템에서 대상이 '이미 있는' 것처럼 보이지만 같은 파일이다.
+      // 경로가 대소문자 무시로 같고 inode 도 같을 때만 허용한다(대소문자를 구분하는 파일 시스템의 별개 파일 A.md 는 inode 가 달라 409)
+      if (await exists(dst)) {
+        const [ss, ds] = await Promise.all([fs.stat(src, { bigint: true }), fs.stat(dst, { bigint: true })]);
+        const sameFile = rel(src).toLowerCase() === rel(dst).toLowerCase() && ss.ino !== 0n && ss.ino === ds.ino && ss.dev === ds.dev;
+        if (!sameFile) throw new HttpError(409, '대상이 이미 존재함');
+      }
       const st = await fs.stat(src);
       if (st.isFile() && !(isMd(src) && isMd(dst))) throw new HttpError(400, '.md 파일만 허용');
       await fs.mkdir(path.dirname(dst), { recursive: true });
@@ -463,32 +709,48 @@ export function createApi(rootInput, opts = {}) {
         const newAssets = docAssetsDir(dst);
         await fs.mkdir(path.dirname(newAssets), { recursive: true });
         await fs.rename(oldAssets, newAssets);
-        const oldPrefix = `assets/${encodeURIComponent(path.basename(oldAssets))}/`;
-        const newPrefix = `assets/${encodeURIComponent(path.basename(newAssets))}/`;
-        if (oldPrefix !== newPrefix) {
-          const text = await fs.readFile(dst, 'utf8');
-          await fs.writeFile(dst, text.split(oldPrefix).join(newPrefix), 'utf8');
+        const oldName = path.basename(oldAssets);
+        const newName = path.basename(newAssets);
+        if (oldName !== newName) {
+          // 읽기-쓰기를 한 락 안에서 해 그 사이 저장이 덮어써지지 않게 한다. 링크는 디코딩해 비교하고 원래 인코딩 형태를 유지한다
+          await withFileLock(dst, async () => {
+            const text = await fs.readFile(dst, 'utf8');
+            const next = relinkAssets(text, oldName, newName);
+            if (next !== text) await writeFileAtomicUnlocked(dst, next, 'utf8');
+          });
         }
       }
       return { path: rel(dst) };
     },
 
-    'DELETE /api/file': async (_req, q) => {
-      const abs = await safe(q.get('path'));
-      if (abs === root) throw new HttpError(400, '루트는 삭제할 수 없음');
-      const st = await fs.stat(abs);
-      if (st.isDirectory()) {
-        await fs.rm(abs, { recursive: true });
-        await removeComments(rel(abs), false);
-        await works.deleteDoc(rel(abs), false).catch(() => {});
-      } else {
-        if (!isMd(abs)) throw new HttpError(400, '.md 파일만 허용');
-        await fs.rm(abs);
-        await fs.rm(docAssetsDir(abs), { recursive: true, force: true });
-        await removeComments(rel(abs), true);
-        await works.deleteDoc(rel(abs), true).catch(() => {});
+    // 삭제는 휴지통으로 옮긴다(글의 assets·코멘트·이력·스레드, 폴더면 안의 모든 파일 포함). 복구는 POST /api/trash/restore
+    'DELETE /api/file': async (_req, q) => ({ ok: true, trashId: await trashMove(q.get('path')) }),
+
+    'GET /api/trash': async () => ({ items: await listTrash() }),
+
+    'POST /api/trash/restore': async (req) => {
+      const { id } = await readJson(req);
+      return restoreTrash(id);
+    },
+
+    // id 가 있으면 그 항목만, 없으면 휴지통 비우기
+    'DELETE /api/trash': async (_req, q) => {
+      if (q.has('id')) {
+        const td = await trashItem(q.get('id'));
+        return withFileLock(td, async () => {
+          if (!(await present(td))) throw new HttpError(404, '휴지통에 없는 항목');
+          await fs.rm(td, { recursive: true, force: true });
+          return { ok: true, removed: 1 };
+        });
       }
-      return { ok: true };
+      const base = await trashRoot();
+      let removed = 0;
+      for (const e of await fs.readdir(base, { withFileTypes: true }).catch(() => [])) {
+        if (!e.isDirectory() || !TRASH_ID_RE.test(e.name)) continue;
+        await fs.rm(path.join(base, e.name), { recursive: true, force: true });
+        removed++;
+      }
+      return { ok: true, removed };
     },
 
     // 이미지 업로드: 본문은 원본 바이너리, doc=문서경로, ext=확장자
@@ -505,7 +767,11 @@ export function createApi(rootInput, opts = {}) {
       const stamp = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
       let name = `${stamp}${ext}`;
       for (let i = 2; await exists(path.join(dir, name)); i++) name = `${stamp}-${i}${ext}`;
-      await fs.writeFile(path.join(dir, name), body);
+      // 이름이 겹치면(동시 업로드) 다음 번호로 넘어가고, 완성된 파일만 최종 이름으로 나타난다
+      for (let i = 2; ; i++) {
+        try { await writeFileExclusive(path.join(dir, name), body); break; }
+        catch (e) { if (e.code !== 'EEXIST') throw e; name = `${stamp}-${i}${ext}`; }
+      }
       return { url: `assets/${encodeURIComponent(path.basename(dir))}/${name}` };
     },
   };
@@ -552,6 +818,8 @@ export function createApi(rootInput, opts = {}) {
     createReadStream(WASM_FILE).on('error', () => res.destroy()).pipe(res);
   }
 
+  void purgeTrash().catch(() => {}); // 서버 시작 때 30일 지난 휴지통 항목 정리
+
   // 처리했으면 true, 아니면 false(다음 핸들러로)
   return async function handle(req, res) {
     const url = new URL(req.url, 'http://localhost');
@@ -580,7 +848,7 @@ export function createApi(rootInput, opts = {}) {
       const status = e instanceof HttpError || e instanceof WorksError ? e.status : 500;
       if (status === 500) console.error(e);
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: e.message }));
+      res.end(JSON.stringify({ error: e.message, ...(e instanceof HttpError ? e.extra : null) }));
     }
     return true;
   };

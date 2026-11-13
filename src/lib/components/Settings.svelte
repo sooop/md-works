@@ -28,6 +28,8 @@
   import { tip } from '../tooltip.svelte';
   import DesignEditor from './DesignEditor.svelte';
   import DesignPreview from './DesignPreview.svelte';
+  import Switch from './Switch.svelte';
+  import { modal } from '../modal';
 
   let { server = false, trigger = true, open = $bindable(false) }: { server?: boolean; trigger?: boolean; open?: boolean } = $props();
 
@@ -85,16 +87,16 @@
 
   function setTheme(t: Theme) { settings.theme = t; applyTheme(); persistSettings(); }
   function setMode(m: ImageMode) { settings.imageMode = m; persistSettings(); }
-  function toggleAutosave() { settings.autosave = !settings.autosave; persistSettings(); }
+  function setAutosave(v: boolean) { settings.autosave = v; persistSettings(); }
   function setTableFmt(f: 'tsv' | 'csv') { settings.tableCopyFormat = f; persistSettings(); }
-  function toggleColors() { settings.snippetColors = !settings.snippetColors; persistSettings(); }
-  function toggleRightHover() { settings.rightHover = !settings.rightHover; persistSettings(); }
-  function toggleAnim() { settings.animations = !settings.animations; document.documentElement.dataset.anim = settings.animations ? 'on' : 'off'; persistSettings(); }
+  function setColors(v: boolean) { settings.snippetColors = v; persistSettings(); }
+  function setRightHover(v: boolean) { settings.rightHover = v; persistSettings(); }
+  function setAnim(v: boolean) { settings.animations = v; document.documentElement.dataset.anim = v ? 'on' : 'off'; persistSettings(); }
 
   // 글자 크기·본문 폭은 디자인 설정('works.design')에 저장된다
   const setFont = (e: Event) => setTypo('fontSize', Number((e.currentTarget as HTMLInputElement).value));
   const setWidth = (e: Event) => setTypo('contentWidth', Number((e.currentTarget as HTMLInputElement).value));
-  const toggleFullWidth = () => setTypo('contentWidth', design.typography.contentWidth > 0 ? 0 : DEFAULT_TYPOGRAPHY.contentWidth);
+  const setFullWidth = (full: boolean) => setTypo('contentWidth', full ? 0 : DEFAULT_TYPOGRAPHY.contentWidth);
   function resetLayout() {
     setTypo('fontSize', DEFAULT_TYPOGRAPHY.fontSize);
     setTypo('contentWidth', DEFAULT_TYPOGRAPHY.contentWidth);
@@ -116,14 +118,11 @@
   const dark = $derived(typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark');
 </script>
 
-<svelte:window onkeydown={(e) => { if (open && e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); open = false; } }} />
-
 {#if trigger}<button class="icon-btn" aria-label="설정" aria-expanded={open} onclick={() => (open = !open)}><SettingsIcon size={18} /></button>{/if}
 
 {#if open}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="overlay" transition:backdropFx onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
-   <div class="sw-stage" transition:modalFx class:island onclick={(e) => { if (e.target === e.currentTarget) open = false; }}>
+  <div class="overlay" transition:backdropFx use:modal={{ onClose: () => (open = false), isBackdrop: (t) => t instanceof HTMLElement && (t.classList.contains('overlay') || t.classList.contains('sw-stage')), focus: 'input' }}>
+   <div class="sw-stage" transition:modalFx class:island>
     <div class="sw" role="dialog" aria-modal="true" aria-label="설정">
       <header class="sw-head">
         <h2><SettingsIcon size={18} /> 설정</h2>
@@ -132,7 +131,7 @@
           <input bind:this={searchEl} bind:value={q} placeholder="설정 검색" aria-label="설정 검색" spellcheck="false" />
           {#if q}<button class="icon-btn" aria-label="검색어 지우기" use:tip={'지우기'} onclick={() => { q = ''; searchEl?.focus(); }}><X size={14} /></button>{/if}
         </div>
-        <button class="icon-btn sw-close" aria-label="설정 닫기" use:tip={{ title: '닫기', kbd: 'Esc' }} onclick={() => (open = false)}><X size={18} /></button>
+        <button class="icon-btn sw-close" aria-label="닫기" use:tip={{ title: '닫기', kbd: 'Esc' }} onclick={() => (open = false)}><X size={18} /></button>
       </header>
 
       <div class="sw-body">
@@ -176,20 +175,20 @@
                   <div class="s-ctl">
                     <input type="range" min={WIDTH.min} max={WIDTH.max} step="20" value={design.typography.contentWidth > 0 ? design.typography.contentWidth : WIDTH.max} disabled={design.typography.contentWidth === 0} oninput={setWidth} aria-label="본문 폭" />
                     <output>{design.typography.contentWidth > 0 ? `${design.typography.contentWidth}px` : '전체'}</output>
-                    <button class="sw-switch" role="switch" aria-checked={design.typography.contentWidth === 0} aria-label="창 폭에 맞추기" use:tip={'창 폭에 맞추기'} onclick={toggleFullWidth}><span></span></button>
+                    <Switch size="lg" checked={design.typography.contentWidth === 0} label="창 폭에 맞추기" tooltip="창 폭에 맞추기" onchange={setFullWidth} />
                   </div>
                 </div>
               {/if}
               {#if __ANIM__ && matches('anim')}
                 <div class="srow">
                   <div class="s-text"><b>애니메이션</b><small>패널·툴팁·모달의 나타남/사라짐과 자동 변경 시 깜빡임 효과를 켭니다. OS 의 '동작 줄이기' 설정이면 이동 없이 페이드만 합니다.</small></div>
-                  <button class="sw-switch" role="switch" aria-checked={settings.animations} aria-label="애니메이션" onclick={toggleAnim}><span></span></button>
+                  <Switch size="lg" checked={settings.animations} label="애니메이션" onchange={setAnim} />
                 </div>
               {/if}
               {#if matches('rightHover')}
                 <div class="srow">
                   <div class="s-text"><b>오른쪽 가장자리 호버로 패널 열기</b><small>창 오른쪽 끝에 마우스를 2초 두면 글감·목차·코멘트 패널이 잠깐 나타납니다. 옆에 자료 창을 띄워 두고 쓸 때는 꺼 두세요. 꺼도 상단바 단추와 Ctrl+Alt+] 로 열 수 있습니다.</small></div>
-                  <button class="sw-switch" role="switch" aria-checked={settings.rightHover} aria-label="오른쪽 가장자리 호버" onclick={toggleRightHover}><span></span></button>
+                  <Switch size="lg" checked={settings.rightHover} label="오른쪽 가장자리 호버" onchange={setRightHover} />
                 </div>
               {/if}
               {#if matches('fontSize') || matches('width')}
@@ -204,7 +203,7 @@
               {#if matches('count')}
                 <div class="srow">
                   <div class="s-text"><b>글자 수에 공백 포함</b><small>하단 상태 표시줄의 글자 수를 세는 기준(눌러서 바꿀 수도 있습니다).</small></div>
-                  <button class="sw-switch" role="switch" aria-checked={writing.spaces} aria-label="글자 수에 공백 포함" onclick={() => setSpaces(!writing.spaces)}><span></span></button>
+                  <Switch size="lg" checked={writing.spaces} label="글자 수에 공백 포함" onchange={setSpaces} />
                 </div>
               {/if}
               {#if matches('tablefmt')}
@@ -240,7 +239,7 @@
               {#if matches('colors')}
                 <div class="srow">
                   <div class="s-text"><b>글감 색 사용</b><small>글감에 색을 지정하고 색으로 거르는 기능을 켭니다. 꺼 두어도 이미 지정한 색은 카드에 보입니다.</small></div>
-                  <button class="sw-switch" role="switch" aria-checked={settings.snippetColors} aria-label="글감 색 사용" onclick={toggleColors}><span></span></button>
+                  <Switch size="lg" checked={settings.snippetColors} label="글감 색 사용" onchange={setColors} />
                 </div>
               {/if}
             </section>
@@ -252,7 +251,7 @@
               {#if server && matches('autosave')}
                 <div class="srow">
                   <div class="s-text"><b>자동 저장</b><small>입력이 0.7초 멈추면 저장하고, 계속 쓰는 중에도 10초마다 저장합니다.</small></div>
-                  <button class="sw-switch" role="switch" aria-checked={settings.autosave} aria-label="자동 저장" onclick={toggleAutosave}><span></span></button>
+                  <Switch size="lg" checked={settings.autosave} label="자동 저장" onchange={setAutosave} />
                 </div>
               {/if}
               {#if !server && !needle}
@@ -333,12 +332,6 @@
   .card.on { border-color: var(--accent); background: var(--accent-soft); }
   .card :global(.ck) { color: var(--primary); }
   .card:not(.left) :global(.ck) { position: absolute; top: 8px; right: 8px; }
-  .sw-switch { position: relative; width: 42px; height: 24px; flex: none; padding: 0; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--border); transition: background 0.15s; }
-  .sw-switch span { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.15s; }
-  /* 좁은 화면에서 상단바 버튼에 걸리는 최소 크기(40px)가 스위치를 네모로 만들지 않게 */
-  .sw .sw-switch.sw-switch { min-width: 42px; min-height: 24px; }
-  .sw-switch[aria-checked='true'] { background: var(--primary); border-color: var(--primary); }
-  .sw-switch[aria-checked='true'] span { transform: translateX(18px); }
   .primary-btn { display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--primary); background: var(--primary); color: var(--on-primary); font-weight: 600; }
   .primary-btn:hover { filter: brightness(1.08); background: var(--primary); }
   .linkish { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; color: var(--muted); padding: 4px 6px; }

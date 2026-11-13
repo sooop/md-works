@@ -1,5 +1,9 @@
 <script lang="ts">
   // ⋯ 메뉴: 작업(이력) → 내보내기 → 문서 도구 → 앱(설정·백업) 순. 모든 항목에 아이콘을 붙이고, 드물게 쓰는 것은 접는 하위 메뉴로 둔다.
+  // 키: 열면 첫 항목에 포커스, ↑/↓(끝에서 돌아감)·Home/End 이동, 하위 메뉴 항목은 →/Enter/Space 로 열고(첫 항목으로) ←로 닫는다(우클릭 메뉴와 같은 동작).
+  // Esc·Tab 은 닫고 ⋯ 단추로 포커스 복귀, 바깥 클릭으로도 닫는다.
+  // 말줄임표(…): 이어서 입력·확인이 필요한 항목에만 공백 없이 붙인다.
+  import { tick } from 'svelte';
   import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import Check from '@lucide/svelte/icons/check';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
@@ -49,35 +53,83 @@
   let { hasDoc, onSettings, onBackup, backupStale = false, onHistory, onDocx, onPrint, onDelete, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
 
   let open = $state(false);
+  let btn = $state<HTMLButtonElement>();
+  let list = $state<HTMLElement>();
   let sub = $state<'' | 'export' | 'tools'>(''); // 펼친 하위 메뉴(하나만)
 
   function toggle() {
     open = !open;
-    if (open) { sub = ''; onOpen?.(); }
+    if (open) { sub = ''; onOpen?.(); void tick().then(() => items()[0]?.focus()); }
+  }
+  function close(restore = false) {
+    if (!open) return;
+    open = false;
+    if (restore) btn?.focus();
   }
   function run(fn: () => void) {
     open = false;
     fn();
   }
   const flip = (k: 'export' | 'tools') => { sub = sub === k ? '' : k; };
+
+  const items = () => [...(list?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
+  /** 하위 메뉴를 열고 닫는다. 키보드로 열 때는 그 안의 첫 항목으로 간다 */
+  async function setSub(k: 'export' | 'tools', on: boolean, focusFirst = false) {
+    sub = on ? k : '';
+    if (!on) return;
+    await tick();
+    if (focusFirst) list?.querySelector<HTMLElement>(`.subgroup[aria-label="${k === 'export' ? '내보내기' : '문서 도구'}"] [role^="menuitem"]`)?.focus();
+  }
+  function onMenuKey(e: KeyboardEvent) {
+    if (e.isComposing) return;
+    const t = e.target as HTMLElement;
+    const toggleKey = t.getAttribute('aria-expanded') !== null ? (t.dataset.sub as 'export' | 'tools' | undefined) : undefined;
+    if (e.key === 'Tab') { e.preventDefault(); close(true); return; }
+    // 하위 메뉴 여닫기: 머리글 항목에서 →·Enter·Space, 하위 항목 어디서나 ←(머리글로 돌아가며 접는다)
+    if (toggleKey && (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      if (sub !== toggleKey) void setSub(toggleKey, true, true);
+      else if (e.key === 'ArrowRight') void setSub(toggleKey, true, true);
+      else void setSub(toggleKey, false);
+      return;
+    }
+    if (e.key === 'ArrowLeft') {
+      const head = toggleKey ?? (t.closest('.subgroup') ? (t.closest('.subgroup')!.getAttribute('aria-label') === '내보내기' ? 'export' : 'tools') : undefined);
+      if (head && sub === head) {
+        e.preventDefault();
+        const owner = list?.querySelector<HTMLElement>(`[data-sub="${head}"]`);
+        sub = '';
+        owner?.focus();
+      }
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const all = items();
+    if (!all.length) return;
+    const i = all.indexOf(document.activeElement as HTMLElement);
+    const n = all.length;
+    all[e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : (i + (e.key === 'ArrowDown' ? 1 : -1) + n) % n]?.focus();
+  }
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') open = false; }} />
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && open) { e.preventDefault(); close(true); } }} />
 
 <div class="menu">
-  <button class="icon-btn menu-btn" onclick={toggle} aria-expanded={open} aria-haspopup="menu" aria-label="메뉴" use:tip={backupStale ? { title: '메뉴', lines: ['백업한 지 오래됐습니다'] } : '메뉴 (이력·내보내기·설정·백업)'}>
+  <button class="icon-btn menu-btn" bind:this={btn} onclick={toggle} aria-expanded={open} aria-haspopup="menu" aria-label="메뉴" use:tip={backupStale ? { title: '메뉴', lines: ['백업한 지 오래됐습니다'] } : '메뉴 (이력·내보내기·설정·백업)'}>
     <Ellipsis size={18} />{#if backupStale}<span class="stale-dot" aria-hidden="true"></span>{/if}
   </button>
   {#if open}
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <div class="backdrop" onclick={() => (open = false)}></div>
-    <div class="popover menu-list" role="menu" transition:popFx>
+    <div class="backdrop" onclick={() => close()}></div>
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="popover menu-list" role="menu" tabindex="-1" bind:this={list} onkeydown={onMenuKey} transition:popFx>
       <button role="menuitem" class="mi" onclick={() => run(openPalette)}><Command size={16} /><span class="t">명령 팔레트</span><kbd>Ctrl+K</kbd></button>
       <hr />
       {#if hasDoc}
         <button role="menuitem" class="mi" onclick={() => run(onHistory)}><History size={16} /><span class="t">이전 버전 (이력)</span></button>
 
-        <button role="menuitem" class="mi" aria-expanded={sub === 'export'} onclick={() => flip('export')}>
+        <button role="menuitem" class="mi" data-sub="export" aria-haspopup="true" aria-expanded={sub === 'export'} onclick={() => flip('export')}>
           <Download size={16} /><span class="t">내보내기</span>{#if sub === 'export'}<ChevronDown size={14} class="chev" />{:else}<ChevronRight size={14} class="chev" />{/if}
         </button>
         {#if sub === 'export'}
@@ -85,11 +137,11 @@
             {#if onMd}<button role="menuitem" class="mi" onclick={() => run(onMd)}><FileDown size={15} /><span class="t">.md 파일로 저장</span></button>{/if}
             {#if onCopyMd}<button role="menuitem" class="mi" onclick={() => run(onCopyMd)}><Copy size={15} /><span class="t">마크다운 텍스트 복사</span></button>{/if}
             <button role="menuitem" class="mi" onclick={() => run(onDocx)}><FileType size={15} /><span class="t">.docx 로 내보내기</span></button>
-            {#if onPrint}<button role="menuitem" class="mi" onclick={() => run(onPrint)}><Printer size={15} /><span class="t">인쇄 …</span></button>{/if}
+            {#if onPrint}<button role="menuitem" class="mi" onclick={() => run(onPrint)}><Printer size={15} /><span class="t">인쇄…</span></button>{/if}
           </div>
         {/if}
 
-        <button role="menuitem" class="mi" aria-expanded={sub === 'tools'} onclick={() => flip('tools')}>
+        <button role="menuitem" class="mi" data-sub="tools" aria-haspopup="true" aria-expanded={sub === 'tools'} onclick={() => flip('tools')}>
           <Wrench size={16} /><span class="t">문서 도구</span>{#if sub === 'tools'}<ChevronDown size={14} class="chev" />{:else}<ChevronRight size={14} class="chev" />{/if}
         </button>
         {#if sub === 'tools'}

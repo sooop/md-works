@@ -65,8 +65,8 @@ html.focus-mode .milkdown .ProseMirror { padding-bottom: 50vh; }
   overflow: hidden;
   flex: none;
 }
-.statusbar .sb-bar > span { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
-.statusbar .sb-bar.reached > span { background: #4c8a5a; }
+.statusbar .sb-bar > span { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width var(--dur-2, 0.2s) var(--ease-out, ease-out), background-color var(--dur-2, 0.2s); }
+.statusbar .sb-bar.reached > span { background: var(--fx-success); }
 @media (prefers-reduced-motion: reduce) { .statusbar .sb-bar > span { transition: none; } }
 
 /* ---- 좁은 화면: 사이드바를 하단 시트로 ---- */

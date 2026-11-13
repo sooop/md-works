@@ -59,7 +59,7 @@ export function asUrl(text: string): string | null {
 
 export type BodyPart = { type: 'text'; v: string } | { type: 'img'; v: string; alt: string };
 
-export interface BodyLine { kind: 'quote' | 'li' | 'p'; text: string }
+export interface BodyLine { kind: 'quote' | 'li' | 'p'; text: string; /** 중첩 목록의 단계(1 이상일 때만 있다). 들여쓰기 2칸 또는 탭 하나가 한 단계 */ depth?: number }
 
 /**
  * 텍스트 조각을 줄 단위로 나눠 인용('> ')·목록('- ', '* ')만 가볍게 알아본다. 기호는 text 에서 뺀다.
@@ -71,8 +71,11 @@ export function bodyLines(text: string): BodyLine[] {
   return lines.map((ln): BodyLine => {
     const q = /^\s{0,3}>\s?(.*)$/.exec(ln);
     if (q) return { kind: 'quote', text: q[1] };
-    const li = /^\s{0,3}[-*]\s+(.*)$/.exec(ln);
-    if (li) return { kind: 'li', text: li[1] };
+    const li = /^([ \t]*)[-*]\s+(.*)$/.exec(ln);
+    if (li) {
+      const depth = Math.floor(li[1].replace(/\t/g, '  ').length / 2);
+      return depth ? { kind: 'li', text: li[2], depth } : { kind: 'li', text: li[2] };
+    }
     return { kind: 'p', text: ln };
   });
 }
