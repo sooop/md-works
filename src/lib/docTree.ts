@@ -58,6 +58,9 @@ export function latest(node: DocNode): number {
  *  직접 순서에 없는 항목은 폴더 먼저·이름순으로 뒤에 붙는다 */
 export function sortSiblings(nodes: DocNode[], mode: SortMode, order: string[] = []): DocNode[] {
   const rank = new Map(order.map((n, i) => [n, i]));
+  // 비교 함수 안에서 하위 트리를 다시 훑지 않도록 폴더의 대표 수정 시각을 한 번만 계산한다
+  const stamp = new Map<DocNode, number>();
+  if (mode === 'mtime') for (const n of nodes) stamp.set(n, latest(n));
   const cmp = (a: DocNode, b: DocNode): number => {
     if (mode === 'manual') {
       const ra = rank.get(a.name);
@@ -67,7 +70,7 @@ export function sortSiblings(nodes: DocNode[], mode: SortMode, order: string[] =
       if (rb !== undefined) return 1;
     }
     if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-    if (mode === 'mtime') return latest(b) - latest(a) || byName(a.name, b.name);
+    if (mode === 'mtime') return (stamp.get(b) ?? 0) - (stamp.get(a) ?? 0) || byName(a.name, b.name);
     return byName(a.name, b.name);
   };
   return [...nodes].sort(cmp);

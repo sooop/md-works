@@ -43,6 +43,12 @@
   import { buildPrintClone } from '../printCode';
   import { flashAfter } from '../flashDoc';
   import { splitFrontmatter, joinFrontmatter, frontInner, frontOuter } from '../frontmatter';
+  import { restoreWikiLinks } from '../wikilink/roundtrip';
+  import { attachWikiLinks, type WikiCtl } from '../wikilink/plugin';
+  import { attachWikiSuggest, type SuggestCtl, type SuggestView } from '../wikilink/suggest';
+  import { openWikiLink } from '../wikilink/actions';
+  import { wiki } from '../wikilink/env.svelte';
+  import WikiSuggest from './WikiSuggest.svelte';
 
   interface Props {
     initial: string;
@@ -58,7 +64,8 @@
   const split = untrack(() => splitFrontmatter(initial));
   let front = $state(split.front);
   let frontOpen = $state(false);
-  const emit = (body: string) => joinFrontmatter(front, body);
+  // 직렬화기가 `[[글]]` 을 `\[\[글]]` 로 이스케이프하므로 .md 에는 글자 그대로 남도록 되돌린다(wikilink/roundtrip.ts)
+  const emit = (body: string) => joinFrontmatter(front, restoreWikiLinks(body));
   function editFront(e: Event) {
     front = frontOuter((e.currentTarget as HTMLTextAreaElement).value);
     onChange(emit(builder?.getMarkdown() ?? ''));
@@ -82,6 +89,15 @@
   $effect(() => {
     const ro = readonly;
     if (ready) builder?.setReadonly(ro);
+  });
+
+  // 글 사이 링크 `[[…]]`: 표시·클릭(wikilink/plugin)과 `[[` 자동 완성(wikilink/suggest). 글 목록은 모드가 내주는 LinkHost 에서 읽는다
+  let wikiCtl: WikiCtl | undefined;
+  let suggestCtl: SuggestCtl | undefined;
+  let suggest = $state<SuggestView | null>(null);
+  $effect(() => {
+    const docs = wiki.host?.docs();
+    if (ready && docs) wikiCtl?.setDocs(docs); // 목록이 바뀌면 같은 범위를 다시 해석한다
   });
 
   // 읽기 모드: 본문 링크 클릭은 새 창(탭)으로 연다. 편집 모드는 Crepe 의 링크 툴팁이 처리한다
@@ -133,6 +149,7 @@
     let unbindLatex: (() => void) | undefined;
     let unbindTableKeys: (() => void) | undefined;
     let unbindRowMenu: (() => void) | undefined;
+    let mine: Partial<typeof editorBridge> | null = null;
     let disposed = false;
     untrack(() => {
       const c = new CrepeBuilder({ root: host, defaultValue: split.body })
@@ -204,6 +221,15 @@
           notionHeadingBackspace(c.editor);
           if (!readonly) normalizeNow(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           builder = c;
+          if (!preview) {
+            const wv = c.editor.action((ctx) => ctx.get(editorViewCtx));
+            wikiCtl = attachWikiLinks(wv, { onOpen: (target, res) => { if (wiki.host) void openWikiLink(wiki.host, target, res); } }, wiki.host?.docs() ?? []);
+            suggestCtl = attachWikiSuggest(wv, {
+              docs: () => wiki.host?.docs() ?? [],
+              current: () => wiki.host?.current()?.path ?? '',
+              onChange: (v) => { suggest = v; },
+            });
+          }
           ready = true;
           unbindTable = attachTableTools(c.editor.action((ctx) => ctx.get(editorViewCtx)), tableEnv); // 표 → TSV/CSV 복사·저장
           unbindPicker = attachCodePicker(host);
@@ -252,6 +278,8 @@
             editorBridge.insertCode = (lang, text) => { if (!insertable()) return false; insertCodeAtCursor(view, lang, text); return true; };
             editorBridge.codeSource = () => codeSourceAt(view, view.state.selection.from);
             editorBridge.selectionSource = () => c.editor.action((ctx) => selectionSourceAt(view, ctx.get(serializerCtx)));
+            // 정리 때 '지금 브리지가 내 것일 때만' 지우기 위해 내가 설치한 함수 참조를 보관한다
+            mine = { getMarkdown: editorBridge.getMarkdown, preparePrint: editorBridge.preparePrint, focus: editorBridge.focus, command: editorBridge.command, insertTable: editorBridge.insertTable, insertCode: editorBridge.insertCode, codeSource: editorBridge.codeSource, selectionSource: editorBridge.selectionSource };
             if (focusNext.on) { focusNext.on = false; editorBridge.focus(); } // 새로 만든 글: 바로 타이핑할 수 있게
           }
         }
@@ -261,7 +289,20 @@
       disposed = true;
       ready = false;
       builder = undefined;
-      if (!preview) { editorBridge.focus = null; editorBridge.command = null; editorBridge.insertTable = null; editorBridge.insertCode = null; editorBridge.codeSource = null; editorBridge.selectionSource = null; }
+      wikiCtl?.destroy();
+      suggestCtl?.destroy();
+      wikiCtl = suggestCtl = undefined;
+      suggest = null;
+      // 문서를 바꾸면 새 에디터가 브리지를 먼저 덮어쓴 뒤 옛 에디터의 정리가 돌 수 있다 — 내 것일 때만 되돌린다(파괴된 에디터를 클로저로 붙잡지 않도록)
+      if (mine) {
+        const b = editorBridge as unknown as Record<string, unknown>;
+        const m = mine as Record<string, unknown>;
+        for (const k of Object.keys(m)) {
+          if (b[k] !== m[k]) continue;
+          b[k] = k === 'getMarkdown' ? () => doc.content : null;
+        }
+        mine = null;
+      }
       unbind?.();
       unbindTable?.();
       unbindCode?.();
@@ -273,7 +314,7 @@
       unbindRowMenu?.();
       if (ctl) {
         ctl.destroy();
-        if (finder.ctl === ctl) { finder.ctl = null; finder.total = 0; finder.current = -1; finder.error = ''; }
+        if (finder.ctl === ctl) { finder.ctl = null; finder.total = 0; finder.current = -1; finder.error = ''; Object.assign(finder, { notice: '' }); }
       }
       void crepe?.destroy();
     };
@@ -293,8 +334,17 @@
   </details>
 {/if}
 <div class="editor-host" class:is-readonly={readonly} bind:this={host}></div>
+<WikiSuggest v={suggest} onpick={(i) => suggestCtl?.pick(i)} />
 
 <style>
+  /* 글 사이 링크 `[[…]]`: 있는 글은 링크 색, 없는 글은 흐린 점선 밑줄, 모호하면 경고 색. 읽기 모드에서만 손가락 커서(편집 중에는 Ctrl+클릭) */
+  .editor-host :global(.ProseMirror .wl) { border-radius: 2px; }
+  .editor-host :global(.ProseMirror .wl-ok) { color: var(--primary); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  .editor-host :global(.ProseMirror .wl-missing) { color: var(--muted); text-decoration: underline dotted; text-underline-offset: 3px; opacity: 0.85; }
+  .editor-host :global(.ProseMirror .wl-ambiguous) { color: var(--fx-warn); text-decoration: underline; text-decoration-style: wavy; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+  .editor-host.is-readonly :global(.ProseMirror .wl) { cursor: pointer; }
+  .editor-host:not(.is-readonly) :global(.ProseMirror .wl:hover) { background: var(--hover); }
+
   .frontmatter { max-width: var(--editor-width, 980px); margin: 0 auto; padding: 24px 48px 0; box-sizing: content-box; }
   .frontmatter summary { cursor: pointer; font-size: 12px; color: var(--muted); user-select: none; }
   .frontmatter textarea {

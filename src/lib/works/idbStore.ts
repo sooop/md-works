@@ -14,7 +14,12 @@ export function createIdbStore(dbName = 'works-data'): WorksStore {
         if (!req.result.objectStoreNames.contains(c)) req.result.createObjectStore(c, { keyPath: 'id' }).createIndex('part', '_part');
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onblocked = () => console.warn('works-data: 다른 탭이 이전 버전 연결을 닫을 때까지 기다립니다'); // 거절하지 않고 열릴 때까지 기다린다
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); dbPromise = undefined; }; // 다른 탭이 스키마를 올리면 연결을 놓아 준다
+      resolve(db);
+    };
     req.onerror = () => { dbPromise = undefined; reject(req.error); };
   }));
 
@@ -68,8 +73,19 @@ export function createIdbStore(dbName = 'works-data'): WorksStore {
       await wait(tx);
     },
     async parts(coll) {
-      const rows = await ask<Row[]>((await open()).transaction(coll).objectStore(coll).getAll());
-      return [...new Set(rows.map((r) => r._part))];
+      // 레코드 본문을 읽지 않고 인덱스 키(파티션 이름)만 중복 없이 훑는다
+      const idx = (await open()).transaction(coll).objectStore(coll).index('part');
+      return new Promise<string[]>((resolve, reject) => {
+        const out: string[] = [];
+        const req = idx.openKeyCursor(null, 'nextunique');
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (!cur) { resolve(out); return; }
+          out.push(cur.key as string);
+          cur.continue();
+        };
+        req.onerror = () => reject(req.error);
+      });
     },
     async removePart(coll, part) {
       const p = partOf(coll, part);

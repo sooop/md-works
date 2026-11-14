@@ -19,8 +19,9 @@ const isBlankPara = (n: PMNode) => n.type.name === 'paragraph' && n.content.size
 /** 본문에서 처음 참조된 순서의 라벨 목록 */
 export function refLabels(doc: PMNode): string[] {
   const out: string[] = [];
+  const seen = new Set<string>();
   doc.descendants((n) => {
-    if (n.type.name === REF && !out.includes(n.attrs.label)) out.push(n.attrs.label);
+    if (n.type.name === REF && !seen.has(n.attrs.label)) { seen.add(n.attrs.label); out.push(n.attrs.label); }
     return true;
   });
   return out;
@@ -29,12 +30,16 @@ export function refLabels(doc: PMNode): string[] {
 /** 정의 블록(최상위)을 끝으로 모으고 참조 순서로 정렬하는 트랜잭션. 이미 그렇게 되어 있으면 null */
 export function normalizeFootnotes(state: EditorState): Transaction | null {
   const { doc } = state;
+  // 각주 정의가 없는 문서(대부분)는 최상위 블록만 훑고 바로 빠진다
+  let hasDef = false;
+  doc.forEach((node) => { if (node.type.name === DEF) hasDef = true; });
+  if (!hasDef) return null;
   const kids: { node: PMNode; pos: number }[] = [];
   doc.forEach((node, pos) => kids.push({ node, pos }));
   const defs = kids.filter((k) => k.node.type.name === DEF);
-  if (!defs.length) return null;
   const order = refLabels(doc);
-  const rank = (n: PMNode) => { const i = order.indexOf(n.attrs.label); return i < 0 ? order.length : i; };
+  const orderIdx = new Map(order.map((l, i) => [l, i] as const));
+  const rank = (n: PMNode) => orderIdx.get(n.attrs.label) ?? order.length;
   const sorted = defs.map((d, i) => ({ d, i })).sort((a, b) => rank(a.d.node) - rank(b.d.node) || a.i - b.i).map((x) => x.d);
 
   // 이미 끝에 연속으로 모여 있고(뒤따르는 빈 문단 하나는 허용) 순서도 맞는지
@@ -100,8 +105,19 @@ export function insertFootnote(view: EditorView, label?: string): boolean {
 
 const key = new PluginKey('footnotes');
 
-const footnotePlugin = $prose(() => new Plugin({
+/** 첫 정의 위에 구분선 표식을 다는 DecorationSet. 문서가 바뀔 때만 다시 계산한다 */
+function firstDefDeco(doc: PMNode): DecorationSet | null {
+  let first = -1, size = 0;
+  doc.forEach((n, p) => { if (first < 0 && n.type.name === DEF) { first = p; size = n.nodeSize; } });
+  return first < 0 ? null : DecorationSet.create(doc, [Decoration.node(first, first + size, { class: 'fn-first' })]);
+}
+
+export function createFootnotePlugin() { return new Plugin({
   key,
+  state: {
+    init: (_c, state) => ({ set: firstDefDeco(state.doc) }),
+    apply: (tr, prev: { set: DecorationSet | null }, _o, state) => (tr.docChanged ? { set: firstDefDeco(state.doc) } : prev),
+  },
   appendTransaction(trs, _old, state) {
     if (!trs.some((t) => t.docChanged)) return null;
     return normalizeFootnotes(state);
@@ -109,9 +125,7 @@ const footnotePlugin = $prose(() => new Plugin({
   props: {
     // 첫 정의 위에 구분선을 그리기 위한 표식
     decorations(state) {
-      let first = -1, size = 0;
-      state.doc.forEach((n, p) => { if (first < 0 && n.type.name === DEF) { first = p; size = n.nodeSize; } });
-      return first < 0 ? null : DecorationSet.create(state.doc, [Decoration.node(first, first + size, { class: 'fn-first' })]);
+      return (key.getState(state) as { set: DecorationSet | null } | undefined)?.set ?? null;
     },
     handleDOMEvents: {
       mousedown(view, e) {
@@ -137,7 +151,9 @@ const footnotePlugin = $prose(() => new Plugin({
       },
     },
   },
-}));
+}); }
+
+const footnotePlugin = $prose(() => createFootnotePlugin());
 
 // `[^라벨]` 입력 → 각주 참조(정의가 없으면 끝에 만든다)
 const footnoteInput = $inputRule(() => new InputRule(/\[\^([^\]\s^]+)\]$/, (state, match, start, end) => {

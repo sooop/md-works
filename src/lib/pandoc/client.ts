@@ -7,7 +7,8 @@
 import PandocWorker from './pandoc.worker?worker&inline'
 import type { PandocConvertResult } from 'pandoc-wasm-core'
 import type { PandocFiles, PandocWorkerRequest, PandocWorkerResponse } from './pandoc.worker'
-import { getPandocWasm, type Progress } from './wasmStore'
+import { clearPandocCache, getPandocWasm, type Progress } from './wasmStore'
+import { CONVERT_TIMEOUT_MS, PandocInitError, waitForInit, withTimeout } from './lifecycle'
 
 interface PendingConvert {
   resolve: (r: PandocConvertResult) => void
@@ -18,6 +19,15 @@ let worker: Worker | null = null
 let readyPromise: Promise<void> | null = null
 let nextId = 1
 const pendingConverts = new Map<number, PendingConvert>()
+
+/** 죽었거나 시간 초과한 워커를 종료하고 다음 호출이 새로 띄우게 한다. 이미 교체된 워커면 건드리지 않는다. */
+function discardWorker(w: Worker) {
+  w.terminate()
+  if (worker === w) {
+    worker = null
+    readyPromise = null
+  }
+}
 
 function spawnWorker(): Worker {
   const w = new PandocWorker()
@@ -34,8 +44,7 @@ function spawnWorker(): Worker {
     // 워커 자체가 죽으면 대기 중인 요청을 모두 실패시키고 다음 호출이 재시작하게 한다
     for (const pending of pendingConverts.values()) pending.reject(new Error(e.message || 'pandoc 워커 오류'))
     pendingConverts.clear()
-    worker = null
-    readyPromise = null
+    discardWorker(w)
   }
   return w
 }
@@ -46,22 +55,18 @@ export function ensurePandoc(onProgress?: (p: Progress) => void): Promise<void> 
   const p = (async () => {
     const wasm = await getPandocWasm(onProgress)
     const w = spawnWorker()
-    await new Promise<void>((resolve, reject) => {
-      const onMessage = (e: MessageEvent<PandocWorkerResponse>) => {
-        if (e.data.type !== 'init') return
-        w.removeEventListener('message', onMessage)
-        if (e.data.ok) resolve()
-        else reject(new Error(e.data.error ?? 'pandoc 초기화에 실패했습니다'))
-      }
-      w.addEventListener('message', onMessage)
-      w.postMessage({ type: 'init', wasm } satisfies PandocWorkerRequest, [wasm])
-    })
+    try {
+      await waitForInit(w, () => w.postMessage({ type: 'init', wasm } satisfies PandocWorkerRequest, [wasm]))
+    } catch (e) {
+      w.terminate()
+      // wasm 자체가 거부된 경우(손상된 캐시 레코드 등)만 캐시를 지운다 — 타임아웃·크래시는 캐시 탓이 아닐 수 있다
+      if (e instanceof PandocInitError) await clearPandocCache()
+      throw e
+    }
     worker = w
   })()
   readyPromise = p
   p.catch(() => {
-    worker?.terminate()
-    worker = null
     readyPromise = null
   })
   return p
@@ -77,8 +82,14 @@ export async function runPandoc(
   if (!worker) throw new Error('pandoc이 초기화되지 않았습니다')
   const id = nextId++
   const w = worker
-  return new Promise((resolve, reject) => {
+  const job = new Promise<PandocConvertResult>((resolve, reject) => {
     pendingConverts.set(id, { resolve, reject })
     w.postMessage({ type: 'convert', id, options, stdin, files } satisfies PandocWorkerRequest)
+  })
+  // 응답이 없는 워커는 종료하고 대기 중인 나머지 요청도 함께 실패시킨다
+  return withTimeout(job, CONVERT_TIMEOUT_MS, () => {
+    for (const pending of pendingConverts.values()) pending.reject(new Error('pandoc 워커를 종료했습니다'))
+    pendingConverts.clear()
+    discardWorker(w)
   })
 }

@@ -3,7 +3,10 @@ import { ensurePandoc } from './pandoc/client';
 import { docxToMarkdown, importToMarkdown, markdownToDocx, swapExt } from './pandoc/docx';
 import { pandocFormatOf } from './pandoc/importFormats';
 import { status, toast, withStatus } from './store.svelte';
-import { downloadBlob, stripExt } from './utils';
+import { downloadBlob, sanitizeName, stripExt } from './utils';
+import { design } from './design/state.svelte';
+import { markdownToEpub, markdownToHtmlDocument } from './export/convert';
+import { prepareExportMarkdown } from './export/prepare';
 
 export interface ImportedDoc {
   /** 확장자가 .md 인 문서 이름 */
@@ -44,11 +47,38 @@ export async function readImport(file: File): Promise<ImportedDoc> {
 export async function exportDocx(markdown: string, docName: string, template: Blob | null) {
   await withStatus('pandoc 엔진을 준비하는 중…', async (set) => {
     await prepareEngine(set);
-    const { blob, warningCount } = await markdownToDocx(markdown, template);
+    const { blob, warningCount } = await markdownToDocx(prepareExportMarkdown(markdown), template);
     downloadBlob(swapExt(docName, 'docx'), blob);
     if (warningCount > 0) console.info(`pandoc 경고 ${warningCount}건`);
   });
   toast('DOCX 파일을 내려받았습니다');
+}
+
+// 내려받을 파일 이름: 글 이름의 확장자를 바꾸고 파일 이름에 쓸 수 없는 문자를 정리한다
+// (`v1.2 보고서` 같은 이름이 잘리지 않게 마크다운 확장자만 뗀다)
+const docStem = (docName: string) => docName.replace(/\.(md|markdown|txt)$/i, '');
+const exportFileName = (docName: string, ext: 'html' | 'epub') => `${sanitizeName(docStem(docName)) || '문서'}.${ext}`;
+
+// markdown → 파일 하나로 완결된 .html. 이미지는 호출 전에 data URI 로 바뀌어 있어야 한다.
+// 지금 보고 있는 테마(라이트/다크)의 팔레트와 디자인 설정을 그대로 담는다.
+export async function exportHtml(markdown: string, docName: string) {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  const html = await withStatus('pandoc 엔진을 준비하는 중…', async (set) => {
+    await prepareEngine(set);
+    return markdownToHtmlDocument(markdown, docStem(docName) || '문서', design, dark ? 'dark' : 'light');
+  });
+  downloadBlob(exportFileName(docName, 'html'), new Blob([html], { type: 'text/html;charset=utf-8' }));
+  toast('HTML 파일을 내려받았습니다');
+}
+
+// markdown → .epub. 이미지는 data URI 로 넘기면 pandoc 이 EPUB 안에 자원으로 넣는다.
+export async function exportEpub(markdown: string, docName: string) {
+  const blob = await withStatus('pandoc 엔진을 준비하는 중…', async (set) => {
+    await prepareEngine(set);
+    return markdownToEpub(markdown, docStem(docName) || '문서', design);
+  });
+  downloadBlob(exportFileName(docName, 'epub'), blob);
+  toast('EPUB 파일을 내려받았습니다');
 }
 
 export { status };

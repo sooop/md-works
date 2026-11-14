@@ -10,6 +10,8 @@
  * 변환 자체를 막지 않고 조용히 무시한다 — 다음 호출이 다시 받으면 그만이다.
  */
 
+import { verifyWasm } from './integrity'
+
 function normalizeError(e: unknown): Error {
   return e instanceof Error ? e : new Error(String(e))
 }
@@ -114,11 +116,12 @@ async function downloadWasm(onProgress?: (p: Progress) => void): Promise<ArrayBu
   return out.buffer
 }
 
-let wasmPromise: Promise<ArrayBuffer> | null = null
+// 진행 중인 확보 작업만 공유한다(동시 호출이 내려받기를 중복하지 않게). 바이트 자체는 캐시하지 않는다 —
+// 워커로 transfer 하면 메인 쪽 버퍼가 detach 되어 재사용할 수 없고, 16MB 를 두 벌 들고 있을 이유도 없다.
+let inflight: Promise<ArrayBuffer> | null = null
 
 /** 캐시된 pandoc.wasm을 지운다. 다음 사용 때 다시 내려받는다(이미 초기화된 워커는 이번 세션 동안 유지). */
 export async function clearPandocCache(): Promise<boolean> {
-  wasmPromise = null
   try {
     const db = await openWasmDb()
     await new Promise<void>((resolve, reject) => {
@@ -134,19 +137,30 @@ export async function clearPandocCache(): Promise<boolean> {
   }
 }
 
-/** pandoc.wasm 바이트를 확보한다: 캐시 적중 시 즉시, 아니면 내려받고 캐시에 남긴다. */
+/**
+ * pandoc.wasm 바이트를 확보한다: 캐시 적중 시 즉시, 아니면 내려받고 캐시에 남긴다.
+ * 호출마다 새 버퍼를 돌려주므로(진행 중 호출끼리만 공유) 호출자가 transfer 해도 된다.
+ * 캐시본이 해시와 다르면 캐시를 지우고 다시 받는다. 새로 받은 것이 다르면 캐시에 쓰지 않고 실패한다.
+ */
 export function getPandocWasm(onProgress?: (p: Progress) => void): Promise<ArrayBuffer> {
-  if (wasmPromise) return wasmPromise
+  if (inflight) return inflight
   const p = (async () => {
     const cached = await readCached(PANDOC_VERSION)
-    if (cached) return cached
+    if (cached) {
+      if (await verifyWasm(cached)) return cached
+      await clearPandocCache()
+    }
     const bytes = await downloadWasm(onProgress)
+    if (!(await verifyWasm(bytes))) {
+      throw new Error('pandoc 엔진 파일이 손상되었거나 변조되었습니다. 다시 시도해도 같으면 네트워크 환경을 확인하세요')
+    }
     await writeCached(PANDOC_VERSION, bytes)
     return bytes
   })()
-  wasmPromise = p
-  p.catch(() => {
-    wasmPromise = null
-  })
+  inflight = p
+  const clear = () => {
+    if (inflight === p) inflight = null
+  }
+  p.then(clear, clear)
   return p
 }

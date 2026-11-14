@@ -3,6 +3,7 @@ import './app.css';
 import App from './App.svelte';
 import { applyTheme, settings } from './lib/store.svelte';
 import { applyStoredDesign } from './lib/design/state.svelte';
+import { registerPwa } from './lib/pwa/register';
 
 // 셸 번들을 기다리는 동안 흰 화면이 번쩍이지 않도록 테마·디자인을 먼저 적용한다
 applyTheme();
@@ -17,3 +18,4 @@ const Shell = (
 ).default;
 
 mount(App, { target: document.getElementById('app')!, props: { Shell } });
+registerPwa(); // 정적 빌드에서만 동작(__PWA__)

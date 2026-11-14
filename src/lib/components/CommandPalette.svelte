@@ -18,11 +18,12 @@
   let listEl = $state<HTMLElement>();
 
   const MAX = 60;
+  // 명령·글 Command 는 목록이 바뀔 때만 만든다(검색어가 바뀔 때마다 문서 수만큼 새로 만들지 않는다)
+  const base = $derived(palette.open ? commands().filter((c) => !c.when || c.when()) : []);
+  const docs = $derived(palette.open && query.trim() ? docCommands() : []);
   const results = $derived.by(() => {
     if (!palette.open) return [];
-    const base = commands().filter((c) => !c.when || c.when());
-    const all = query.trim() ? [...base, ...docCommands()] : base;
-    return rankCommands(all, query).slice(0, MAX);
+    return rankCommands(query.trim() ? [...base, ...docs] : base, query).slice(0, MAX);
   });
   // 검색어가 바뀌면 맨 위부터
   $effect(() => { void query; sel = 0; });

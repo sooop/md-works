@@ -11,10 +11,9 @@
   import DropOverlay from './DropOverlay.svelte';
   import PasteModal from './PasteModal.svelte';
   import MoreMenu from './MoreMenu.svelte';
-  import BackupDialog from './BackupDialog.svelte';
-  import { divertBundleDrop } from '../bundle/backupState.svelte';
+  import { divertBundleDrop, startBackupScheduler } from '../bundle/backupState.svelte';
+  import { lazyComponent } from '../lazy.svelte';
   import { printDoc } from '../printCode';
-  import HistoryPanel from './HistoryPanel.svelte';
   import ModeToggle from './ModeToggle.svelte';
   import DocTitle from './DocTitle.svelte';
   import PathBadges from './PathBadges.svelte';
@@ -26,7 +25,6 @@
   import Resizer from './Resizer.svelte';
   import Pin from '@lucide/svelte/icons/pin';
   import PinOff from '@lucide/svelte/icons/pin-off';
-  import Settings from './Settings.svelte';
   import { tip } from '../tooltip.svelte';
   import { left, viewport, isDocked, toggleLeft, openLeft, closeLeft, togglePin, setLeftWidth, LEFT_W, rightPeek } from '../sidebar/state.svelte';
   import { edgeHover, peekPanel } from '../sidebar/peek';
@@ -50,11 +48,10 @@
   import { doc, settings } from '../store.svelte';
   import {
     tree, nav, templates, init, openDoc, save, onEditorChange, upload, resolveUrl, createDoc, createFolder,
-    convertImages, createFromText, handleDrop, exportDocxCurrent, exportMdCurrent, copyMdCurrent, refreshTemplates, selectTemplate,
-    restoreVersion, searchFiles, renameCurrent, renameNodeBy, removeNode, moveNode, deletePaths, moveMany, downloadMany, flushOnHide, retryConnect,
+    convertImages, createFromText, handleDrop, exportDocxCurrent, exportHtmlCurrent, exportEpubCurrent, exportMdCurrent, copyMdCurrent, refreshTemplates, selectTemplate,
+    restoreVersion, searchFiles, replaceHost, renameCurrent, renameNodeBy, removeNode, moveNode, deletePaths, moveMany, downloadMany, flushOnHide, retryConnect,
     trash, trashCtl,
   } from '../server-mode.svelte';
-  import TrashPanel from './TrashPanel.svelte';
   import TrashFooter from './TrashFooter.svelte';
   import { stripExt, dirname } from '../utils';
   import { ui, searchShortcut } from '../search/state.svelte';
@@ -77,6 +74,17 @@
   let historyOpen = $state(false);
   let pasteOpen = $state(false);
   let trashOpen = $state(false); // 파일 탭 자리에 휴지통 보기를 연다
+
+  // 가끔 쓰는 화면은 처음 열 때 받는다. 열림 상태가 true 가 되는 즉시 받기 시작하고, 받은 뒤에는 계속 마운트해 닫힘 애니메이션을 유지한다.
+  // 실패하면 토스트로 알리고 열림 상태를 되돌린다(lazyComponent)
+  const backupDlg = lazyComponent(() => import('./BackupDialog.svelte'));
+  const settingsDlg = lazyComponent(() => import('./Settings.svelte'));
+  const historyDlg = lazyComponent(() => import('./HistoryPanel.svelte'));
+  const trashView = lazyComponent(() => import('./TrashPanel.svelte'));
+  $effect(() => { if (backupUi.open) backupDlg.load(() => (backupUi.open = false)); });
+  $effect(() => { if (settingsOpen) settingsDlg.load(() => (settingsOpen = false)); });
+  $effect(() => { if (historyOpen) historyDlg.load(() => (historyOpen = false)); });
+  $effect(() => { if (trashOpen) trashView.load(() => (trashOpen = false)); });
 
   const templateOptions = $derived([
     { id: '', label: '기본 템플릿' },
@@ -103,6 +111,8 @@
     exportMd: exportMdCurrent,
     copyMd: copyMdCurrent,
     exportDocx: exportDocxCurrent,
+    exportHtml: exportHtmlCurrent,
+    exportEpub: exportEpubCurrent,
     print: () => void printDoc(),
     deleteDoc: () => void removeNode({ type: 'file', name: stripExt(doc.name), path: doc.path }),
     images: (to) => void convertImages(to),
@@ -138,7 +148,8 @@
     revealFolder(path);
   }
 
-  onMount(() => { void init(); });
+  // 백업 스케줄러·알림은 대화상자 컴포넌트가 아니라 셸이 시작한다(대화상자는 처음 열 때 받으므로)
+  onMount(() => { startBackupScheduler(); void init(); });
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && left.open && !viewport.mobile && !e.defaultPrevented && (document.activeElement as HTMLElement | null)?.closest('.left-sidebar')) closeLeft();
@@ -204,15 +215,16 @@
             <p>{tree.error}</p>
             <button onclick={() => void retryConnect()}>다시 시도</button>
           </div>
-        {:else if trashOpen}
-          <TrashPanel ctl={trashCtl} onBack={() => (trashOpen = false)} />
+        {:else if trashOpen && trashView.Comp}
+          {@const Trash = trashView.Comp}
+          <Trash ctl={trashCtl} onBack={() => (trashOpen = false)} />
         {:else}
           <DocTree nodes={tree.nodes} ctl={treeCtl} bind:filter={nav.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx · .html · .odt · .epub 등의 파일을 끌어다 놓으세요." />
           <TrashFooter count={trash.count} onOpen={() => (trashOpen = true)} />
         {/if}
       </div>
       <div class="tabpane" hidden={ui.tab !== 'search'}>
-        <SearchPanel run={searchFiles} onOpen={openDoc} activeId={doc.path} />
+        <SearchPanel run={searchFiles} onOpen={openDoc} activeId={doc.path} {replaceHost} />
       </div>
       {#if !viewport.mobile}
         <Resizer side="left" value={left.width} min={LEFT_W.min} max={LEFT_W.max} def={LEFT_W.def} label="왼쪽 사이드바 폭 조절" onchange={(w, save) => setLeftWidth(w, save)} />
@@ -236,7 +248,7 @@
           <button class="icon-btn" class:attn={doc.dirty} disabled={!doc.dirty || doc.saving} aria-label="저장"
           use:tip={{ title: doc.saving ? '저장 중…' : doc.dirty ? '저장' : '저장됨', kbd: 'Ctrl+S' }} onclick={save}><Save size={18} /></button>
         {/if}
-        <HistoryPanel docKey={doc.path} {resolveUrl} onRestore={restoreVersion} current={doc.content} bind:open={historyOpen} />
+        {#if historyDlg.Comp}{@const History = historyDlg.Comp}<History docKey={doc.path} {resolveUrl} onRestore={restoreVersion} current={doc.content} bind:open={historyOpen} />{/if}
       {/if}
       <MoreMenu
           hasDoc={!!doc.path}
@@ -248,6 +260,8 @@
           onMd={exportMdCurrent}
           onCopyMd={copyMdCurrent}
           onDocx={exportDocxCurrent}
+          onHtml={exportHtmlCurrent}
+          onEpub={exportEpubCurrent}
           onPrint={printDoc}
           onDelete={() => void removeNode({ type: 'file', name: stripExt(doc.name), path: doc.path })}
           options={templateOptions}
@@ -257,8 +271,8 @@
           hint={templateHint}
         />
       <RightToggle />
-      <BackupDialog server trigger={false} />
-      <Settings server trigger={false} bind:open={settingsOpen} />
+      {#if backupDlg.Comp}{@const Backup = backupDlg.Comp}<Backup server trigger={false} />{/if}
+      {#if settingsDlg.Comp}{@const SettingsDlg = settingsDlg.Comp}<SettingsDlg server trigger={false} bind:open={settingsOpen} />{/if}
     </header>
 
     <!-- svelte-ignore a11y_no_static_element_interactions -->

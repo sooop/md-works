@@ -130,11 +130,13 @@
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
+  const MAX_IMPORT_BYTES = 1024 * 1024;
   async function doImport(e: Event) {
     const el = e.currentTarget as HTMLInputElement;
     const file = el.files?.[0];
     el.value = '';
     if (!file) return;
+    if (file.size > MAX_IMPORT_BYTES) { toast('디자인 파일이 너무 큽니다(최대 1MB)', 'error'); return; } // 읽기 전에 거절
     const res = parseDesign(await file.text());
     if (!res.ok) { toast(`디자인을 가져오지 못했습니다: ${res.error}`, 'error'); return; }
     importDesign(res.value);

@@ -33,6 +33,9 @@ export function remoteWins(local: WorksRecord, remote: WorksRecord): boolean {
   return !!remote.deletedAt && !local.deletedAt;
 }
 
+/** 건너뛸 id 판정(Set 도 된다) */
+export interface SkipIds { has(id: string): boolean }
+
 export interface RecordMerge<T> {
   add: T[];
   update: T[];
@@ -46,7 +49,7 @@ export interface RecordMerge<T> {
  * skipIds: 이 파티션이 아닌 다른 파티션에 이미 있는 id. 저장소가 id 를 전역 키로 쓰면(스탠드얼론 IndexedDB) 같은 id 를 쓰는 순간
  * 다른 글의 레코드를 덮어쓰므로(글 이름이 바뀐 뒤 옛 이름 번들을 가져올 때) 건너뛴다.
  */
-export function mergeRecords<T extends WorksRecord>(local: T[], remote: T[], skipIds?: ReadonlySet<string>): RecordMerge<T> {
+export function mergeRecords<T extends WorksRecord>(local: T[], remote: T[], skipIds?: SkipIds): RecordMerge<T> {
   const byId = new Map(local.map((r) => [r.id, r]));
   const out: RecordMerge<T> = { add: [], update: [], same: 0, keepLocal: 0 };
   const seen = new Set<string>();
@@ -78,7 +81,7 @@ export interface VersionMerge {
  * id 합집합. 같은 id 는 같은 내용이라 이름(고정)이 바뀐 경우처럼 updatedAt 이 더 큰 쪽만 취한다.
  * 합친 뒤 thinVersions 를 다시 돌려, 두 기기의 이력이 쌓여도 솎아내기 정책(이름 붙은 버전은 영구)이 유지된다.
  */
-export function mergeVersions(local: Version[], remote: Version[], now: number, skipIds?: ReadonlySet<string>): VersionMerge {
+export function mergeVersions(local: Version[], remote: Version[], now: number, skipIds?: SkipIds): VersionMerge {
   const byId = new Map(local.map((v) => [v.id, v]));
   const adds: Version[] = [];
   const updates: Version[] = [];

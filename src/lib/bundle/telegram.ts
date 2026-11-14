@@ -6,7 +6,7 @@
 //
 // 토큰·chat_id·자동 올리기 설정은 localStorage 'works.telegram' 에만 저장하고 번들·내보내기에는 절대 넣지 않는다.
 import { isEncrypted } from './crypto';
-import { CHUNK_LIMIT, partCaption, partFileName, splitBytes } from './backupLogic';
+import { CHUNK_LIMIT, checkResumeMatch, partCaption, partFileName, splitBytes, type UploadProgress } from './backupLogic';
 
 export const TG_UPLOAD_LIMIT = 50 * 1024 * 1024; // Bot API sendDocument 한도
 const API = 'https://api.telegram.org';
@@ -27,7 +27,9 @@ export const defaultTelegram = (): TelegramSettings => ({ token: '', chatId: '',
 
 export type TelegramErrorKind = 'config' | 'plaintext' | 'too-large' | 'network' | 'api';
 export class TelegramError extends Error {
-  constructor(readonly kind: TelegramErrorKind, message: string, readonly status?: number) {
+  /** 분할 업로드가 중간에 멈췄을 때, 어디까지 올라갔는지(이어 올리기에 쓴다). 조각이 하나라도 올라간 경우에만 붙는다 */
+  resume?: UploadProgress;
+  constructor(readonly kind: TelegramErrorKind, message: string, readonly status?: number, /** 429 응답의 retry_after(초) */ readonly retryAfter?: number) {
     super(message);
     this.name = 'TelegramError';
   }
@@ -100,7 +102,7 @@ async function call<T>(cfg: { token: string }, method: string, init: RequestInit
   try { body = await res.json(); } catch { /* JSON 이 아닌 응답 */ }
   if (!res.ok || body.ok === false) {
     const msg = mapApiError(res.status, body.description ?? '', body.parameters?.retry_after);
-    throw new TelegramError('api', maskSecrets(msg, cfg.token), res.status);
+    throw new TelegramError('api', maskSecrets(msg, cfg.token), res.status, body.parameters?.retry_after);
   }
   return body.result as T;
 }
@@ -120,14 +122,47 @@ export async function sendMessage(cfg: Pick<TelegramSettings, 'token' | 'chatId'
   await call(cfg, 'sendMessage', { method: 'POST', body: form }, fetchFn);
 }
 
+export type SleepFn = (ms: number) => Promise<void>;
+const sleepReal: SleepFn = (ms) => new Promise<void>((r) => setTimeout(r, ms));
+export const RETRY_DELAY_MS = 1500;
+/** 429 의 retry_after 를 기다리는 상한(초) */
+export const MAX_RETRY_AFTER_S = 60;
+
+/**
+ * 실패한 요청을 다시 시도할지, 시도한다면 몇 ms 뒤인지(null = 다시 시도하지 않음).
+ * 네트워크 오류·5xx 는 잠깐(baseMs) 뒤, 429 는 서버가 알려 준 retry_after(상한 60초)만큼 기다린다.
+ * 401·403·404·413·400 은 기다려도 같은 결과라 재시도하지 않는다.
+ */
+export function retryWaitMs(e: unknown, baseMs: number = RETRY_DELAY_MS): number | null {
+  if (!(e instanceof TelegramError)) return null;
+  if (e.kind === 'network') return baseMs;
+  if (e.kind !== 'api' || e.status === undefined) return null;
+  if (e.status === 429) return e.retryAfter && e.retryAfter > 0 ? Math.min(e.retryAfter, MAX_RETRY_AFTER_S) * 1000 : baseMs;
+  return e.status >= 500 ? baseMs : null;
+}
+
+interface RetryOpts { retryDelayMs?: number; sleep?: SleepFn }
+/** fn 을 한 번 시도하고, 재시도할 만한 오류(retryWaitMs)면 기다렸다가 딱 한 번 더 시도한다 */
+async function withRetry<T>(fn: () => Promise<T>, opts: RetryOpts): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    const wait = retryWaitMs(e, opts.retryDelayMs ?? RETRY_DELAY_MS);
+    if (wait === null) throw e;
+    await (opts.sleep ?? sleepReal)(wait);
+    return fn();
+  }
+}
+
 /**
  * 암호화된 번들(.mwb)을 sendDocument 로 올린다.
  * 평문(암호화되지 않은) 바이트는 거부한다 — 평문 업로드 금지. 50MB 초과도 전송 전에 거부한다.
+ * 429·5xx·네트워크 오류만 1회 재시도한다(retryWaitMs).
  */
 export async function sendDocument(
   cfg: Pick<TelegramSettings, 'token' | 'chatId'>,
   bytes: Uint8Array,
-  opts: { filename?: string; caption?: string } = {},
+  opts: { filename?: string; caption?: string } & RetryOpts = {},
   fetchFn: FetchFn = fetch,
 ): Promise<{ filename: string; size: number }> {
   checkConfig(cfg, true);
@@ -136,20 +171,25 @@ export async function sendDocument(
     throw new TelegramError('too-large', `번들 크기 ${fmtMB(bytes.length)} 가 텔레그램 업로드 한도 ${fmtMB(TG_UPLOAD_LIMIT)} 를 넘습니다`);
   }
   const filename = opts.filename ?? bundleFileName();
-  const form = new FormData();
-  form.append('chat_id', cfg.chatId.trim());
-  if (opts.caption) form.append('caption', opts.caption);
-  form.append('document', new Blob([bytes as BlobPart], { type: 'application/octet-stream' }), filename);
-  await call(cfg, 'sendDocument', { method: 'POST', body: form }, fetchFn);
+  await withRetry(() => {
+    const form = new FormData();
+    form.append('chat_id', cfg.chatId.trim());
+    if (opts.caption) form.append('caption', opts.caption);
+    form.append('document', new Blob([bytes as BlobPart], { type: 'application/octet-stream' }), filename);
+    return call(cfg, 'sendDocument', { method: 'POST', body: form }, fetchFn);
+  }, opts);
   return { filename, size: bytes.length };
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** 전체 바이트의 SHA-256(hex 64자) — 이어 올리기가 같은 번들인지 가리는 데 쓴다 */
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource));
+  return [...d].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 /** 전체 바이트의 SHA-256 앞 12자(hex) — 조각 caption 에 넣어 사람이 대조할 수 있게 한다 */
 export async function sha256Prefix12(bytes: Uint8Array): Promise<string> {
-  const d = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as BufferSource));
-  return [...d.slice(0, 6)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return (await sha256Hex(bytes)).slice(0, 12);
 }
 
 export interface SendBundleResult {
@@ -162,21 +202,23 @@ export interface SendBundleResult {
 /**
  * 암호화된 번들을 올린다. limit(기본 45MB) 이하면 지금처럼 단일 파일, 넘으면 `.mwb.001…` 조각으로 순서대로 올린다.
  * 조각은 원본 바이트를 헤더 없이 자른 것이라 이어 붙이면(cat) 복원된다. 무결성은 복호화 시 GCM 태그가 보증한다.
- * 조각 업로드 실패는 1회 재시도 후 중단하며, 어디까지 올라갔는지 오류에 적는다(이어서 올리기는 없다).
+ * 조각 업로드는 재시도할 만한 오류(429·5xx·네트워크)만 1회 재시도하고 중단하며, 어디까지 올라갔는지 오류에 적는다.
+ * 중단된 오류(TelegramError.resume)의 값을 opts.resume 으로 넘기면, 같은 바이트(SHA-256 대조)일 때 남은 조각만 이어 올린다.
+ * 암호화 바이트는 IV 가 매번 달라 다시 만들면 조각이 달라지므로, 이어 올리기는 같은 바이트를 가진 호출자만 쓸 수 있다.
  */
 export async function sendBundle(
   cfg: Pick<TelegramSettings, 'token' | 'chatId'>,
   bytes: Uint8Array,
-  opts: { filename?: string; caption?: string; limit?: number; retryDelayMs?: number; onProgress?: (done: number, total: number) => void } = {},
+  opts: { filename?: string; caption?: string; limit?: number; resume?: UploadProgress; onProgress?: (done: number, total: number) => void } & RetryOpts = {},
   fetchFn: FetchFn = fetch,
 ): Promise<SendBundleResult> {
   const limit = opts.limit ?? CHUNK_LIMIT;
-  const filename = opts.filename ?? bundleFileName();
+  const filename = opts.resume?.filename ?? opts.filename ?? bundleFileName(); // 이어 올릴 때는 처음 이름을 그대로 써야 조각 이름이 이어진다
   checkConfig(cfg, true);
   if (!isEncrypted(bytes)) throw new TelegramError('plaintext', '암호화되지 않은 번들은 텔레그램에 올리지 않습니다');
-  if (bytes.length <= limit) {
+  if (!opts.resume && bytes.length <= limit) {
     opts.onProgress?.(0, 1);
-    const r = await sendDocument(cfg, bytes, { filename, caption: opts.caption }, fetchFn);
+    const r = await sendDocument(cfg, bytes, { filename, caption: opts.caption, retryDelayMs: opts.retryDelayMs, sleep: opts.sleep }, fetchFn);
     opts.onProgress?.(1, 1);
     return { filenames: [r.filename], size: r.size, parts: 1 };
   }
@@ -187,35 +229,35 @@ export async function sendBundle(
     throw new TelegramError('too-large', e instanceof Error ? e.message : String(e));
   }
   const total = chunks.length;
-  const sha = await sha256Prefix12(bytes);
-  const filenames: string[] = [];
-  opts.onProgress?.(0, total);
-  for (let i = 0; i < total; i++) {
-    const name = partFileName(filename, i + 1);
-    const caption = partCaption(opts.caption ?? '', i + 1, total, bytes.length, sha);
-    // 조각은 암호화 바이트의 일부라 매직이 없다 — 평문 검사는 위에서 전체에 대해 했으므로 call 을 직접 쓴다
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
+  const shaFull = await sha256Hex(bytes);
+  const sha = shaFull.slice(0, 12);
+  let start = 0;
+  if (opts.resume) {
+    const bad = checkResumeMatch(opts.resume, { sha256: shaFull, size: bytes.length, total });
+    if (bad) throw new TelegramError('config', bad);
+    start = opts.resume.done;
+  }
+  const names = chunks.map((_, i) => partFileName(filename, i + 1));
+  opts.onProgress?.(start, total);
+  for (let i = start; i < total; i++) {
+    const caption = partCaption(opts.caption ?? '', i + 1, total, bytes.length, sha); // 이어 올린 조각도 같은 형식
+    try {
+      // 조각은 암호화 바이트의 일부라 매직이 없다 — 평문 검사는 위에서 전체에 대해 했으므로 call 을 직접 쓴다
+      await withRetry(() => {
         const form = new FormData();
         form.append('chat_id', cfg.chatId.trim());
         form.append('caption', caption);
-        form.append('document', new Blob([chunks[i] as BlobPart], { type: 'application/octet-stream' }), name);
-        await call(cfg, 'sendDocument', { method: 'POST', body: form }, fetchFn);
-        lastErr = undefined;
-        break;
-      } catch (e) {
-        lastErr = e;
-        if (attempt === 0) await sleep(opts.retryDelayMs ?? 1500);
-      }
+        form.append('document', new Blob([chunks[i] as BlobPart], { type: 'application/octet-stream' }), names[i]);
+        return call(cfg, 'sendDocument', { method: 'POST', body: form }, fetchFn);
+      }, opts);
+    } catch (e) {
+      const base = e instanceof TelegramError ? e : new TelegramError('network', String(e));
+      const where = i === 0 ? '첫 조각부터 실패했습니다' : `${i}/${total}개 조각(${names[0]} … ${names[i - 1]})까지만 올라갔습니다`;
+      const err = new TelegramError(base.kind, maskSecrets(`조각 ${i + 1}/${total} 업로드 실패 — ${where}. ${base.message}`, cfg.token), base.status, base.retryAfter);
+      if (i >= 1) err.resume = { sha256: shaFull, filename, size: bytes.length, total, done: i };
+      throw err;
     }
-    if (lastErr) {
-      const base = lastErr instanceof TelegramError ? lastErr : new TelegramError('network', String(lastErr));
-      const where = i === 0 ? '첫 조각부터 실패했습니다' : `${i}/${total}개 조각(${filenames[0]} … ${filenames[i - 1]})까지만 올라갔습니다`;
-      throw new TelegramError(base.kind, maskSecrets(`조각 ${i + 1}/${total} 업로드 실패 — ${where}. ${base.message}`, cfg.token), base.status);
-    }
-    filenames.push(name);
     opts.onProgress?.(i + 1, total);
   }
-  return { filenames, size: bytes.length, parts: total };
+  return { filenames: names, size: bytes.length, parts: total };
 }

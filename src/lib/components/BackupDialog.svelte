@@ -16,11 +16,12 @@
   import { previewBundle, applyBundle, type MergePreview, type MergeResult, type DocAction } from '../bundle/api';
   import BundleDeletions from './BundleDeletions.svelte';
   import { BundleCryptoError } from '../bundle/crypto';
+  import { checkPasswordPair } from '../bundle/passwordInput';
   import { NOTIFY_DAY_CHOICES, folderBackupKind, isFailing, type PathStatus } from '../bundle/backupLogic';
   import { MIN_AUTO_MINUTES, getMe, sendMessage } from '../bundle/telegram';
   import {
-    backup, backupUi, ago, lastBackupAt, hasUnbacked, isStale, telegramStale, keyAvailable, exportToFile, readBundleFiles,
-    persistTelegram, persistBackupSettings, telegramReady, uploadToTelegram, startBackupScheduler, pathStatus,
+    backup, backupUi, ago, lastBackupAt, hasUnbacked, isStale, telegramStale, keyAvailable, exportToFile, readImportSource, decodeImportSource, needsPassword, type ImportSource,
+    persistTelegram, persistBackupSettings, telegramReady, uploadToTelegram, resumeTelegramUpload, canResumeTelegram, resumeMissesChange, startBackupScheduler, pathStatus,
     listFolderBackups, backupToFolder, folderBackupUrl, fetchFolderBackup, showNotice, clearNotice,
     FOLDER_DEFAULT_MINUTES, type FolderBackup, type BackupTab,
   } from '../bundle/backupState.svelte';
@@ -28,8 +29,15 @@
   let { server = false, trigger = true }: { server?: boolean; trigger?: boolean } = $props();
 
   const hasKey = keyAvailable();
-  let exportKind = $state<'enc' | 'zip'>(hasKey ? 'enc' : 'zip');
+  let exportKind = $state<'enc' | 'pw' | 'zip'>(hasKey ? 'enc' : 'zip');
   let busy = $state('');
+
+  // 비밀번호 내보내기 입력. 이 컴포넌트의 메모리에만 두고 저장하지 않으며, 내려받은 뒤·창을 닫을 때 비운다.
+  let pwValue = $state('');
+  let pwConfirm = $state('');
+  let pwShow = $state(false);
+  const pwCheck = $derived(checkPasswordPair(pwValue, pwConfirm));
+  const clearExportPw = () => { pwValue = ''; pwConfirm = ''; pwShow = false; };
 
   const fail = (text: string) => showNotice('error', text);
   const ok = (text: string) => showNotice('success', text);
@@ -63,6 +71,7 @@
   // ---- 내보내기 형식 라디오 (roving tabindex + 화살표키) ----
   const KINDS = [
     { id: 'enc', label: '암호화 (.mwb)' },
+    { id: 'pw', label: '비밀번호로 암호화 (.mwb)' },
     { id: 'zip', label: '평문 zip' },
   ] as const;
   function onKindKey(e: KeyboardEvent) {
@@ -94,8 +103,15 @@
   const applicable = $derived(!!preview && (preview.docs.some((d) => d.action !== 'same' && d.action !== 'keep-local') || preview.designDiffers || (applyDeletions && preview.deletions.some((d) => d.action === 'delete'))
     || preview.snippets.add + preview.snippets.update + preview.threads.add + preview.threads.update + preview.versions.add > 0));
 
+  // 비밀번호(MWB2) 파일을 가져올 때의 입력 단계. 읽은 암호문 바이트만 들고 있고, 비밀번호는 시도할 때마다 비운다.
+  let pwStep = $state<{ src: ImportSource; label: string } | null>(null);
+  let pwInput = $state('');
+  let pwError = $state('');
+  let pwImportShow = $state(false);
+
   function resetImport() {
     importName = ''; bytes = null; preview = null; result = null; applyDesignToo = false; applyDeletions = false;
+    pwStep = null; pwInput = ''; pwError = ''; pwImportShow = false;
   }
 
   function explain(e: unknown): string {
@@ -103,9 +119,46 @@
       if (e.code === 'no-key') return '이 빌드에는 복호화 키가 없어 .mwb 를 열 수 없습니다 (VITE_BUNDLE_KEY)';
       if (e.code === 'auth-failed') return '다른 키로 만든 파일이거나 파일이 변조·손상되었습니다';
       if (e.code === 'truncated') return '파일이 잘려 있습니다. 다시 받아 보세요';
+      // MWB2: GCM 은 틀린 비밀번호와 손상을 구분할 수 없어 한 문장으로 안내한다. 헤더가 깨진 경우만 따로 안내한다
+      if (e.code === 'password-failed') return '비밀번호가 맞지 않거나 파일이 손상되었습니다';
+      if (e.code === 'bad-header') return '파일이 손상되었습니다. 다시 받아 보세요';
+      if (e.code === 'password-required') return '비밀번호가 필요한 파일입니다';
     }
     return errMsg(e);
   }
+
+  const focusPw = () => void tick().then(() => document.getElementById('bk-import-pw')?.focus());
+
+  /** 비밀번호로 잠긴 파일: 틀리면 같은 자리에서 다시 입력하고, 취소하면 가져오기를 접는다 */
+  async function submitPassword() {
+    const step = pwStep;
+    const pw = pwInput;
+    if (!step || !pw || busy) return;
+    pwInput = '';
+    pwError = '';
+    clearNotice();
+    busy = '비밀번호를 확인하는 중… (키를 만드는 데 잠시 걸립니다)';
+    try {
+      const b = await decodeImportSource(step.src, pw);
+      const p = await previewBundle(b);
+      importName = step.label;
+      bytes = b;
+      preview = p;
+      pwStep = null;
+      pwImportShow = false;
+    } catch (e) {
+      if (e instanceof BundleCryptoError && e.code === 'password-failed') {
+        pwError = explain(e);
+        focusPw();
+      } else {
+        pwStep = null;
+        fail(`'${step.label}' 을(를) 읽지 못했습니다: ${explain(e)}`);
+      }
+    } finally {
+      busy = '';
+    }
+  }
+  const cancelPassword = () => { pwStep = null; pwInput = ''; pwError = ''; pwImportShow = false; clearNotice(); };
 
   async function loadFiles(files: File[]): Promise<boolean> {
     resetImport();
@@ -113,7 +166,14 @@
     busy = '번들을 읽는 중…';
     const label = files.length > 1 ? `조각 ${files.length}개` : (files[0]?.name ?? '');
     try {
-      const b = await readBundleFiles(files);
+      const src = await readImportSource(files);
+      if (needsPassword(src)) {
+        pwStep = { src, label };
+        backupUi.tab = 'transfer';
+        focusPw();
+        return false; // 비밀번호를 받은 뒤 submitPassword 가 미리보기로 잇는다
+      }
+      const b = await decodeImportSource(src);
       const p = await previewBundle(b);
       importName = label;
       bytes = b;
@@ -170,10 +230,15 @@
 
   // ---- 내보내기 ----
   async function doExport() {
+    const usePw = exportKind === 'pw';
+    if (usePw && pwCheck.blocked) return;
     clearNotice();
     busy = '번들을 만드는 중…';
     try {
-      const name = await exportToFile(exportKind === 'enc');
+      const name = usePw
+        ? await exportToFile(true, { password: pwValue, onStage: () => { busy = '비밀번호로 암호화하는 중… (키를 만드는 데 잠시 걸립니다)'; } })
+        : await exportToFile(exportKind === 'enc');
+      if (usePw) clearExportPw();
       ok(`백업 파일을 내려받았습니다: ${name}`);
     } catch (e) {
       fail(`백업 파일을 만들지 못했습니다: ${errMsg(e)}`);
@@ -205,6 +270,19 @@
       ok(`텔레그램에 올렸습니다: ${name}`);
     } catch (e) {
       fail(`텔레그램에 올리지 못했습니다: ${errMsg(e)}`);
+    } finally {
+      busy = '';
+    }
+  }
+
+  async function tgResume() {
+    clearNotice();
+    busy = '텔레그램에 이어 올리는 중…';
+    try {
+      const name = await resumeTelegramUpload();
+      ok(`텔레그램에 이어 올렸습니다: ${name}`);
+    } catch (e) {
+      fail(`텔레그램에 이어 올리지 못했습니다: ${errMsg(e)}`);
     } finally {
       busy = '';
     }
@@ -253,7 +331,7 @@
 
   const fmtTime = (ts: number) => (ts ? new Date(ts).toLocaleString('ko-KR') : '없음');
   const fmtSize = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
-  const close = () => { backupUi.open = false; clearNotice(); };
+  const close = () => { backupUi.open = false; clearNotice(); clearExportPw(); cancelPassword(); };
   const dotOn = $derived(isStale());
   const tgStatus = $derived(pathStatus('telegram'));
   const folderStatus = $derived(pathStatus('folder'));
@@ -336,14 +414,25 @@
               >{k.label}</button>
             {/each}
           </div>
-          {#if !hasKey}
-            <p class="hint">이 빌드에는 암호화 키(VITE_BUNDLE_KEY)가 없어 평문 zip 만 내보낼 수 있고, 텔레그램 올리기는 쓸 수 없습니다.</p>
+          {#if exportKind === 'pw'}
+            <p class="hint">내가 정한 비밀번호로 잠급니다. 비밀번호는 저장하지 않으며, <b>비밀번호를 잊으면 이 파일은 복구할 수 없습니다.</b> 자동 백업·텔레그램은 이 방식을 쓰지 않습니다.</p>
+            <label class="field"><span>비밀번호</span>
+              <input type={pwShow ? 'text' : 'password'} autocomplete="new-password" spellcheck="false" bind:value={pwValue} disabled={!!busy} />
+            </label>
+            <label class="field"><span>비밀번호 확인</span>
+              <input type={pwShow ? 'text' : 'password'} autocomplete="new-password" spellcheck="false" bind:value={pwConfirm} disabled={!!busy} />
+            </label>
+            <label class="show-pw"><input type="checkbox" bind:checked={pwShow} /> 비밀번호 보기</label>
+            {#if pwCheck.warning}<p class="hint warn">{pwCheck.warning}</p>{/if}
+            {#if pwCheck.blocked}<p class="hint" class:warn={!!pwConfirm}>{pwCheck.blocked}</p>{/if}
+          {:else if !hasKey}
+            <p class="hint">이 빌드에는 암호화 키(VITE_BUNDLE_KEY)가 없어 빌드 키 암호화는 쓸 수 없습니다. 비밀번호로 암호화하거나 평문 zip 으로 내보내세요. 텔레그램 올리기도 쓸 수 없습니다.</p>
           {:else if exportKind === 'enc'}
             <p class="hint">이 앱 빌드에 들어 있는 키로 잠급니다. 같은 빌드를 가진 사람은 열 수 있으므로 비밀번호 수준의 보호는 아닙니다.</p>
           {:else}
             <p class="hint">잠그지 않은 파일이라 누구나 열 수 있습니다. 보관·전달에 주의하세요.</p>
           {/if}
-          <button class="primary" disabled={!!busy} onclick={doExport}>내려받기</button>
+          <button class="primary" disabled={!!busy || (exportKind === 'pw' && !!pwCheck.blocked)} onclick={doExport}>내려받기</button>
           {#if exportStatus.lastSuccess}<p class="hint">마지막 내려받기: {fmtTime(exportStatus.lastSuccess)} ({ago(exportStatus.lastSuccess)})</p>{/if}
         </section>
 
@@ -351,6 +440,21 @@
           <h3 id="bk-h-import">가져오기</h3>
           <p class="hint">.mwb 또는 번들 zip 을 고르거나 앱 창에 끌어다 놓으세요. 조각(<code>.mwb.001</code>, <code>.002</code> …)은 모두 함께 고릅니다. 병합 전에 미리보기를 보여 줍니다.</p>
           <button disabled={!!busy} onclick={pickFile}>파일 선택…</button>
+
+          {#if pwStep}
+            <form class="pwstep" onsubmit={(e) => { e.preventDefault(); void submitPassword(); }}>
+              <p class="line"><b>{pwStep.label}</b> 은(는) 비밀번호로 잠긴 파일입니다. 비밀번호를 입력하세요.</p>
+              <label class="field"><span>비밀번호</span>
+                <input id="bk-import-pw" type={pwImportShow ? 'text' : 'password'} autocomplete="off" spellcheck="false" bind:value={pwInput} disabled={!!busy} />
+              </label>
+              <label class="show-pw"><input type="checkbox" bind:checked={pwImportShow} /> 비밀번호 보기</label>
+              {#if pwError}<p class="hint warn" role="alert">{pwError}. 다시 입력해 보세요.</p>{/if}
+              <div class="actions">
+                <button type="button" onclick={cancelPassword} disabled={!!busy}>취소</button>
+                <button type="submit" class="primary" disabled={!!busy || !pwInput}>열기</button>
+              </div>
+            </form>
+          {/if}
 
           {#if preview}
             <p class="line"><b>{importName}</b> — {new Date(preview.createdAt).toLocaleString('ko-KR')} · {preview.mode === 'server' ? '서버' : '스탠드얼론'}에서 만듦</p>
@@ -471,6 +575,12 @@
             <button disabled={!!busy || !backup.telegram.token.trim() || !backup.telegram.chatId.trim()} onclick={tgTest}>연결 테스트</button>
             <button class="primary" disabled={!!busy || !telegramReady()} onclick={tgUpload}>지금 올리기</button>
           </div>
+          {#if canResumeTelegram() && backupUi.tgResume}
+            <div class="actions left">
+              <button disabled={!!busy} onclick={tgResume}>이어 올리기 ({backupUi.tgResume.done}/{backupUi.tgResume.total} 조각까지 올라감)</button>
+            </div>
+            {#if resumeMissesChange()}<p class="hint">실패 뒤 변경된 내용은 포함되지 않습니다</p>{/if}
+          {/if}
           <Switch bind:checked={backup.telegram.auto} onchange={persistTelegram} disabled={!hasKey}>자동 올리기 (변경이 있을 때만)</Switch>
           <label class="field"><span>간격(분, 최소 {MIN_AUTO_MINUTES})</span>
             <input type="number" min={MIN_AUTO_MINUTES} step="5" bind:value={backup.telegram.intervalMin} onchange={persistTelegram} />
@@ -527,6 +637,8 @@
   .field { display: flex; flex-direction: row; gap: 8px; align-items: center; font-size: 13px; width: 100%; }
   .field span { flex: none; min-width: 7em; color: var(--muted); }
   .field input, .field select { flex: 1; min-width: 0; margin: 0; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); width: auto; }
+  .pwstep { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+  .show-pw { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
   .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; width: 100%; }
   .actions.left { justify-content: flex-start; }
   .tbl-wrap { width: 100%; overflow-x: auto; }

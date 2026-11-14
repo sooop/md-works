@@ -13,10 +13,14 @@ function same(q: string, t: string): boolean {
   return false;
 }
 
-export function matchName(target: string, query: string): boolean {
-  const q = [...query.trim().toLowerCase()];
+/** 대상 문자열을 소문자 코드 포인트 배열로 미리 바꾼 형태. 같은 대상을 글자마다 다시 검색할 때 재사용한다 */
+export type Prepared = string[];
+export const prepareTarget = (target: string): Prepared => [...target.toLowerCase()];
+export const prepareQuery = (query: string): string[] => [...query.trim().toLowerCase()];
+
+/** 미리 만든 배열끼리 비교(matchName 과 같은 규칙). 빈 검색어는 항상 일치 */
+export function matchPrepared(t: Prepared, q: string[]): boolean {
   if (!q.length) return true;
-  const t = [...target.toLowerCase()];
   for (let i = 0; i + q.length <= t.length; i++) {
     let ok = true;
     for (let j = 0; j < q.length; j++) {
@@ -25,6 +29,12 @@ export function matchName(target: string, query: string): boolean {
     if (ok) return true;
   }
   return false;
+}
+
+export function matchName(target: string, query: string): boolean {
+  const q = prepareQuery(query);
+  if (!q.length) return true;
+  return matchPrepared(prepareTarget(target), q);
 }
 
 /** 검색어(공백으로 나눈 단어마다)가 target 에서 처음 일치하는 구간 [시작, 끝) 들. 겹치면 합친다(하이라이트용, 초성 가능) */

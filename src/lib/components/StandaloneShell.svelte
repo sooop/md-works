@@ -6,10 +6,9 @@
   import DropOverlay from './DropOverlay.svelte';
   import PasteModal from './PasteModal.svelte';
   import MoreMenu from './MoreMenu.svelte';
-  import BackupDialog from './BackupDialog.svelte';
-  import { divertBundleDrop } from '../bundle/backupState.svelte';
+  import { divertBundleDrop, startBackupScheduler } from '../bundle/backupState.svelte';
+  import { lazyComponent } from '../lazy.svelte';
   import { printDoc } from '../printCode';
-  import HistoryPanel from './HistoryPanel.svelte';
   import ModeToggle from './ModeToggle.svelte';
   import DocTitle from './DocTitle.svelte';
   import PathBadges from './PathBadges.svelte';
@@ -21,7 +20,6 @@
   import Resizer from './Resizer.svelte';
   import Pin from '@lucide/svelte/icons/pin';
   import PinOff from '@lucide/svelte/icons/pin-off';
-  import Settings from './Settings.svelte';
   import { tip } from '../tooltip.svelte';
   import { openContextMenu } from '../contextmenu.svelte';
   import DocTree from './DocTree.svelte';
@@ -54,10 +52,9 @@
   import { doc } from '../store.svelte';
   import {
     lib, docUpdatedAt, docFullPath, renameDocBy, renameFolder, removeFolder, moveFolder, moveDoc, createFolder, init, save, flush, exportMd, copyMd, exportAll, openPicker, openDoc, createDoc, removeDoc, onEditorChange,
-    upload, resolveUrl, importFiles, createFromText, exportDocxCurrent, tpl, pickTemplate, clearTemplate, restoreVersion, searchLibrary, renameCurrent, retrySave,
+    upload, resolveUrl, importFiles, createFromText, exportDocxCurrent, exportHtmlCurrent, exportEpubCurrent, tpl, pickTemplate, clearTemplate, restoreVersion, searchLibrary, replaceHost, renameCurrent, retrySave, hasUnsavedWork,
     trash, trashCtl, removeNodes, moveNodes, downloadNodes,
   } from '../standalone-mode.svelte';
-  import TrashPanel from './TrashPanel.svelte';
   import TrashFooter from './TrashFooter.svelte';
   import { stripExt, fmtDateTime } from '../utils';
   import { ui, searchShortcut } from '../search/state.svelte';
@@ -81,6 +78,17 @@
   let pasteOpen = $state(false);
   let trashOpen = $state(false); // 파일 탭 자리에 휴지통 보기를 연다
 
+  // 가끔 쓰는 화면은 처음 열 때 받는다. 열림 상태가 true 가 되는 즉시 받기 시작하고, 받은 뒤에는 계속 마운트해 닫힘 애니메이션을 유지한다.
+  // 실패하면 토스트로 알리고 열림 상태를 되돌린다(lazyComponent)
+  const backupDlg = lazyComponent(() => import('./BackupDialog.svelte'));
+  const settingsDlg = lazyComponent(() => import('./Settings.svelte'));
+  const historyDlg = lazyComponent(() => import('./HistoryPanel.svelte'));
+  const trashView = lazyComponent(() => import('./TrashPanel.svelte'));
+  $effect(() => { if (backupUi.open) backupDlg.load(() => (backupUi.open = false)); });
+  $effect(() => { if (settingsOpen) settingsDlg.load(() => (settingsOpen = false)); });
+  $effect(() => { if (historyOpen) historyDlg.load(() => (historyOpen = false)); });
+  $effect(() => { if (trashOpen) trashView.load(() => (trashOpen = false)); });
+
   const templateOptions = $derived([
     { id: '', label: '기본 템플릿' },
     ...(tpl.name ? [{ id: 'custom', label: tpl.name }] : []),
@@ -102,6 +110,8 @@
     exportMd,
     copyMd,
     exportDocx: exportDocxCurrent,
+    exportHtml: exportHtmlCurrent,
+    exportEpub: exportEpubCurrent,
     print: () => void printDoc(),
     deleteDoc: () => { const m = metaOf(doc.path); if (m) void removeDoc(m); },
     settings: () => { settingsOpen = true; },
@@ -136,7 +146,8 @@
     revealFolder(path);
   }
 
-  onMount(() => { void init(); });
+  // 백업 스케줄러·알림은 대화상자 컴포넌트가 아니라 셸이 시작한다(대화상자는 처음 열 때 받으므로)
+  onMount(() => { startBackupScheduler(); void init(); });
 
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && left.open && !viewport.mobile && !e.defaultPrevented && (document.activeElement as HTMLElement | null)?.closest('.left-sidebar')) closeLeft();
@@ -149,9 +160,9 @@
   }
   // 입력 후 디바운스 대기 중인 내용을 탭을 숨기거나 닫을 때 바로 기록한다
   function onHide() { void flush(); }
-  // 저장하지 못한 변경이 있는 채로 닫으면 사라지므로 경고한다
+  // 저장 대기 중이거나 저장 중이거나 저장하지 못한 변경이 있는 채로 닫으면 사라질 수 있으므로 경고한다(머무르기로 하면 바로 기록해 둔다)
   function onBeforeUnload(e: BeforeUnloadEvent) {
-    if (doc.saveFailed) e.preventDefault();
+    if (doc.saveFailed || hasUnsavedWork()) { e.preventDefault(); void flush(); }
   }
 </script>
 
@@ -190,15 +201,16 @@
         <button role="tab" class:on={ui.tab === 'search'} aria-selected={ui.tab === 'search'} onclick={() => { ui.tab = 'search'; ui.globalFocus++; }} use:tip={{ title: '모든 문서에서 검색', kbd: 'Ctrl+Shift+F' }}>검색</button>
       </div>
       <div class="tabpane" hidden={ui.tab !== 'files'}>
-        {#if trashOpen}
-          <TrashPanel ctl={trashCtl} onBack={() => (trashOpen = false)} />
+        {#if trashOpen && trashView.Comp}
+          {@const Trash = trashView.Comp}
+          <Trash ctl={trashCtl} onBack={() => (trashOpen = false)} />
         {:else}
           <DocTree nodes={treeNodes} ctl={treeCtl} bind:filter={lib.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx · .html · .odt · .epub 등 · 백업 .zip 파일을 끌어다 놓으세요. 문서는 이 브라우저에 보관됩니다." />
           <TrashFooter count={trash.count} onOpen={() => (trashOpen = true)} />
         {/if}
       </div>
       <div class="tabpane" hidden={ui.tab !== 'search'}>
-        <SearchPanel run={searchLibrary} onOpen={openDoc} activeId={doc.path} />
+        <SearchPanel run={searchLibrary} onOpen={openDoc} activeId={doc.path} {replaceHost} />
       </div>
       {#if !viewport.mobile}
         <Resizer side="left" value={left.width} min={LEFT_W.min} max={LEFT_W.max} def={LEFT_W.def} label="왼쪽 사이드바 폭 조절" onchange={(w, save) => setLeftWidth(w, save)} />
@@ -217,7 +229,7 @@
       <SaveFailBadge onRetry={() => void retrySave()} />
       {#if doc.path}
         <ModeToggle />
-        <HistoryPanel docKey={doc.path} {resolveUrl} onRestore={restoreVersion} current={doc.content} bind:open={historyOpen} />
+        {#if historyDlg.Comp}{@const History = historyDlg.Comp}<History docKey={doc.path} {resolveUrl} onRestore={restoreVersion} current={doc.content} bind:open={historyOpen} />{/if}
       {/if}
       <MoreMenu
           hasDoc={!!doc.path}
@@ -228,6 +240,8 @@
           onMd={exportMd}
           onCopyMd={copyMd}
           onDocx={exportDocxCurrent}
+          onHtml={exportHtmlCurrent}
+          onEpub={exportEpubCurrent}
           onPrint={printDoc}
           onDelete={() => { const m = metaOf(doc.path); if (m) void removeDoc(m); }}
           options={templateOptions}
@@ -237,8 +251,8 @@
           hint="템플릿은 이 브라우저에 보관됩니다. 첫 docx 사용 때 pandoc 엔진(약 16MB)을 내려받습니다."
         />
       <RightToggle />
-      <BackupDialog trigger={false} />
-      <Settings trigger={false} bind:open={settingsOpen} />
+      {#if backupDlg.Comp}{@const Backup = backupDlg.Comp}<Backup trigger={false} />{/if}
+      {#if settingsDlg.Comp}{@const SettingsDlg = settingsDlg.Comp}<SettingsDlg trigger={false} bind:open={settingsOpen} />{/if}
     </header>
 
     <!-- svelte-ignore a11y_no_static_element_interactions -->

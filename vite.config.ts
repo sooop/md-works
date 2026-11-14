@@ -3,9 +3,11 @@ import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 import { fileURLToPath } from 'node:url';
-import { existsSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { createApi } from './server/api.js';
+import { pwaPlugin } from './src/lib/pwa/plugin';
 
 // 개발 서버(vite)에 파일 API 를 얹는다. 루트는 NOTES_ROOT 또는 현재 폴더.
 // env 는 .env, .env.development 등과 실제 환경변수를 합친 값(실제 환경변수 우선).
@@ -50,15 +52,18 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), ''); // 접두사 '' → VITE_ 가 아닌 서버 설정도 읽는다
   // 애니메이션 빌드 옵션: 단일 HTML 만 `ANIMATIONS=off` 로 효과를 끈 채 빌드할 수 있다(결과물에서는 설정 토글도 숨는다).
   // 서버·정적 빌드는 항상 켜 두고 설정 화면의 토글로 끈다.
+  // pandoc.wasm 무결성 기대 해시(server/api.js 가 제공하는 것과 같은 파일). 못 찾으면 빈 문자열 → 런타임 검증 생략
+  let wasmSha256 = '';
+  try { wasmSha256 = createHash('sha256').update(readFileSync(fileURLToPath(new URL('./node_modules/pandoc-wasm/src/pandoc.wasm', import.meta.url)))).digest('hex'); } catch { /* 빌드는 계속한다 */ }
   const anim = !(single && /^(off|0|false)$/i.test(env.ANIMATIONS ?? ''));
   return {
     base: stat ? './' : '/', // 정적 호스팅은 하위 경로에 올려도 동작하도록 상대 경로로 둔다
-    plugins: [svelte(), ...(single ? [viteSingleFile(), renameStandalone()] : stat ? [] : [notesApi(env)])],
+    plugins: [svelte(), ...(single ? [viteSingleFile(), renameStandalone()] : stat ? [pwaPlugin()] : [notesApi(env)])],
     resolve: {
       // pandoc-wasm 의 exports 가 하위 경로 import 를 막아, 환경 무관 코어를 직접 가리킨다
       alias: { 'pandoc-wasm-core': fileURLToPath(new URL('./node_modules/pandoc-wasm/src/core.js', import.meta.url)) },
     },
-    define: { __MODE__: JSON.stringify(html ? 'html' : 'server'), __ANIM__: JSON.stringify(anim) },
+    define: { __MODE__: JSON.stringify(html ? 'html' : 'server'), __ANIM__: JSON.stringify(anim), __PWA__: JSON.stringify(stat), __PANDOC_WASM_SHA256__: JSON.stringify(wasmSha256) },
     build: {
       outDir: single ? 'dist-html' : stat ? 'dist-static' : 'dist',
       emptyOutDir: true,

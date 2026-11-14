@@ -22,6 +22,9 @@ const COMMENTS_DIR = '.comments/';
 
 export interface RelinkedText { text: string; assets: { path: string; data: Uint8Array }[] }
 
+/** 이미지 id → 읽은 데이터. 번들 한 번을 만드는 동안 공유하면 이력 버전마다 같은 이미지를 저장소에서 다시 읽지 않는다 */
+export type ImageCache = Map<string, Promise<{ ext: string; data: Uint8Array } | null>>;
+
 // 본문의 `idb:` 이미지를 `assets/<문서명>/<파일>` 상대 링크로 바꾸고, 그 이미지 데이터를 함께 돌려준다 (zip 내부 경로 기준).
 // stable 이면 파일 이름을 본문 순번 대신 이미지 id 로 붙인다 — 같은 문서의 여러 본문(이력 버전 등)이 같은 폴더를 공유해도 충돌하지 않는다.
 export async function relinkImages(
@@ -29,9 +32,18 @@ export async function relinkImages(
   content: string,
   loadImage: (id: string) => Promise<Blob | null>,
   stable = false,
+  cache?: ImageCache,
 ): Promise<RelinkedText> {
   const assets: RelinkedText['assets'] = [];
-  const seen = new Map<string, Promise<string | null>>(); // replaceImages 는 참조를 동시에 처리하므로 Promise 로 캐시한다
+  const seen = new Map<string, Promise<string | null>>(); // replaceImages 는 참조를 동시에 처리하므로 Promise 로 캐시한다. 번호·링크는 본문마다 따로 매긴다
+  const load = (id: string) => {
+    let p = cache?.get(id);
+    if (!p) {
+      p = loadImage(id).then(async (blob) => (blob ? { ext: imageExt(blob), data: new Uint8Array(await blob.arrayBuffer()) } : null));
+      cache?.set(id, p);
+    }
+    return p;
+  };
   let n = 0;
   const { text } = await replaceImages(content, (src) => {
     const id = /^idb:([0-9a-f-]{36})$/.exec(src)?.[1];
@@ -39,10 +51,10 @@ export async function relinkImages(
     let link = seen.get(id);
     if (!link) {
       const file = stable ? `${id}.` : `${++n}.`;
-      link = loadImage(id).then(async (blob) => {
-        if (!blob) return null;
-        const name = file + imageExt(blob);
-        assets.push({ path: `assets/${stem}/${name}`, data: new Uint8Array(await blob.arrayBuffer()) });
+      link = load(id).then((img) => {
+        if (!img) return null;
+        const name = file + img.ext;
+        assets.push({ path: `assets/${stem}/${name}`, data: img.data });
         return `assets/${encSeg(stem)}/${name}`;
       });
       seen.set(id, link);
@@ -53,9 +65,9 @@ export async function relinkImages(
 }
 
 /** relinkImages 의 폴더 버전: stem 이 '폴더/이름' 이면 이미지는 그 폴더 안의 `assets/<이름>/` 에 둔다(링크는 글 기준 상대 경로) */
-export async function relinkNested(stem: string, content: string, loadImage: (id: string) => Promise<Blob | null>, stable = false): Promise<RelinkedText> {
+export async function relinkNested(stem: string, content: string, loadImage: (id: string) => Promise<Blob | null>, stable = false, cache?: ImageCache): Promise<RelinkedText> {
   const i = stem.lastIndexOf('/');
-  const r = await relinkImages(stem.slice(i + 1), content, loadImage, stable);
+  const r = await relinkImages(stem.slice(i + 1), content, loadImage, stable, cache);
   if (i < 0) return r;
   const dir = stem.slice(0, i);
   return { text: r.text, assets: r.assets.map((a) => ({ ...a, path: `${dir}/${a.path}` })) };

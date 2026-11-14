@@ -18,6 +18,7 @@ export const ui = $state({
   tab: 'files' as 'files' | 'search',
   findOpen: false,
   findFocus: 0, // 바뀔 때마다 검색 바 입력창에 포커스
+  replaceOpen: false, // 문서 내 검색 바의 '바꾸기' 줄을 펼침(Ctrl+H)
   globalFocus: 0, // 바뀔 때마다 전체 검색 입력창에 포커스
 });
 
@@ -29,14 +30,19 @@ export const finder = $state<{
   total: number;
   current: number;
   error: string;
+  notice: string; // 일치가 상한·시간 예산에 걸려 일부만 표시할 때의 안내(Editor 가 얹는다)
   jump: { id: string; nth: number } | null; // 전체 검색 결과에서 연 문서(id)가 이동할 n번째 일치
-}>({ query: '', ctl: null, ctlPath: '', total: 0, current: -1, error: '', jump: null });
+}>({ query: '', ctl: null, ctlPath: '', total: 0, current: -1, error: '', notice: '', jump: null });
 
-// 문서 화면에서 Ctrl+F, 어디서든 Ctrl+Shift+F. 처리했으면 'find' | 'global' 을 돌려준다.
+// 문서 화면에서 Ctrl+F(바꾸기 줄까지 펼치려면 Ctrl+H), 어디서든 Ctrl+Shift+F. 처리했으면 'find' | 'global' 을 돌려준다.
 export function searchShortcut(e: KeyboardEvent, hasDoc: boolean): 'find' | 'global' | null {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== 'f') return null;
+  const k = e.key.toLowerCase();
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || (k !== 'f' && k !== 'h')) return null;
+  // Ctrl+H: Mac 은 Cmd+H 가 '앱 숨기기'이고 Ctrl+H 는 글자 지우기라 건드리지 않는다
+  const replace = k === 'h';
+  if (replace && (e.shiftKey || !e.ctrlKey || e.metaKey || (typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)))) return null;
   const target = e.target instanceof Element ? e.target : null;
-  if (e.shiftKey) {
+  if (e.shiftKey && !replace) {
     e.preventDefault();
     ui.tab = 'search';
     ui.globalFocus++;
@@ -48,6 +54,7 @@ export function searchShortcut(e: KeyboardEvent, hasDoc: boolean): 'find' | 'glo
   const sel = window.getSelection()?.toString() ?? '';
   if (sel && sel.length <= 100 && !sel.includes('\n')) finder.query = sel;
   ui.findOpen = true;
+  if (replace) ui.replaceOpen = true;
   ui.findFocus++;
   return 'find';
 }

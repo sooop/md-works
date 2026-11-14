@@ -7,13 +7,14 @@ import { updatedAfterEdit } from './docUpdated';
 import { fullPath, splitPath, withParents, byName, type DocNode } from './docTree';
 import { followRename, expandFolder } from './docTree.svelte';
 import { searchComments } from './search/commentSearch';
-import { exportDocx, isImportable, readImport } from './docx-flow';
+import { exportDocx, exportEpub, exportHtml, isImportable, readImport } from './docx-flow';
 import { IMPORT_ACCEPT, IMPORT_LABEL } from './pandoc/importFormats';
 import { buildMatcher, searchText } from '../../server/searchCore.js';
 import type { SearchResponse } from './search/types';
 import { snapshot, allContents } from './history';
 import { backoffMs, conflictAction, goneAction, versionLabel, TAB_CONFLICT_BUTTONS, GONE_BUTTONS } from './saveSafety';
 import { saveNamedVersion } from './namedVersion';
+import type { ReplaceHost } from './search/replaceAll';
 import { createDocDb, type DocRec, type ImgRec, type SaveOutcome } from './works/docDb';
 import { isTrashed, liveDocs, trashItems } from './works/trashLogic';
 import { cleanupPurged } from './works/trashOps';
@@ -31,6 +32,8 @@ import { createIdbStore } from './works/idbStore';import { useBundleHost } from 
 import { recordDocGone, clearDocGone } from './bundle/tombstones';
 import { createStandaloneHost } from './bundle/hosts/standalone';
 import { design as designState, importDesign } from './design/state.svelte';
+import { createStandaloneLinkHost } from './wikilink/standaloneHost';
+import { updateLinksAfterMove } from './wikilink/notify';
 import { serializeDesign } from './design';
 
 // ---- IndexedDB ----
@@ -66,9 +69,20 @@ async function editFolders(fn: (s: Set<string>) => void) {
     folderSet.clear();
     for (const f of next) folderSet.add(f);
     notifyTabs({ t: 'docs' });
-  } catch {
+  } catch (e) {
     fn(folderSet);
+    toast(`폴더 목록을 저장하지 못했습니다(새로고침하면 빈 폴더가 사라질 수 있습니다): ${errMsg(e)}`, 'error');
   }
+}
+
+// 삭제 묘비 기록: 실패하면 한 번 더 시도하고, 그래도 안 되면 알린다(다른 기기의 번들에서 글이 되살아날 수 있다)
+async function recordGone(path: string, deletedAt?: number) {
+  let last: unknown;
+  for (let i = 0; i < 2; i++) {
+    try { await recordDocGone(path, deletedAt); return; } catch (e) { last = e; }
+  }
+  console.warn('삭제 묘비를 기록하지 못했습니다', path, last);
+  toast(`삭제 기록을 남기지 못했습니다(다른 기기의 백업에서 글이 되살아날 수 있습니다): ${errMsg(last)}`, 'error');
 }
 
 const LAST_KEY = 'notes.lastDoc';
@@ -439,22 +453,57 @@ function listenOtherTabs() {
 // ---- 현재 문서 저장 (항상 자동 저장) ----
 let timer: ReturnType<typeof setTimeout> | undefined;
 
-export function onEditorChange(md: string) {
+let typedKey = -1; // 이 에디터(doc.key)에서 변경 통지를 받은 적이 있는지(저장 직전에 에디터에서 직접 읽어도 되는지 판단)
+
+/** 편집기의 마크다운을 현재 글의 사본에 반영한다(타이머는 건드리지 않는다). 반영할 글이 없으면 false */
+function applyContent(md: string): boolean {
   doc.content = md;
   markChanged(); // 백업 '마지막 변경' 추적
   const rec = all.get(doc.path);
-  if (!rec) return;
+  if (!rec) return false;
   rec.updated = updatedAfterEdit(rec, md, Date.now()); // 실제로 바뀐 경우에만 수정 시각을 갱신(flush 시점엔 이미 같아 보이므로 여기서 판단)
   rec.content = md; // 이미지 정리가 최신 참조를 보도록 즉시 반영
   pendingEdit = true;
+  return true;
+}
+
+export function onEditorChange(md: string) {
+  typedKey = doc.key;
+  if (!applyContent(md)) return;
   clearTimeout(timer);
   if (held.has(doc.path)) return; // 충돌·삭제 선택을 취소한 글은 직접 저장할 때까지 자동 저장하지 않는다
   timer = setTimeout(() => void flush(), 400);
 }
 
+// 에디터에서 지금의 마크다운을 바로 읽어 온다. 에디터의 변경 통지는 200ms 디바운스(maxWait 없음, 파괴 시 취소)라 입력 직후에는 doc.content 가 뒤처진다.
+// 이 에디터에서 한 번이라도 통지를 받은 뒤에만 믿는다(새 글을 막 열어 에디터가 아직 만들어지는 중이면 이전 글의 브리지가 남아 있을 수 있다).
+function syncFromEditor() {
+  if (typedKey !== doc.key || !doc.edit || !doc.path) return;
+  try {
+    const md = editorBridge.getMarkdown();
+    if (typeof md === 'string' && md !== doc.content) applyContent(md);
+  } catch { /* 에디터가 내려가는 중: doc.content 를 쓴다 */ }
+}
+
+/** 저장하지 않은 내용이 있나(입력 대기·저장 대기·저장 중·저장 실패). 닫기 경고용 */
+export function hasUnsavedWork(): boolean {
+  syncFromEditor();
+  return pendingEdit || unsaved.size > 0 || inflight > 0;
+}
+
+// 지금 글을 떠나기 직전(await 없이): 아직 기록하지 못한 입력을 저장 줄에 넣어 둔다. 이후 doc 이 바뀌어도 id 로 저장된다
+function queueLeaveSave() {
+  syncFromEditor();
+  const id = doc.path;
+  if (!id || !all.has(id) || !pendingEdit) return;
+  unsaved.add(id); // persist 가 doc.path 와 무관하게 이 글의 사본을 쓰도록 표시
+  void enqueue(() => persist(id, true)).catch((e) => markSaveFailed(id, e));
+}
+
 // 대기 중인 변경을 즉시 기록한다
 export async function flush() {
   clearTimeout(timer);
+  syncFromEditor(); // 디바운스에 걸려 아직 통지되지 않은 마지막 입력까지 포함한다
   const id = doc.path;
   if (!id || !all.has(id)) return;
   try {
@@ -478,13 +527,16 @@ export async function openDoc(id: string) {
   if (!unsaved.has(id)) {
     try {
       const fresh = await db.get(id);
-      if (fresh && !isTrashed(fresh)) { all.set(id, fresh); base.set(id, fresh.content); }
+      const typing = id === doc.path && (pendingEdit || inflight > 0); // 읽는 사이 같은 글에 입력했으면 메모리 사본이 더 새롭다
+      if (fresh && !isTrashed(fresh)) { if (!typing) { all.set(id, fresh); base.set(id, fresh.content); } }
       else if (all.has(id)) { dropLocal(id); toast(fresh ? '다른 탭에서 휴지통으로 옮겨진 글입니다' : '다른 탭에서 지워진 글입니다', 'error'); return; }
     } catch { /* 읽지 못하면 메모리 사본으로 연다 */ }
   }
   const rec = all.get(id);
   if (!rec) return;
-  pendingEdit = false;
+  // 위에서 DB 를 읽는 동안 이전 글에 입력했을 수 있다: 글을 바꾸기 직전에 한 번 더 저장 줄에 넣는다(바꾼 뒤에는 그 입력을 알 수 없다)
+  if (doc.path && doc.path !== id) queueLeaveSave();
+  pendingEdit = id === doc.path && pendingEdit; // 같은 글을 다시 연 경우 입력 대기 표시를 지키지 않으면 그 입력이 저장되지 않는다
   refreshList();
   Object.assign(doc, { path: id, name: rec.name, content: rec.content, dirty: false, edit: defaultEdit() }); // 문서는 편집 모드로 연다(모바일은 읽기)
   lib.dir = folderOf(rec); // 새 글은 지금 보는 글의 폴더에 만든다
@@ -577,11 +629,13 @@ async function relocateFolder(from: string, to: string): Promise<string | undefi
   if (doc.path) await flush();
   let failure: string | undefined;
   const olds = new Map(affected.map((r) => [r.id, fullOf(r)]));
+  const moves: { from: string; to: string }[] = []; // 글 사이 링크 `[[…]]` 갱신용
   try {
     const saved = await db.patchMany(affected.map((r) => r.id), (cur) => withFolder(cur, remap(folderOf(cur), from, to)));
     for (const r of saved) {
       applyMeta(r);
-      await recordDocGone(olds.get(r.id) ?? '').catch(() => { /* 무시 */ }); // 번들은 글 이름이 경로라 옛 경로는 지운 글로 기록한다
+      moves.push({ from: olds.get(r.id) ?? '', to: fullOf(r) });
+      await recordGone(olds.get(r.id) ?? ''); // 번들은 글 이름이 경로라 옛 경로는 지운 글로 기록한다
       await clearDocGone(fullOf(r)).catch(() => { /* 무시 */ });
     }
     if (saved.length) { markChanged(); notifyTabs({ t: 'docs' }); }
@@ -590,6 +644,7 @@ async function relocateFolder(from: string, to: string): Promise<string | undefi
   lib.dir = remap(lib.dir, from, to);
   followRename(from, to);
   refreshList();
+  await updateLinksAfterMove(linkHost, moves);
   return failure;
 }
 
@@ -634,12 +689,13 @@ async function moveDocCore(id: string, dest: string): Promise<string | undefined
   if (!next) { void syncFromDb(); return '다른 탭에서 지워진 글입니다'; }
   applyMeta(next);
   markChanged();
-  await recordDocGone(old).catch(() => { /* 무시 */ });
+  await recordGone(old);
   await clearDocGone(fullOf(next)).catch(() => { /* 무시 */ });
   notifyTabs({ t: 'docs' });
   followRename(old, fullOf(next));
   expandFolder(dest);
   refreshList();
+  await updateLinksAfterMove(linkHost, [{ from: old, to: fullOf(next) }]);
   return undefined;
 }
 export async function moveDoc(id: string, dest: string) {
@@ -700,12 +756,13 @@ async function renameDocTo(id: string, input: string) {
   if (!next) { toast('다른 탭에서 지워진 글입니다', 'error'); void syncFromDb(); return; }
   applyMeta(next);
   markChanged();
-  await recordDocGone(prevFull).catch(() => { /* 무시 */ }); // 옛 이름은 '지운 글'로 기록한다
+  await recordGone(prevFull); // 옛 이름은 '지운 글'로 기록한다
   await clearDocGone(fullOf(next)).catch(() => { /* 무시 */ });
   notifyTabs({ t: 'docs' });
   followRename(prevFull, fullOf(next));
   if (rec.id === doc.path) { doc.name = name; editorBridge.focus?.(); } // 이름 변경 직후 본문으로 포커스 복귀
   refreshList();
+  await updateLinksAfterMove(linkHost, [{ from: prevFull, to: fullOf(next) }]);
 }
 
 // ---- 휴지통 ----
@@ -715,7 +772,7 @@ async function renameDocTo(id: string, input: string) {
 /** 이 탭에서 휴지통으로 간 글을 걷어 내고(열려 있었으면 닫는다) 삭제 묘비를 남기고 다른 탭에 알린다 */
 async function finishTrashed(recs: DocRec[]) {
   for (const r of recs) {
-    await recordDocGone(fullOf(r), r.deletedAt).catch(() => { /* 무시 */ }); // 다른 기기의 번들에서 되살아나지 않도록 묘비를 남긴다(번들이 더 늦게 수정됐으면 되살린다)
+    await recordGone(fullOf(r), r.deletedAt); // 다른 기기의 번들에서 되살아나지 않도록 묘비를 남긴다(번들이 더 늦게 수정됐으면 되살린다)
     markSaved(r.id); // 저장하지 못한 채 남아 있던 글이면 재시도 대상에서 뺀다
     dropLocal(r.id);
   }
@@ -859,6 +916,7 @@ export const downloadNodes = (nodes: DocNode[], format = 'zip') =>
 export async function restoreVersion(content: string) {
   if (!doc.path) return;
   held.delete(doc.path);
+  syncFromEditor(); // 되돌리기 직전의 마지막 입력까지 이력에 남긴다
   await snapshot(doc.path, doc.content, true);
   clearTimeout(timer);
   pendingEdit = true; // 복원한 내용은 저장 대상이다
@@ -867,6 +925,30 @@ export async function restoreVersion(content: string) {
   await flush();
   if (doc.saveFailed) throw new Error('저장에 실패했습니다');
 }
+
+// 글 사이 링크 `[[글 이름]]`(wikilink/): 에디터 표시·링크 패널과 이름 변경 뒤 링크 갱신이 쓰는 호스트. 로직은 wikilink/standaloneHost.ts
+export const linkHost = createStandaloneLinkHost({
+  list: () => lib.docs.map((d) => ({ id: d.id, path: fullPath(d.folder, d.name) })),
+  recs: () => [...all.values()].map((r) => ({ id: r.id, path: fullOf(r), content: r.content })),
+  openId: () => doc.path,
+  flush,
+  content: () => doc.content,
+  restore: restoreVersion,
+  saveOther: async (id, text) => {
+    const r = all.get(id);
+    if (!r) return false;
+    await snapshot(id, r.content).catch(() => { /* 이력은 부가 기능이라 실패해도 무시 */ });
+    r.content = text;
+    r.updated = Date.now();
+    unsaved.add(id); // persist 가 열린 글이 아니어도 이 글의 사본을 쓰도록 표시
+    try { return (await enqueue(() => persist(id, true))) === 'ok'; } catch (e) { markSaveFailed(id, e); return false; }
+  },
+  open: openDoc,
+  create: async (path) => {
+    const s = splitPath(path);
+    try { await createRec(toStem(s.name), '', true, true, s.folder); expandFolder(s.folder); } catch { /* 토스트로 알렸다 */ }
+  },
+});
 
 // ---- 본문 검색 (메모리에 올려 둔 문서 본문을 직접 검색) ----
 const SEARCH_PER_FILE = 50;
@@ -891,6 +973,36 @@ export async function searchLibrary(query: string, opts: { caseSensitive: boolea
   const comments = await searchComments(worksStore(), recs.map((r) => ({ id: r.id, label: stripExt(fullOf(r)) })), query, opts).catch(() => []);
   return { results, count, truncated, comments };
 }
+
+// 전체 바꾸기(search/replaceAll.ts)의 스탠드얼론 구현. 후보는 모든 글(휴지통 제외)이고, 쓰기는 DB 의 현재 내용과 비교해 다른 탭의 편집을 덮지 않는다.
+export const replaceHost: ReplaceHost = {
+  list: async () => ({ refs: [...all.values()].sort((a, b) => byName(fullOf(a), fullOf(b))).map((r) => ({ id: r.id, label: stripExt(fullOf(r)) })), partial: false }),
+  prepare: () => flush(),
+  async read(ref) {
+    const rec = await db.get(ref.id);
+    if (!rec || isTrashed(rec)) throw new Error('글이 없습니다');
+    return { content: rec.content, token: rec };
+  },
+  async write(ref, content, token) {
+    const cur = token as Rec;
+    const out = await db.saveContent({ rec: { ...cur, content, updated: Date.now() }, base: cur.content });
+    if (out.kind !== 'ok') throw new Error(out.kind === 'conflict' ? '다른 탭에서 수정되었습니다' : '글이 없습니다');
+    if (!out.wrote) return;
+    all.set(ref.id, out.rec);
+    base.set(ref.id, out.rec.content);
+    refreshList();
+    markChanged();
+    notifyTabs({ t: 'docs' });
+  },
+  snapshot: (ref, content) => saveNamedVersion(ref.id, content, '바꾸기 전'),
+  async reloadOpen(ref) {
+    if (ref.id !== doc.path) return;
+    syncFromEditor();
+    if (pendingEdit) throw new Error('편집 중'); // 그 사이 입력한 내용을 덮어쓰지 않는다
+    const rec = all.get(ref.id);
+    if (rec) adoptRemote(rec);
+  },
+};
 
 // ---- 이미지 ----
 // 문서에는 `idb:<id>` 로 적고, 화면에는 Blob 에서 만든 object URL 로 보여 준다.
@@ -948,8 +1060,11 @@ async function gcImages() {
   lastGc = Date.now();
   try {
     await runExclusive('works-gc', async () => {
+      const mem = [...all.values()].map((r) => r.content);
+      // 지울 후보(유예가 지났고 글들이 참조하지 않는 이미지)가 없으면 모든 이력을 압축 해제해 훑지 않는다
+      if (!(await db.hasGcCandidates({ extraContents: mem, now: Date.now(), graceMs: GC_GRACE_MS }))) return;
       const history = await allContents();
-      const dead = await db.gc({ extraContents: [...history, ...[...all.values()].map((r) => r.content)], now: Date.now(), graceMs: GC_GRACE_MS });
+      const dead = await db.gc({ extraContents: [...history, ...mem], now: Date.now(), graceMs: GC_GRACE_MS });
       for (const id of dead) {
         const u = urls.get(id);
         urls.delete(id);
@@ -1153,5 +1268,25 @@ export async function exportDocxCurrent() {
     await exportDocx(text, doc.name, template);
   } catch (e) {
     toast(`DOCX 내보내기 실패: ${errMsg(e)}`, 'error');
+  }
+}
+
+export async function exportHtmlCurrent() {
+  if (!doc.path) return;
+  try {
+    const { text } = await inlineImages(doc.content);
+    await exportHtml(text, doc.name);
+  } catch (e) {
+    toast(`HTML 내보내기 실패: ${errMsg(e)}`, 'error');
+  }
+}
+
+export async function exportEpubCurrent() {
+  if (!doc.path) return;
+  try {
+    const { text } = await inlineImages(doc.content);
+    await exportEpub(text, doc.name);
+  } catch (e) {
+    toast(`EPUB 내보내기 실패: ${errMsg(e)}`, 'error');
   }
 }

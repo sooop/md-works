@@ -21,6 +21,7 @@
   import { tip } from '../tooltip.svelte';
   import { matchName } from '../search/nameMatch';
   import { stripExt } from '../utils';
+  import { renamedPaths as matchRenames, type TreeInfo } from '../treeRename';
   import { toast, errMsg } from '../store.svelte';
   import { sortTree, ordersOf, type DocNode, type SortMode } from '../docTree';
   import { treeUi, setSort, setOrders, SORT_LABEL, treeNav, treeKb, onActiveChange, isCollapsed, toggleFolder, expandFolder } from '../docTree.svelte';
@@ -107,6 +108,17 @@
     }
     return out;
   }
+  // 파일명 입력은 120ms 멈춘 뒤에 트리 필터에 반영한다(글자마다 전체 트리를 다시 거르지 않도록)
+  // svelte-ignore state_referenced_locally
+  let typed = $state(filter);
+  let filterTimer: ReturnType<typeof setTimeout> | undefined;
+  function onFilterInput() {
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => { filterTimer = undefined; filter = typed; }, 120);
+  }
+  // 바깥에서 filter 가 바뀌면(초기화 등) 입력창도 따라간다
+  $effect(() => { const f = filter; if (f !== untrack(() => typed) && filterTimer === undefined) typed = f; });
+  onDestroy(() => clearTimeout(filterTimer));
   const view = $derived(filter.trim() ? filterNodes(sorted, filter) : sorted);
 
   // 삽입·삭제 효과용: 접어 둔 폴더 안까지 포함한 전체 경로 집합(nodes 기준이라 필터·접기에는 변하지 않는다)
@@ -116,7 +128,7 @@
   let seen = new Set<string>();
   // 이름 바꾸기는 경로가 바뀌어 '옛 항목 삭제 + 새 항목 삽입'처럼 보이므로(폴더가 순간 두 벌로 보인다), 직전 트리와 견줘
   // 같은 자리에서 이름만 바뀐 항목(폴더는 안의 구성이 같고, 글은 수정 시각이 같다)을 찾아 삭제·삽입 효과에서 뺀다
-  interface Info { type: 'file' | 'dir'; parent: string; sig: string }
+  type Info = TreeInfo;
   const indexTree = (list: DocNode[], parent = '', out = new Map<string, Info>()): { out: Map<string, Info>; rels: string[] } => {
     const rels: string[] = [];
     for (const n of list) {
@@ -133,24 +145,8 @@
   function renamedPaths(): Set<string> {
     if (quietKey && quietKey[0] === seen && quietKey[1] === allPaths) return quiet;
     quietKey = [seen, allPaths];
-    quiet = new Set();
     const cur = indexTree(nodes).out;
-    const gone = [...prevIndex.keys()].filter((p) => !cur.has(p));
-    const fresh = [...cur.keys()].filter((p) => !prevIndex.has(p));
-    const sameSpot = (r: string, a: string) => {
-      const ri = prevIndex.get(r)!, ai = cur.get(a)!;
-      return ri.type === ai.type && ri.parent === ai.parent && ri.sig === ai.sig;
-    };
-    for (const r of gone) {
-      const ri = prevIndex.get(r)!;
-      const twins = fresh.filter((a) => cur.get(a)!.type === ri.type && sameSpot(r, a));
-      const rivals = gone.filter((x) => prevIndex.get(x)!.type === ri.type && prevIndex.get(x)!.parent === ri.parent && prevIndex.get(x)!.sig === ri.sig);
-      if (twins.length !== 1 || rivals.length !== 1) continue; // 짝이 하나로 정해질 때만 이름 바꾸기로 본다
-      const a = twins[0];
-      quiet.add(r); quiet.add(a);
-      for (const p of prevIndex.keys()) if (p.startsWith(r + '/')) quiet.add(p);
-      for (const p of cur.keys()) if (p.startsWith(a + '/')) quiet.add(p);
-    }
+    quiet = matchRenames(prevIndex, cur);
     return quiet;
   }
   $effect(() => { seen = new Set(allPaths); prevIndex = indexTree(nodes).out; });
@@ -395,8 +391,8 @@
 
 <div class="filterbox">
   <Search size={14} />
-  <input bind:value={filter} placeholder="파일 이름 검색 (초성 가능)" aria-label="파일 이름 검색" spellcheck="false" />
-  {#if filter}<button class="icon-btn" use:tip={'지우기'} aria-label="검색어 지우기" onclick={() => (filter = '')}><X size={14} /></button>{/if}
+  <input bind:value={typed} oninput={onFilterInput} placeholder="파일 이름 검색 (초성 가능)" aria-label="파일 이름 검색" spellcheck="false" />
+  {#if typed}<button class="icon-btn" use:tip={'지우기'} aria-label="검색어 지우기" onclick={() => { clearTimeout(filterTimer); filterTimer = undefined; typed = ''; filter = ''; }}><X size={14} /></button>{/if}
   <Pop bind:open={sortOpen} label="정렬 기준" width={290}>
     {#snippet trigger({ toggle, open })}
       <button class="icon-btn" class:on={open} aria-haspopup="dialog" aria-expanded={open} aria-label="정렬 기준: {SORT_LABEL[treeUi.sort]}"

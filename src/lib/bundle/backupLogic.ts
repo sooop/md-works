@@ -1,6 +1,6 @@
 // 백업 판단·스케줄·파일 판별 순수 함수. 상태(backupState.svelte.ts)와 UI 에서 분리해 단위 테스트한다.
 import { unzipSync } from 'fflate';
-import { isEncrypted } from './crypto';
+import { isEncrypted, isPasswordEncrypted } from './crypto';
 import { parseFolderJson } from '../folderExport';
 
 export const MIN_MS = 60_000;
@@ -21,6 +21,19 @@ export function clampInterval(min: number, floor: number, fallback: number): num
   return Math.max(floor, Math.floor(min));
 }
 
+/** 연속 실패 뒤 다음 시도 간격의 상한 */
+export const MAX_BACKOFF_MS = 6 * 60 * MIN_MS;
+
+/**
+ * 연속 실패 횟수에 따라 늘린 다음 시도 간격(ms): 간격 × 2, 4, 8 … (상한 6시간, 단 설정 간격이 그보다 길면 설정 간격).
+ * 실패해도 번들을 다시 만들어 전부 올리는 일이 매 간격마다 되풀이되지 않게 한다. 성공하면 호출자가 횟수를 0 으로 되돌린다.
+ */
+export function backoffMs(intervalMin: number, failures: number): number {
+  const base = intervalMin * MIN_MS;
+  if (!(failures > 0)) return base;
+  return Math.min(base * 2 ** Math.min(failures, 30), Math.max(base, MAX_BACKOFF_MS));
+}
+
 export interface DueInput {
   now: number;
   lastChange: number;
@@ -29,12 +42,14 @@ export interface DueInput {
   /** 마지막 시도 시각(실패 포함, 없으면 0) — 실패 직후 매 틱마다 재시도하지 않게 한다 */
   lastAttempt: number;
   intervalMin: number;
+  /** 연속 실패 횟수(없으면 0) — 많을수록 다음 시도를 늦춘다(backoffMs) */
+  failures?: number;
 }
 
-/** 자동 올리기 시점인가: 마지막 업로드 이후 변경이 있고, 마지막 시도 후 간격이 지났을 때만 */
-export function isUploadDue({ now, lastChange, lastSuccess, lastAttempt, intervalMin }: DueInput): boolean {
+/** 자동 올리기 시점인가: 마지막 업로드 이후 변경이 있고, 마지막 시도 후 간격(연속 실패면 늘린 간격)이 지났을 때만 */
+export function isUploadDue({ now, lastChange, lastSuccess, lastAttempt, intervalMin, failures = 0 }: DueInput): boolean {
   if (!needsBackup(lastChange, lastSuccess)) return false;
-  return now - Math.max(lastSuccess, lastAttempt) >= intervalMin * MIN_MS;
+  return now - Math.max(lastSuccess, lastAttempt) >= backoffMs(intervalMin, failures);
 }
 
 export interface NotifyInput {
@@ -85,11 +100,12 @@ export function isBundleZip(bytes: Uint8Array): boolean {
   }
 }
 
-export type FileKind = 'bundle-encrypted' | 'bundle-zip' | 'doc-zip' | 'folder-json' | 'other';
+export type FileKind = 'bundle-encrypted' | 'bundle-password' | 'bundle-zip' | 'doc-zip' | 'folder-json' | 'other';
 
-/** 바이트로 판별한다. 암호화 번들은 매직으로, zip 은 manifest 의 schema 로 구분한다. */
+/** 바이트로 판별한다. 암호화 번들은 매직으로(MWB1 = 빌드 키, MWB2 = 비밀번호), zip 은 manifest 의 schema 로 구분한다. */
 export function classifyBytes(name: string, bytes: Uint8Array): FileKind {
   if (isEncrypted(bytes)) return 'bundle-encrypted';
+  if (isPasswordEncrypted(bytes)) return 'bundle-password';
   if (/\.json$/i.test(name) && parseFolderJson(bytes)) return 'folder-json';
   if (isZipBytes(bytes) || /\.zip$/i.test(name)) return isBundleZip(bytes) ? 'bundle-zip' : 'doc-zip';
   return 'other';
@@ -103,7 +119,7 @@ export async function isBundleFile(file: File): Promise<boolean> {
   const isZip = /\.zip$/i.test(file.name) || file.type === 'application/zip';
   if (!isMwb && !isZip) return false; // .md/.docx 등은 바이트를 읽지 않는다
   const kind = classifyBytes(file.name, new Uint8Array(await file.arrayBuffer()));
-  return kind === 'bundle-encrypted' || kind === 'bundle-zip';
+  return kind === 'bundle-encrypted' || kind === 'bundle-password' || kind === 'bundle-zip';
 }
 
 /** 드롭된 파일을 번들(백업 흐름)과 나머지(문서 가져오기 흐름)로 나눈다 */
@@ -145,6 +161,50 @@ export const partFileName = (stem: string, index: number) => `${stem}.${String(i
 export function partCaption(base: string, index: number, total: number, totalBytes: number, sha12: string): string {
   return `${base ? `${base} · ` : ''}${index}/${total} · 전체 ${fmtMb(totalBytes)} · SHA-256 ${sha12}`;
 }
+
+// ---- 텔레그램 이어 올리기 ----
+/** 분할 업로드가 어디까지 올라갔는지: 어떤 번들(전체 SHA-256·크기)의 몇 번째 조각까지(done = 올라간 조각 수) */
+export interface UploadProgress {
+  /** 전체 번들 바이트의 SHA-256(hex 64자) */
+  sha256: string;
+  /** 처음 올릴 때 쓴 파일 이름(조각 이름 `<filename>.001…` 의 바탕) */
+  filename: string;
+  size: number;
+  total: number;
+  done: number;
+}
+/** 앱이 보관하는 이어 올리기 정보: 진행 + caption 바탕 + 번들을 만들기 시작한 시각(그 뒤의 변경 판정·성공 기록 기준) */
+export interface ResumeInfo extends UploadProgress {
+  caption: string;
+  startedAt: number;
+}
+
+/** 아직 올리지 않은 조각 번호들(1부터) */
+export function remainingParts(total: number, done: number): number[] {
+  const from = Math.max(0, Math.floor(done));
+  return Array.from({ length: Math.max(0, total - from) }, (_, i) => from + i + 1);
+}
+
+/** 다시 가진 바이트가 이어 올리려던 그 번들인지 본다. 다르면 이유(문장), 같으면 null */
+export function checkResumeMatch(r: UploadProgress, now: { sha256: string; size: number; total: number }): string | null {
+  if (now.sha256 !== r.sha256 || now.size !== r.size) return '이어 올리려던 번들과 다른 바이트라 이어 올릴 수 없습니다 (조각이 섞이면 복원할 수 없습니다)';
+  if (now.total !== r.total) return '조각 수가 달라 이어 올릴 수 없습니다';
+  if (!(r.done >= 1 && r.done < r.total)) return '이어 올릴 조각이 없습니다';
+  return null;
+}
+
+/** 이어 올리기 상태 전이: 실패 오류가 알려 준 진행(UploadProgress)을 저장한다. 앞서 올라간 조각 수보다 줄어들지 않는다 */
+export function afterFailure(prev: ResumeInfo | null, p: UploadProgress | undefined, caption: string, startedAt: number): ResumeInfo | null {
+  if (!p) return prev; // 조각이 하나도 올라가지 않았으면(또는 분할이 아니면) 있던 정보를 그대로 둔다
+  if (prev && prev.sha256 === p.sha256 && prev.done > p.done) return prev;
+  return { ...p, caption, startedAt };
+}
+
+/** 실패한 시도 뒤로 글이 바뀌었는가 — 이어 올리면 그 변경은 포함되지 않는다(다음 올리기가 새 번들로 올린다) */
+export const resumeMissesChanges = (r: ResumeInfo, lastChange: number): boolean => lastChange > r.startedAt;
+
+/** 폴더 백업(서버 .works-backup/) 번들 크기 상한. server/api.js 의 MAX_BACKUP 과 같다 */
+export const FOLDER_BACKUP_LIMIT = 200 * 1024 * 1024;
 
 const PART_RE = /^(.+\.mwb)\.(\d{3})$/i;
 

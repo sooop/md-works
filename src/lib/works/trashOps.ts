@@ -7,13 +7,15 @@ import { reattachDoc } from './snippets';
 import { worksStore } from './store';
 import type { DocDb, DocRec } from './docDb';
 
+const warn = (what: string, e: unknown) => console.warn(`완전 삭제 뒷정리 실패(무시하고 계속): ${what}`, e);
+
 /** 완전히 지운 글들의 이력·스레드·이전 방식 코멘트·글감 핀을 정리하고 삭제 묘비를 남긴다(한 부분이 실패해도 나머지는 계속한다) */
 export async function cleanupPurged(recs: DocRec[], db: Pick<DocDb, 'idb'>): Promise<void> {
   for (const r of recs) {
-    await recordDocGone(fullPath(r.folder ?? '', r.name), r.deletedAt ?? Date.now()).catch(() => { /* 무시 */ }); // 다른 기기의 번들에서 되살아나지 않도록(휴지통에 보낼 때 이미 남겼으면 그대로 둔다)
-    await db.idb('comments', 'readwrite', (s) => s.delete(r.id)).catch(() => { /* 무시 */ });
-    await worksStore().removePart('threads', r.id).catch(() => { /* 무시 */ });
-    await removeHistory(r.id).catch(() => { /* 무시 */ });
-    await reattachDoc(r.id).catch(() => { /* 무시 */ }); // 글감 연결 끊기
+    await recordDocGone(fullPath(r.folder ?? '', r.name), r.deletedAt ?? Date.now()).catch((e) => warn('삭제 묘비', e)); // 다른 기기의 번들에서 되살아나지 않도록(휴지통에 보낼 때 이미 남겼으면 그대로 둔다)
+    await db.idb('comments', 'readwrite', (s) => s.delete(r.id)).catch((e) => warn('이전 방식 코멘트', e));
+    await worksStore().removePart('threads', r.id).catch((e) => warn('스레드', e));
+    await removeHistory(r.id).catch((e) => warn('이력', e));
+    await reattachDoc(r.id).catch((e) => warn('글감 핀', e)); // 글감 연결 끊기
   }
 }
