@@ -31,7 +31,7 @@
   import { codeLanguages, codeHighlight } from '../codeLanguages';
   import { swapBasicSetup } from '../codeSetup';
   import { attachTableKeys, attachRowMenu } from '../tableKeys';
-  import { attachLatexKeys } from '../latexEdit';
+  import { attachLatexKeys, latexBlockFocus } from '../latexEdit';
   import { codeBlockConfig } from '@milkdown/kit/component/code-block';
   import { onlyDoubleTilde } from '../gfmTilde';
   import { attachCodePicker } from '../codePicker';
@@ -190,6 +190,7 @@
       c.editor.config((ctx) => ctx.update(codeBlockConfig.key, (p) => ({ ...p, extensions: swapBasicSetup(p.extensions) })));
       const tableEnv = { toast, askChoose, docName: () => stripExt(doc.name), openViewer: (t: TableData) => { tableViewer.table = t; }, defaultFmt: () => (settings.tableCopyFormat === 'csv' ? 'csv' as const : 'tsv' as const), openExport: openListExport, openFromCode: (src: CodeSource) => openListImport(src), selectionSource: () => editorBridge.selectionSource?.() ?? null };
       c.editor.use(tablePaste(tableEnv)); // TSV/CSV 붙여넣기 → 표
+      c.editor.use(latexBlockFocus); // $$ 수식 블록: 생성 시 편집 상자 표시·포커스
       c.editor.use(codeClipboard); // 코드 블록 복사는 ``` 언어명 펜스 마크다운으로
       c.editor.use(tableHeaderless); // 모든 셀이 빈 헤더 행은 얇게 접어 헤더 없는 표처럼 보이게
       onlyDoubleTilde(c.editor); // 취소선은 ~~A~~ 만 인식하고 글자 그대로의 ~ 는 보존한다
@@ -209,7 +210,7 @@
           unbindPicker = attachCodePicker(host);
           unbindTips = attachFootnoteTips(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           unbindCode = attachCodeTrim(c.editor.action((ctx) => ctx.get(editorViewCtx)));
-          unbindLatex = attachLatexKeys();
+          unbindLatex = attachLatexKeys(c.editor.action((ctx) => ctx.get(editorViewCtx)));
           if (!readonly) {
             const call = (key: never) => c.editor.action(callCommand(key));
             unbindTableKeys = attachTableKeys(c.editor.action((ctx) => ctx.get(editorViewCtx)), {

@@ -262,8 +262,8 @@
     // 안내 줄은 위치가 선만으로 알 수 없는 경우에만 쓴다(같은 문장이면 다시 대입해도 화면은 바뀌지 않는다)
     if (pos === 'into') drag.hint = `${many}'${node.name}' 폴더 안으로 옮깁니다`;
     else if (srcs.some((s) => dirOf(s) !== dest)) drag.hint = `${many}${where}로 옮깁니다`;
-    else if (srcs.some((s) => s.type !== node.type) && !manual && srcs.length === 1) drag.hint = '글과 폴더를 섞으려면 정렬을 직접 정렬로 바꾸세요';
-    else if (srcs.length > 1 && !manual) drag.hint = '선택한 여러 개의 순서를 정하려면 정렬을 직접 정렬로 바꾸세요';
+    else if (srcs.some((s) => s.type !== node.type) && !manual && srcs.length === 1) drag.hint = '놓으면 정렬이 직접 정렬로 바뀝니다';
+    else if (srcs.length > 1 && !manual) drag.hint = '놓으면 정렬이 직접 정렬로 바뀝니다';
     else drag.hint = '';
     // 접힌 폴더 위에 잠깐 머물면 펼친다
     clearTimeout(hoverTimer);
@@ -323,10 +323,9 @@
     if (ghost) void flyToLanding(ghost, at, landing, into, `${dest ? dest + '/' : ''}${(movable[0] ?? src).name}`, keepGap);
     if (many) { if (movable.length) await selUi.moveNodes(movable, dest); }
     else if (dest !== srcDir) await ctl.move(src, dest);
-    // 형제 사이에 끼워 넣는다. 직접 정렬은 글과 폴더를 섞을 수 있고, 이름순·수정일순은 폴더가 먼저라 종류가 다르면 순서를 건드리지 않는다.
-    // 이름순·수정일순에서 놓았으면 그 자리의 순서를 기준으로 삼아 '직접 정렬'로 바꾼다.
-    // 여러 개를 끌어 놓은 경우는 직접 정렬일 때만 상대 순서를 유지한 채 끼워 넣는다(그 밖에는 폴더로 옮기기만)
-    if (!into && (manual || (!many && src.type === node.type))) {
+    // 형제 사이에 놓으면(폴더 안으로 넣는 경우 제외) 그 자리에 끼워 넣는다. 글·폴더 혼합, 여러 개도 상대 순서를 유지한다.
+    // 이름순·수정일순에서 놓았으면 보이던 순서를 출발점으로 삼아 '직접 정렬'로 바꾼다.
+    if (!into) {
       if (!manual) dndUi.seedOrders(); // 모든 폴더의 보이던 순서를 직접 순서의 출발점으로(확인 없이 조용히)
       const current = siblings(dest); // 놓기 직전 화면에 보이던 순서
       if (many) {

@@ -2,6 +2,7 @@ import { highlightTree } from '@lezer/highlight';
 import { LanguageDescription } from '@codemirror/language';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { codeHighlightStyle, codeLanguages } from './codeLanguages';
+import katex from 'katex';
 import { editorBridge, toast } from './store.svelte';
 
 // 인쇄용 코드 블록: CodeMirror 는 화면에 보이는 줄만 그리므로, 문서 상태의 원문으로 하이라이트된 pre > code 를 만든다.
@@ -54,6 +55,14 @@ export async function buildPrintClone(view: EditorView, host: HTMLElement): Prom
   const els = [...clone.querySelectorAll<HTMLElement>('.milkdown-code-block')];
   if (els.length === blocks.length) {
     await Promise.all(els.map(async (el, i) => {
+      // 수식 블록: 원문 대신 KaTeX 로 그린 결과를 출력한다(화면 밖 블록은 미리보기가 없을 수 있어 문서 원문으로 직접 렌더)
+      if (blocks[i].lang.toLowerCase() === 'latex') {
+        const div = document.createElement('div');
+        div.className = 'print-math';
+        if (blocks[i].code.trim()) div.innerHTML = katex.renderToString(blocks[i].code, { throwOnError: false, displayMode: true });
+        el.replaceWith(div);
+        return;
+      }
       const pre = document.createElement('pre');
       pre.className = 'print-code';
       const code = document.createElement('code');

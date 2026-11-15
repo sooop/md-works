@@ -791,6 +791,7 @@ input.invalid { color: var(--danger); }
     margin: 10px 0; padding: 8px 12px; border-radius: 6px; background: var(--surface); border: 1px solid var(--border);
     font-family: var(--font-code); font-size: 0.88em; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere;
   }
+  .print-clone .print-math { margin: 10px 0; break-inside: avoid; overflow-wrap: normal; }
   .print-clone .print-code code { font: inherit; background: none; padding: 0; color: var(--text); }
 
   /* 표: 폭 맞춤, 머리글 행 반복 */
@@ -886,20 +887,88 @@ input.invalid { color: var(--danger); }
   .frontmatter { padding-left: 12px; padding-right: 12px; }
 }
 
-/* 인라인 수식 편집 팝오버 */
-:root .milkdown .milkdown-latex-inline-edit {
-  background: var(--bg, var(--crepe-color-surface));
-  color: var(--text, var(--crepe-color-on-surface));
-  border: 1px solid var(--border-strong, var(--crepe-color-outline));
-  border-radius: 10px;
-  padding: 6px 6px 6px 12px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12);
-  z-index: 50;
+/* ---- 수식 블록($$): 입력 필드와 미리보기를 한눈에 구분한다 ---- */
+:root .milkdown .milkdown-code-block.mo-latex-block { padding: 8px 14px 14px; background: var(--surface); border-radius: 10px; }
+:root .milkdown .mo-latex-block .codemirror-host {
+  position: relative; margin-top: 6px; padding: 26px 12px 10px; background: var(--bg);
+  border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: inset 0 1px 2px rgba(0,0,0,.07);
+  interpolate-size: allow-keywords; height: auto; overflow: hidden; opacity: 1; translate: 0 0;
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out), translate var(--dur-2) var(--ease-out), height var(--dur-2) var(--ease-out),
+    padding var(--dur-2) var(--ease-out), margin var(--dur-2) var(--ease-out), display var(--dur-2) allow-discrete;
 }
-:root .milkdown .milkdown-latex-inline-edit .container { align-items: center; }
-:root .milkdown .milkdown-latex-inline-edit .ProseMirror { min-width: 220px; max-width: 360px; font-size: 13px; line-height: 1.5; outline: none; }
-:root .milkdown .milkdown-latex-inline-edit .container button { color: var(--accent, var(--crepe-color-primary)); display: inline-flex; align-items: center; justify-content: center; }
-:root .milkdown .milkdown-latex-inline-edit .container button:hover { background: var(--accent-soft, var(--crepe-color-hover)); }
+/* 접힘: Crepe 의 .hidden(display:none)을 전환 가능한 상태로 바꾼다. 닫힘은 열림보다 짧게 */
+:root .milkdown .mo-latex-block .codemirror-host.hidden {
+  display: none !important; opacity: 0; translate: 0 -4px; height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; box-shadow: none;
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) cubic-bezier(0.32, 0, 0.67, 0), translate var(--dur-1) cubic-bezier(0.32, 0, 0.67, 0), height var(--dur-2) ease-in-out,
+    padding var(--dur-2) ease-in-out, margin var(--dur-2) ease-in-out, display var(--dur-2) allow-discrete;
+}
+@starting-style {
+  :root .milkdown .mo-latex-block .codemirror-host { opacity: 0; translate: 0 -4px; height: 0; padding-top: 0; padding-bottom: 0; margin-top: 0; }
+}
+:root .milkdown .mo-latex-block .codemirror-host::before,
+:root .milkdown .mo-latex-block .codemirror-host::after {
+  position: absolute; top: 7px; font: 600 11px/1 var(--font); letter-spacing: .02em; color: var(--muted); pointer-events: none;
+}
+:root .milkdown .mo-latex-block .codemirror-host::before { content: '수식 입력 · LaTeX'; left: 12px; }
+:root .milkdown .mo-latex-block .codemirror-host::after {
+  content: 'Ctrl/⌘+Enter 완료 · Esc 취소'; right: 12px; font-weight: 500; opacity: 0; transition: opacity var(--dur-1) var(--ease-out);
+}
+:root .milkdown .mo-latex-block .codemirror-host:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+:root .milkdown .mo-latex-block .codemirror-host:focus-within::after { opacity: 1; }
+:root .milkdown .mo-latex-block .cm-editor, :root .milkdown .mo-latex-block .cm-scroller { background: transparent; font-family: var(--font-code); font-size: 13.5px; }
+/* 긴 수식은 줄바꿈해서 좌우 스크롤 없이 모두 보이게 한다 */
+:root .milkdown .mo-latex-block .cm-scroller { overflow-x: hidden; }
+:root .milkdown .mo-latex-block .cm-content { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; flex-shrink: 1; min-width: 0; }
+:root .milkdown .mo-latex-block .cm-line { padding-left: 0; }
+:root .milkdown .mo-latex-block .preview-panel .preview-divider { display: none; }
+:root .milkdown .mo-latex-block .preview-panel .preview-label { margin: 12px 2px 2px; font-family: var(--font); font-size: 11px; letter-spacing: .02em; color: var(--muted); }
+:root .milkdown .mo-latex-block .preview-panel .preview { padding: 6px 4px; }
+
+/* ---- 인라인 수식 편집 팝오버: 제목·입력 필드·안내/단추. 표시·숨김은 data-show 전환(display 를 함께 전환해 사라짐도 부드럽게) ---- */
+:root .milkdown .milkdown-latex-inline-edit {
+  background: var(--bg, var(--crepe-color-surface)); color: var(--text, var(--crepe-color-on-surface));
+  border: 1px solid var(--border-strong, var(--crepe-color-outline)); border-radius: 12px; padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12); z-index: 50;
+  display: flex; flex-direction: column; gap: 8px; min-width: 300px; max-width: min(420px, calc(100vw - 16px)); box-sizing: border-box;
+  transform-origin: top center;
+}
+:root .milkdown .milkdown-latex-inline-edit[data-show='true'] {
+  opacity: 1; translate: 0 0; scale: 1;
+  transition: opacity var(--dur-2) var(--ease-out), translate var(--dur-2) var(--ease-spring), scale var(--dur-2) var(--ease-spring), display var(--dur-2) allow-discrete;
+  @starting-style { opacity: 0; translate: 0 -4px; scale: .95; }
+}
+:root .milkdown .milkdown-latex-inline-edit[data-show='false'] {
+  display: none; pointer-events: none;
+}
+.milkdown .milkdown-latex-inline-edit.mo-latex-ghost { pointer-events: none; transition: none; }
+:root .milkdown .milkdown-latex-inline-edit::before { content: '인라인 수식 · LaTeX'; font: 600 11px/1 var(--font); letter-spacing: .02em; color: var(--muted); }
+:root .milkdown .milkdown-latex-inline-edit .container { display: block; }
+:root .milkdown .milkdown-latex-inline-edit .container > button { display: none; } /* Crepe 확인 단추 대신 아래 단추를 쓴다(키 처리는 이 단추의 이벤트를 재사용) */
+:root .milkdown .milkdown-latex-inline-edit .container > div {
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 10px;
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
+}
+:root .milkdown .milkdown-latex-inline-edit .container > div:focus-within { background: var(--bg); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+:root .milkdown .milkdown-latex-inline-edit .ProseMirror { min-width: 0; max-width: none; width: 100%; font-family: var(--font-code); font-size: 13.5px; line-height: 1.5; outline: none; white-space: pre-wrap; }
+:root .milkdown .milkdown-latex-inline-edit .ProseMirror p { margin: 0; padding: 0; }
+.mo-latex-foot { display: flex; align-items: center; gap: 6px; }
+.mo-latex-foot .hint { flex: 1; min-width: 0; font-size: 11px; color: var(--muted); }
+.mo-latex-foot kbd { font: inherit; font-size: 10.5px; padding: 1px 4px; margin-right: 2px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 4px; background: var(--surface); }
+.mo-latex-foot button {
+  height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12px; cursor: pointer; border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), transform var(--dur-1) var(--ease-out);
+}
+.mo-latex-foot button:hover { background: var(--hover); }
+.mo-latex-foot button:active { transform: scale(.97); }
+.mo-latex-foot .mo-apply { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.mo-latex-foot .mo-apply:hover { background: var(--accent); filter: brightness(1.08); }
+@media (prefers-reduced-motion: reduce) {
+  :root .milkdown .milkdown-latex-inline-edit[data-show] { translate: 0 0; scale: 1; @starting-style { translate: 0 0; scale: 1; } }
+  :root .milkdown .mo-latex-block .codemirror-host, :root .milkdown .mo-latex-block .codemirror-host.hidden { translate: 0 0; }
+  @starting-style { :root .milkdown .mo-latex-block .codemirror-host { translate: 0 0; } }
+}
 
 /* 행 핸들 메뉴: 'N행 위에 삽입 / 아래에 추가' */
 :root .milkdown .milkdown-table-block .button-group .row-multi { display: flex; align-items: center; gap: 2px; padding-left: 4px; border-right: 1px solid var(--border, rgba(0,0,0,.15)); margin-right: 2px; }
