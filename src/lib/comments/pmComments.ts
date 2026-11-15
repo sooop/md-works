@@ -8,7 +8,7 @@ export interface Entry { id: string; from: number; to: number; resolved: boolean
 export interface SelInfo { from: number; to: number; x: number; y: number }
 
 interface PluginState { entries: Entry[]; active: string; deco: DecorationSet }
-const key = new PluginKey<PluginState>('md-works-comments');
+export const key = new PluginKey<PluginState>('md-works-comments');
 
 const live = (e: Entry) => e.from < e.to;
 
@@ -48,7 +48,7 @@ export interface CommentCtl {
   destroy(): void;
 }
 
-function makePlugin(h: Handlers): Plugin<PluginState> {
+export function makePlugin(h: Handlers): Plugin<PluginState> {
   return new Plugin<PluginState>({
     key,
     state: {
@@ -58,12 +58,22 @@ function makePlugin(h: Handlers): Plugin<PluginState> {
         let { entries, active } = prev;
         if (meta?.entries) entries = meta.entries;
         else if (tr.docChanged) {
-          entries = entries.map((e) => (live(e)
-            ? { ...e, from: tr.mapping.map(e.from, 1), to: tr.mapping.map(e.to, -1) }
-            : e));
+          // 코멘트가 없거나 위치가 그대로면 같은 배열을 돌려줘 onRanges·반응형 상태 교체를 피한다
+          if (entries.length) {
+            let changed = false;
+            const mapped = entries.map((e) => {
+              if (!live(e)) return e;
+              const from = tr.mapping.map(e.from, 1), to = tr.mapping.map(e.to, -1);
+              if (from === e.from && to === e.to) return e;
+              changed = true;
+              return { ...e, from, to };
+            });
+            if (changed) entries = mapped;
+          }
         }
         if (meta?.active !== undefined) active = meta.active;
-        if (entries === prev.entries && active === prev.active && !tr.docChanged) return prev;
+        // 코멘트가 없으면 문서가 바뀌어도 표시할 것이 없다
+        if (entries === prev.entries && active === prev.active && (!tr.docChanged || !entries.length)) return prev;
         return { entries, active, deco: build(tr.doc, entries, active) };
       },
     },

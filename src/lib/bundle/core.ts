@@ -3,12 +3,14 @@
 import { zipSync, type Zippable } from 'fflate';
 import type { BundleSummary, DocAction, MergePreview, MergeResult } from './api';
 import { BUNDLE_SCHEMA, BUNDLE_VERSION, BundleError, HISTORY_LAYOUT, MAX_ENTRIES, VERSION_CHUNK_BYTES, isDocName, parseBundle, type ParsedBundle } from './parse';
-import type { BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from './host';
-import { classifyDoc, mergeRecords, mergeTombstones, mergeVersions, preMergeVersion, type RecordMerge, type TombstoneMerge, type VersionMerge } from './merge';
+import type { BuildContext, BundleAsset, BundleHost, HostDocBody, HostDocInfo, ImportSession } from './host';
+import { classifyDoc, mergeRecords, mergeTombstones, mergeVersions, preMergeVersion, type RecordMerge, type SkipIds, type TombstoneMerge, type VersionMerge } from './merge';
 import { listTombstones, nameKey, tombId } from './tombstones';
 import { encPart } from './partName';
 import { ID_RE } from './records';
 import { compress, decompress } from '../history/compress';
+import { readDays, mergeIntoStore } from '../stats/store';
+import { serializeStats } from '../stats/logic';
 import { parseDesign, saveDesign, serializeDesign } from '../design/io';
 import type { Design } from '../design/schema';
 import type { Snippet, Thread, Tombstone, Version } from '../works/types';
@@ -47,6 +49,7 @@ export async function buildBundleWith(host: BundleHost, now = Date.now(), opts: 
   const store = host.store;
   const files: Zippable = {};
   const assets = new Map<string, Uint8Array>();
+  const ctx: BuildContext = { imageCache: new Map() }; // 이력 버전마다 같은 이미지를 IDB 에서 다시 읽지 않는다
   const addAssets = (list: BundleAsset[]) => { for (const a of list) assets.set(a.path, a.data); };
   const put = (path: string, text: string) => { files[path] = enc.encode(text); };
 
@@ -60,7 +63,7 @@ export async function buildBundleWith(host: BundleHost, now = Date.now(), opts: 
   let nThreads = 0;
 
   for (const info of infos) {
-    const body = await host.readDoc(info);
+    const body = await host.readDoc(info, ctx);
     put(info.name, body.content);
     addAssets(body.assets);
     docMeta[info.name] = { updatedAt: info.updatedAt };
@@ -73,7 +76,7 @@ export async function buildBundleWith(host: BundleHost, now = Date.now(), opts: 
         try {
           const text = decompress(v.content, v.enc);
           if (text.includes('idb:')) {
-            const conv = await host.textToBundle(stemOf(info.name), text);
+            const conv = await host.textToBundle(stemOf(info.name), text, ctx);
             addAssets(conv.assets);
             rec = { ...rec, ...compress(conv.text) };
           }
@@ -104,6 +107,7 @@ export async function buildBundleWith(host: BundleHost, now = Date.now(), opts: 
 
   put('.works/docs.json', JSON.stringify(docMeta, null, 2));
   put('.works/design.json', designIO(host).current());
+  put('.works/stats.json', serializeStats(readDays())); // 집필 통계는 이 기기(localStorage)가 정본이다. 서버 모드도 폴더에 따로 두지 않는다
   // 묘비: 지운 글의 이름 → deletedAt. 같은 이름의 글이 지금 있으면(다시 만들었다) 묘비는 낡은 것이라 싣지 않는다
   const live = new Set(infos.map((d) => nameKey(d.name)));
   const tombDocs: Record<string, number> = {};
@@ -170,14 +174,23 @@ function nameMap(host: BundleHost, parsed: ParsedBundle): { nameOf: Map<string, 
   return { nameOf, collisions };
 }
 
-/** 이력·스레드의 id 가 저장소 전체에서 유일한 키일 때, 파티션(key)이 아닌 다른 파티션에 이미 있는 id 를 돌려주는 함수를 만든다 */
-async function foreignIds(host: BundleHost, coll: 'versions' | 'threads'): Promise<(key?: string) => ReadonlySet<string> | undefined> {
+/**
+ * 이력·스레드의 id 가 저장소 전체에서 유일한 키일 때, 파티션(key)이 아닌 다른 파티션에 이미 있는 id 인지 판정하는 함수를 만든다.
+ * id → 파티션 Map 을 한 번만 만들어 두고, 호출마다 집합을 새로 만들지 않는다(파티션 수 × 전체 id 수가 되지 않게).
+ */
+async function foreignIds(host: BundleHost, coll: 'versions' | 'threads'): Promise<(key?: string) => SkipIds | undefined> {
   if (!host.globalIds) return () => undefined;
-  const byPart = new Map<string, string[]>();
+  const owners = new Map<string, Set<string>>();
   for (const part of await host.store.parts(coll)) {
-    try { byPart.set(part, (await host.store.list(coll, part)).map((r) => r.id)); } catch { /* 읽을 수 없는 파티션은 건너뛴다 */ }
+    try {
+      for (const r of await host.store.list(coll, part)) {
+        let s = owners.get(r.id);
+        if (!s) owners.set(r.id, (s = new Set()));
+        s.add(part);
+      }
+    } catch { /* 읽을 수 없는 파티션은 건너뛴다 */ }
   }
-  return (key) => new Set([...byPart].flatMap(([part, ids]) => (part === key ? [] : ids)));
+  return (key) => ({ has: (id) => { const s = owners.get(id); return !!s && (s.size > 1 || !s.has(key as string)); } });
 }
 
 async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, currentDesign: string): Promise<Plan> {
@@ -207,7 +220,12 @@ async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, cur
   }
 
   // 이력·스레드: 번들에 글이 있거나 이 보관소에 글이 있는 파티션만 다룬다(글 없는 사이드카는 이름 붙일 곳이 없다)
-  const known = (name: string) => locals.has(name) || [...parsed.docs.keys()].some((s) => nameOf.get(s) === name && !skipped.has(nameKey(name)));
+  const bundleNames = new Set<string>();
+  for (const s of parsed.docs.keys()) {
+    const n = nameOf.get(s);
+    if (n !== undefined && !skipped.has(nameKey(n))) bundleNames.add(n);
+  }
+  const known = (name: string) => locals.has(name) || bundleNames.has(name);
   const partitions = <T>(m: Map<string, T[]>) => [...m].flatMap(([src, list]) => {
     const name = nameOf.get(src) ?? host.normalizeName(src);
     return known(name) ? [{ src, name, list }] : [];
@@ -251,7 +269,7 @@ async function makePlan(host: BundleHost, parsed: ParsedBundle, now: number, cur
 
 async function loadParsed(host: BundleHost, bytes: Uint8Array, now: number) {
   await host.prepare();
-  const parsed = parseBundle(bytes); // 여기서 경로·크기·형식 검증이 모두 끝난다
+  const parsed = parseBundle(bytes, { now }); // 여기서 경로·크기·형식 검증이 모두 끝난다
   const plan = await makePlan(host, parsed, now, designIO(host).current());
   // 보관소(서버)가 받을 수 없는 이름·크기는 쓰기 전에 여기서 막는다
   host.validateImport?.({
@@ -427,6 +445,9 @@ export async function applyBundleWith(
 
     // 7) 디자인
     if (design) { designIO(host).apply(design); result.designApplied = true; }
+
+    // 8) 집필 통계: 날짜별 큰 값 우선으로 합친다(미리보기 건수에는 세지 않는다). 쓰지 못해도 가져오기를 막지 않는다
+    if (parsed.stats && Object.keys(parsed.stats).length) { try { mergeIntoStore(parsed.stats, now); } catch { /* 무시 */ } }
     await session.close();
   } finally {
     try { if (wrote) await host.afterApply?.(); } finally { host.setImporting?.(false); }

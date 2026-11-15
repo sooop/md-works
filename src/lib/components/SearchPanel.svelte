@@ -2,28 +2,36 @@
   import { tick } from 'svelte';
   import FileText from '@lucide/svelte/icons/file-text';
   import MessageSquare from '@lucide/svelte/icons/message-square';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import { tip } from '../tooltip.svelte';
   import { cm, select } from '../comments/store.svelte';
   import { searchOpts, persistSearchOpts, ui, prepareJump } from '../search/state.svelte';
   import type { SearchResponse } from '../search/types';
-  import { errMsg } from '../store.svelte';
+  import { errMsg, askConfirm, toast } from '../store.svelte';
+  import { previewReplace, replaceEverywhere, outcomeText, type ReplaceHost } from '../search/replaceAll';
 
   interface Props {
     run: (query: string, opts: { caseSensitive: boolean; regex: boolean }, signal: AbortSignal) => Promise<SearchResponse>;
     onOpen: (id: string) => void | Promise<void>;
     activeId: string;
+    replaceHost?: ReplaceHost; // 있으면 '바꾸기' 줄을 보인다
   }
-  let { run, onOpen, activeId }: Props = $props();
+  let { run, onOpen, activeId, replaceHost }: Props = $props();
 
   let input: HTMLInputElement;
   let query = $state('');
   let res = $state<SearchResponse | null>(null);
   let error = $state('');
   let busy = $state(false);
+  let replOpen = $state(false);
+  let replacement = $state('');
+  let replBusy = $state(false);
+  let rerun = $state(0); // 바꾼 뒤 같은 검색어로 결과를 다시 읽는다
 
   // 입력이 멈추면(250ms) 검색한다. 이전 요청은 취소한다.
   $effect(() => {
     const q = query;
+    rerun;
     const opts = { caseSensitive: searchOpts.caseSensitive, regex: searchOpts.regex };
     if (!q.trim()) { res = null; error = ''; busy = false; return; }
     const ac = new AbortController();
@@ -49,6 +57,34 @@
     ui.globalFocus;
     void tick().then(() => { input?.focus(); input?.select(); });
   });
+
+  const clip = (t: string) => (t.length > 30 ? `${t.slice(0, 30)}…` : t);
+
+  // 대상을 먼저 계산해 확인을 받은 뒤 바꾼다. 글마다 바꾸기 전 내용이 이력에 남는다.
+  async function replaceAll() {
+    if (!replaceHost || replBusy || !query.trim()) return;
+    replBusy = true;
+    try {
+      const opts = { caseSensitive: searchOpts.caseSensitive, regex: searchOpts.regex };
+      const pv = await previewReplace(replaceHost, query, opts, replacement);
+      if (pv.error) { toast(pv.error, 'error'); return; }
+      if (!pv.count) { toast('바꿀 곳이 없습니다'); return; }
+      const ok = await askConfirm(
+        `글 ${pv.files}개에서 ${pv.count}곳을 '${clip(query)}' → '${clip(replacement)}' 로 바꿉니다. 바꾸기 전 내용은 각 글의 이력에 남습니다.`
+          + (pv.partial ? ' 검색 결과가 많아 일부 글만 바꿉니다.' : ''),
+        '바꾸기', false,
+      );
+      if (!ok) return;
+      const o = await replaceEverywhere(replaceHost, query, opts, replacement);
+      const t = outcomeText(o);
+      toast(t.text, t.kind);
+      rerun++;
+    } catch (e) {
+      toast(`바꾸지 못했습니다: ${errMsg(e)}`, 'error');
+    } finally {
+      replBusy = false;
+    }
+  }
 
   async function open(id: string, nth: number) {
     prepareJump(query, id, nth);
@@ -80,6 +116,12 @@
 
 <div class="searchpanel">
   <div class="searchbox">
+    {#if replaceHost}
+      <button
+        class="icon-btn fold" class:open={replOpen} use:tip={'바꾸기 펼치기'} aria-label="바꾸기 펼치기"
+        aria-expanded={replOpen} onclick={() => { replOpen = !replOpen; }}
+      ><ChevronRight size={14} /></button>
+    {/if}
     <input
       bind:this={input}
       bind:value={query}
@@ -97,6 +139,18 @@
       onclick={() => { searchOpts.regex = !searchOpts.regex; persistSearchOpts(); }}
     >.*</button>
   </div>
+  {#if replaceHost && replOpen}
+    <div class="searchbox replacebox">
+      <input
+        bind:value={replacement}
+        onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void replaceAll(); } }}
+        placeholder="바꿀 말"
+        aria-label="바꿀 말"
+        spellcheck="false"
+      />
+      <button class="rbtn" disabled={replBusy || !query.trim()} use:tip={'찾은 글 전체에서 바꾸기'} onclick={replaceAll}>{replBusy ? '바꾸는 중…' : '모두 바꾸기'}</button>
+    </div>
+  {/if}
 
   <div class="results">
     {#if error}
@@ -148,6 +202,15 @@
 </div>
 
 <style>
+  .fold { flex: none; padding: 2px; }
+  .fold :global(svg) { transition: transform var(--dur-1, 0.12s) ease; }
+  .fold.open :global(svg) { transform: rotate(90deg); }
+  .rbtn {
+    flex: none; border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+    border-radius: 4px; padding: 2px 7px; font-size: 12px; white-space: nowrap;
+  }
+  .rbtn:hover:not(:disabled) { background: var(--hover); }
+  .rbtn:disabled { opacity: 0.45; }
   .cmt-head { padding-bottom: 2px; }
   .searchpanel .hits button.cmt { align-items: center; }
   .cmt.resolved { opacity: 0.6; }

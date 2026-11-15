@@ -23,20 +23,45 @@ export async function listVersions(docKey: string): Promise<Version[]> {
   return list.filter((v) => !v.deletedAt).sort((a, b) => b.ts - a.ts).map(plain).filter((v): v is Version => !!v);
 }
 
+// docKey 별 마지막 스냅샷 시각(저장소 인스턴스별). 저장마다 모든 버전을 읽지 않고 5분 간격을 먼저 검사하기 위한 캐시다.
+// 캐시는 "건너뛰어도 안전한 방향"으로만 쓴다: 실제보다 오래된 시각이면 저장소를 읽어 다시 확인하고, 이력을 지우거나 옮기면 비운다.
+const lastSnap = new WeakMap<object, Map<string, number>>();
+const snapTimes = (store: object): Map<string, number> => {
+  let m = lastSnap.get(store);
+  if (!m) lastSnap.set(store, (m = new Map()));
+  return m;
+};
+// 같은 docKey 의 snapshot 은 줄 세워 동시에 호출돼도 같은 버전이 둘 생기지 않게 한다
+const chains = new Map<string, Promise<unknown>>();
+
+export function snapshot(docKey: string, content: string, force = false): Promise<void> {
+  if (!docKey || !content.trim()) return Promise.resolve();
+  const prev = chains.get(docKey) ?? Promise.resolve();
+  const run = prev.catch(() => { /* 앞 호출의 오류는 그 호출자가 받는다 */ }).then(() => snapshotNow(docKey, content, force));
+  chains.set(docKey, run);
+  const clear = () => { if (chains.get(docKey) === run) chains.delete(docKey); };
+  run.then(clear, clear);
+  return run;
+}
+
 // 현재 내용을 버전으로 남긴다. 내용이 직전 버전과 같으면 건너뛰고,
 // force 가 아니면 직전 버전 이후 SNAPSHOT_INTERVAL_MS 가 지나야 남긴다. 남긴 뒤에는 솎아내기 정책으로 오래된 것을 정리한다.
-export async function snapshot(docKey: string, content: string, force = false): Promise<void> {
-  if (!docKey || !content.trim()) return;
+async function snapshotNow(docKey: string, content: string, force: boolean): Promise<void> {
   const store = worksStore();
+  const times = snapTimes(store);
+  const cached = times.get(docKey);
+  if (!force && cached !== undefined && Date.now() - cached < SNAPSHOT_INTERVAL_MS) return; // 저장소를 부르지 않는다
   const list = (await store.list<StoredVersion>(COLL, docKey)).filter((v) => !v.deletedAt);
   const latest = list.reduce<StoredVersion | undefined>((a, b) => (!a || b.ts > a.ts ? b : a), undefined);
   const now = Date.now();
   if (latest) {
+    times.set(docKey, latest.ts);
     if (!force && now - latest.ts < SNAPSHOT_INTERVAL_MS) return;
     if (plain(latest)?.content === content) return;
   }
   const rec: StoredVersion = { id: newId(), docKey, ts: now, updatedAt: now, ...compress(content) };
   await store.put(COLL, rec, docKey);
+  times.set(docKey, now);
   for (const id of thinVersions([...list, rec], now)) await store.remove(COLL, id, docKey);
 }
 
@@ -55,7 +80,14 @@ export async function setVersionName(docKey: string, id: string, name: string | 
 const under = (docKey: string, key: string) => docKey === key || docKey.startsWith(key + '/');
 const partsUnder = async (key: string) => (await worksStore().parts(COLL)).filter((p) => under(p, key));
 
+/** 그 key(와 아래 경로)의 캐시된 스냅샷 시각을 비운다(이력이 지워지거나 옮겨졌다) */
+function forgetSnaps(key: string) {
+  const m = lastSnap.get(worksStore());
+  if (m) for (const k of [...m.keys()]) if (under(k, key)) m.delete(k);
+}
+
 export async function removeHistory(key: string): Promise<void> {
+  forgetSnaps(key);
   for (const p of await partsUnder(key)) await worksStore().removePart(COLL, p);
 }
 
@@ -63,6 +95,8 @@ export async function removeHistory(key: string): Promise<void> {
 // 서버 모드는 서버 API 가 이미 사이드카 파티션을 옮기므로 여기서는 옮길 것이 없어 무해하게 끝난다.
 export async function moveHistory(from: string, to: string): Promise<void> {
   if (from === to) return;
+  forgetSnaps(from);
+  forgetSnaps(to);
   for (const p of await partsUnder(from)) await worksStore().movePart(COLL, p, to + p.slice(from.length));
 }
 

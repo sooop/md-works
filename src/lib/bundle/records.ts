@@ -5,24 +5,28 @@ import { SNIPPET_COLORS, type Snippet, type Thread, type Version } from '../work
 export const ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const MAX_TEXT = 20 * 1024 * 1024; // 레코드 하나의 문자열 상한 (본문·이력 압축본)
 
+/** 시계가 앞선 기기의 번들이 이후 병합을 계속 이기지 않도록, 이 값보다 미래인 시각은 지금으로 자른다 */
+export const MAX_FUTURE_MS = 24 * 60 * 60 * 1000;
+export const clampTime = (t: number, now: number): number => (t > now + MAX_FUTURE_MS ? now : t);
+
 const str = (v: unknown, max = MAX_TEXT): string | undefined => (typeof v === 'string' && v.length <= max ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 const strList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x.length <= 1000).slice(0, 10_000) : [];
 
-function head(r: Record<string, unknown>) {
+function head(r: Record<string, unknown>, now: number) {
   const id = str(r.id, 80);
-  const updatedAt = num(r.updatedAt);
-  if (!id || !ID_RE.test(id) || updatedAt === undefined) return null;
-  const deletedAt = num(r.deletedAt);
-  return { id, updatedAt, ...(deletedAt !== undefined ? { deletedAt } : {}) };
+  const u = num(r.updatedAt);
+  if (!id || !ID_RE.test(id) || u === undefined) return null;
+  const d = num(r.deletedAt);
+  return { id, updatedAt: clampTime(u, now), ...(d !== undefined ? { deletedAt: clampTime(d, now) } : {}) };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-export function cleanVersion(v: unknown, docKey: string): Version | null {
+export function cleanVersion(v: unknown, docKey: string, now = Date.now()): Version | null {
   if (!isObj(v)) return null;
-  const h = head(v);
+  const h = head(v, now);
   const content = str(v.content);
   const ts = num(v.ts);
   if (!h || content === undefined || ts === undefined) return null;
@@ -40,9 +44,9 @@ export function cleanOrders(v: unknown): Record<string, number> | undefined {
   return entries.length ? Object.fromEntries(entries) : undefined; // fromEntries 는 '__proto__' 키도 평범한 속성으로 만든다
 }
 
-export function cleanSnippet(v: unknown): Snippet | null {
+export function cleanSnippet(v: unknown, now = Date.now()): Snippet | null {
   if (!isObj(v)) return null;
-  const h = head(v);
+  const h = head(v, now);
   const body = str(v.body);
   if (!h || body === undefined) return null;
   const color = SNIPPET_COLORS.find((c) => c === v.color) ?? 'yellow';
@@ -61,9 +65,9 @@ export function cleanSnippet(v: unknown): Snippet | null {
   return s;
 }
 
-export function cleanThread(v: unknown, docKey: string): Thread | null {
+export function cleanThread(v: unknown, docKey: string, now = Date.now()): Thread | null {
   if (!isObj(v) || !isObj(v.anchor)) return null;
-  const h = head(v);
+  const h = head(v, now);
   const quote = str(v.anchor.quote, 5000);
   if (!h || quote === undefined || !Array.isArray(v.messages)) return null;
   const messages = v.messages.flatMap((m) => {

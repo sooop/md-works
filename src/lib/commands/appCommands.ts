@@ -1,5 +1,6 @@
 // 명령 팔레트에 올릴 명령 목록. 모드(서버/단일)마다 다른 동작은 셸이 ctx 로 넘기고, 나머지(패널·집중 모드·테마·검색·서식)는 여기서 직접 잇는다.
 import type { Command } from './registry.svelte';
+import { statsUi } from '../stats/state.svelte';
 import { doc, settings, persistSettings, applyTheme, editorBridge, toast, type EditorCommand, type Theme } from '../store.svelte';
 import { toggleFocus } from '../writing/state.svelte';
 import { ui } from '../search/state.svelte';
@@ -8,6 +9,7 @@ import { toggleRight, openRight } from '../rightbar/state.svelte';
 import { sendSelection, findByEditorText } from '../snippets/state.svelte';
 import { startDraft } from '../comments/store.svelte';
 import { openListImport } from '../tableListUi.svelte';
+import { savePdf } from '../export/pdf';
 
 export interface AppCommandCtx {
   server: boolean;
@@ -23,6 +25,8 @@ export interface AppCommandCtx {
   exportMd: () => void;
   copyMd: () => void;
   exportDocx: () => void;
+  exportHtml: () => void;
+  exportEpub: () => void;
   print: () => void;
   deleteDoc?: () => void;
   images?: (to: 'base64' | 'file') => void;
@@ -57,6 +61,9 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     { id: 'doc.md', group: '문서', title: '.md 파일로 저장', keywords: 'export markdown 내보내기', when: hasDoc, run: c.exportMd },
     { id: 'doc.copymd', group: '문서', title: '마크다운 텍스트 복사', keywords: 'copy clipboard 복사', when: hasDoc, run: c.copyMd },
     { id: 'doc.docx', group: '문서', title: '.docx 로 내보내기', keywords: 'word export 워드', when: hasDoc, run: c.exportDocx },
+    { id: 'doc.html', group: '문서', title: 'HTML 로 내보내기', keywords: 'export web 웹 html 내보내기', when: hasDoc, run: c.exportHtml },
+    { id: 'doc.epub', group: '문서', title: 'EPUB 으로 내보내기', keywords: 'export ebook 전자책 epub 이펍 내보내기', when: hasDoc, run: c.exportEpub },
+    { id: 'doc.pdf', group: '문서', title: 'PDF로 저장(인쇄)', keywords: 'export pdf print 인쇄 피디에프 내보내기', when: hasDoc, run: () => void savePdf() },
     ...(c.deleteDoc ? [{ id: 'doc.delete', group: '문서', title: '문서 삭제…', keywords: 'delete remove 삭제 지우기', when: hasDoc, run: c.deleteDoc } satisfies Command] : []),
     { id: 'doc.print', group: '문서', title: '인쇄', shortcut: 'Ctrl+P', keywords: 'print pdf', when: hasDoc, run: c.print },
     ...(c.images ? [
@@ -79,6 +86,7 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     { id: 'view.left', group: '보기', title: '파일 목록 열기 / 숨기기', shortcut: 'Ctrl+Alt+[', keywords: 'sidebar 사이드바 목록', run: () => toggleLeft() },
     { id: 'view.outline', group: '보기', title: '목차 열기', keywords: 'outline toc 목차 차례', when: hasDoc, run: () => openRight('outline') },
     { id: 'view.right', group: '보기', title: '글감·코멘트 패널 열기 / 숨기기', shortcut: 'Ctrl+Alt+]', keywords: 'panel 사이드바 패널', run: () => toggleRight() },
+    { id: 'view.stats', group: '보기', title: '집필 통계', keywords: 'stats statistics 통계 작성량 연속 streak', run: () => { statsUi.open = true; } },
     { id: 'view.light', group: '보기', title: '테마: 라이트', keywords: 'theme light 밝게', run: () => setTheme('light') },
     { id: 'view.dark', group: '보기', title: '테마: 다크', keywords: 'theme dark 어둡게', run: () => setTheme('dark') },
     { id: 'view.system', group: '보기', title: '테마: 시스템 설정 따르기', keywords: 'theme system auto', run: () => setTheme('system') },

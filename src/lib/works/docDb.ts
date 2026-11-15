@@ -59,6 +59,7 @@ export function createDocDb(dbName = 'works-standalone') {
       if (!db.objectStoreNames.contains('comments')) db.createObjectStore('comments', { keyPath: 'id' });
       req.transaction!.objectStore('kv').delete('draft'); // v1 의 임시 보관 문서는 이관하지 않고 버린다
     };
+    req.onblocked = () => console.warn(`${dbName}: 다른 탭이 이전 버전 연결을 닫을 때까지 기다립니다`); // 거절하지 않고 열릴 때까지 기다린다
     req.onsuccess = () => {
       const db = req.result;
       db.onversionchange = () => { db.close(); dbPromise = undefined; }; // 다른 탭이 스키마를 올리면 연결을 놓아 준다
@@ -328,6 +329,11 @@ export function createDocDb(dbName = 'works-standalone') {
      * extraContents: 이 트랜잭션 밖에서 모은 참조(이력 본문·저장 전 메모리 본문). 지운 id 를 돌려준다.
      * 휴지통의 글도 docs 스토어에 그대로 있으므로 그 본문의 이미지는 참조 중으로 남는다(복구하면 이미지가 살아 있어야 한다).
      */
+    /** gc 가 지울 후보(유예가 지났고 글들이 참조하지 않는 이미지)가 있나. 이력은 읽지 않으므로 '있을 수 있다'는 뜻이다(이력이 참조하면 gc 가 남긴다) */
+    async hasGcCandidates(a: { extraContents: Iterable<string>; now: number; graceMs: number }): Promise<boolean> {
+      const [docs, imgs] = await Promise.all([idb<DocRec[]>('docs', 'readonly', (s) => s.getAll()), idb<ImgRec[]>('images', 'readonly', (s) => s.getAll())]);
+      return unusedImages([...docs.map((d) => d.content), ...a.extraContents], imgs, a.now, a.graceMs).length > 0;
+    },
     gc(a: { extraContents: Iterable<string>; now: number; graceMs: number }): Promise<string[]> {
       return inTx(['docs', 'images'], 'readwrite', async (tx) => {
         const docs = await ask<DocRec[]>(tx.objectStore('docs').getAll());

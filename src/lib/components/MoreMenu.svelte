@@ -14,6 +14,9 @@
   import Copy from '@lucide/svelte/icons/copy';
   import FileType from '@lucide/svelte/icons/file-type';
   import Printer from '@lucide/svelte/icons/printer';
+  import FileCode from '@lucide/svelte/icons/file-code';
+  import BookOpen from '@lucide/svelte/icons/book-open';
+  import FileOutput from '@lucide/svelte/icons/file-output';
   import Wrench from '@lucide/svelte/icons/wrench';
   import ImageDown from '@lucide/svelte/icons/image-down';
   import ImageUp from '@lucide/svelte/icons/image-up';
@@ -24,6 +27,7 @@
   import Command from '@lucide/svelte/icons/command';
   import { openPalette } from '../commands/registry.svelte';
   import { tip } from '../tooltip.svelte';
+  import { savePdf } from '../export/pdf';
   import { popFx, slideFx } from '../motion';
   interface Props {
     /** 열린 문서가 있는가 — 없으면 문서 관련 항목(이력·내보내기·도구)을 숨긴다 */
@@ -34,6 +38,8 @@
     backupStale?: boolean;
     onHistory: () => void;
     onDocx: () => void;
+    onHtml?: () => void;
+    onEpub?: () => void;
     onPrint?: () => void;
     /** 열린 문서 삭제(확인창은 호출한 쪽이 띄운다) — 목록이 가려진 모바일에서도 지울 수 있게 한다 */
     onDelete?: () => void;
@@ -50,7 +56,7 @@
     hint?: string;
     actions?: { label: string; run: () => void }[];
   }
-  let { hasDoc, onSettings, onBackup, backupStale = false, onHistory, onDocx, onPrint, onDelete, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
+  let { hasDoc, onSettings, onBackup, backupStale = false, onHistory, onDocx, onHtml, onEpub, onPrint, onDelete, onMd, onCopyMd, onImages, options, selected, onSelect, onOpen, hint = '', actions = [] }: Props = $props();
 
   let open = $state(false);
   let btn = $state<HTMLButtonElement>();
@@ -134,9 +140,19 @@
         </button>
         {#if sub === 'export'}
           <div class="subgroup" role="group" aria-label="내보내기" transition:slideFx>
-            {#if onMd}<button role="menuitem" class="mi" onclick={() => run(onMd)}><FileDown size={15} /><span class="t">.md 파일로 저장</span></button>{/if}
-            {#if onCopyMd}<button role="menuitem" class="mi" onclick={() => run(onCopyMd)}><Copy size={15} /><span class="t">마크다운 텍스트 복사</span></button>{/if}
+            {#if onMd || onCopyMd}
+              <span class="label">텍스트</span>
+              {#if onMd}<button role="menuitem" class="mi" onclick={() => run(onMd)}><FileDown size={15} /><span class="t">.md 파일로 저장</span></button>{/if}
+              {#if onCopyMd}<button role="menuitem" class="mi" onclick={() => run(onCopyMd)}><Copy size={15} /><span class="t">마크다운 텍스트 복사</span></button>{/if}
+              <hr />
+            {/if}
+            <span class="label">문서 파일</span>
             <button role="menuitem" class="mi" onclick={() => run(onDocx)}><FileType size={15} /><span class="t">.docx 로 내보내기</span></button>
+            {#if onHtml}<button role="menuitem" class="mi" onclick={() => run(onHtml)}><FileCode size={15} /><span class="t">HTML 로 내보내기</span></button>{/if}
+            {#if onEpub}<button role="menuitem" class="mi" onclick={() => run(onEpub)}><BookOpen size={15} /><span class="t">EPUB 으로 내보내기</span></button>{/if}
+            <hr />
+            <span class="label">인쇄·PDF</span>
+            <button role="menuitem" class="mi" onclick={() => run(() => void savePdf())}><FileOutput size={15} /><span class="t">PDF로 저장(인쇄)</span></button>
             {#if onPrint}<button role="menuitem" class="mi" onclick={() => run(onPrint)}><Printer size={15} /><span class="t">인쇄…</span></button>{/if}
           </div>
         {/if}
@@ -188,5 +204,6 @@
   .subgroup .mi { padding: 5px 8px; font-size: 13px; }
   .ck { width: 15px; flex: none; color: var(--primary); display: inline-flex; }
   .subgroup .label { padding: 6px 8px 2px; }
+  .subgroup hr { margin: 4px 0; }
   .menu-hint { margin: 4px 8px 2px; font-size: 12px; color: var(--muted); word-break: break-all; }
 </style>

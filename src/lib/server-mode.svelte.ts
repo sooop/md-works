@@ -11,10 +11,11 @@ import {
   basename, dirname, joinPath, safeDecode, stripExt, fileToDataUrl, imageExt,
   isExternalSrc, replaceImages, downloadText, writeClipboard, stripEmptyBlocks,
 } from './utils';
-import { exportDocx, isImportable, readImport } from './docx-flow';
+import { exportDocx, exportEpub, exportHtml, isImportable, readImport } from './docx-flow';
 import { IMPORT_LABEL } from './pandoc/importFormats';
 import { snapshot, moveHistory } from './history';
 import type { SearchResponse, FileHit } from './search/types';
+import type { ReplaceHost } from './search/replaceAll';
 import { useBackend, flushComments } from './comments/store.svelte';
 import { markChanged } from './bundle/backupState.svelte';
 import { useWorksStore, worksStore } from './works/store';
@@ -32,6 +33,9 @@ import { searchComments } from './search/commentSearch';
 import { exportSelection, type FolderExportKind } from './folderExportUi';
 import type { BulkResult } from './components/treeCtl';
 import type { TrashCtl, TrashItem } from './trash';
+import { createServerLinkHost } from './wikilink/serverHost';
+import { updateLinksAfterMove } from './wikilink/notify';
+import { movePairs } from './wikilink/rename';
 
 // 새 문서를 만들 폴더(사이드바에서 선택한 폴더, 열린 문서의 폴더). 빈 문자열이면 루트.
 export const nav = $state({ dir: '', filter: '' }); // filter: 사이드바 파일명 검색어
@@ -189,6 +193,15 @@ function resetDoc() {
 
 async function loadDoc(path: string) {
   const f = await call<{ content: string; mtime?: number }>(`/api/file?path=${q(path)}`);
+  // 응답을 기다리는 사이 이전 글에 입력했으면 이전 글에 저장하고 나서 바꾼다(아래에서 dirty 를 지우므로 그냥 두면 유실된다).
+  // 이름 변경·이동 중(busy)에는 이전 경로가 이미 없으므로 저장하지 않는다
+  if (!busy && doc.path && path !== doc.path) {
+    syncFromEditor();
+    if (doc.dirty) {
+      const r = await runSave();
+      if (r !== 'ok' && !(await offerLeave())) throw new Error('이전 글을 저장하지 못해 이동을 취소했습니다');
+    }
+  }
   clearAutosave();
   clearFailure();
   docGen++;
@@ -432,6 +445,26 @@ export async function restoreVersion(content: string) {
 // ---- 본문 검색 ----
 const allDocPaths = (nodes: TreeNode[]): string[] => nodes.flatMap((n) => (n.type === 'file' ? [n.path] : allDocPaths(n.children ?? [])));
 
+// 글 사이 링크 `[[글 이름]]`(wikilink/): 에디터 표시·링크 패널과 이름 변경 뒤 링크 갱신이 쓰는 호스트. 로직은 wikilink/serverHost.ts
+export const linkHost = createServerLinkHost({
+  paths: () => allDocPaths(tree.nodes).filter((p) => /\.md$/i.test(p)),
+  openPath: () => doc.path,
+  content: () => doc.content,
+  save,
+  restore: restoreVersion,
+  open: openDoc,
+  snapshot: (p, t) => snapshot(p, t),
+  create: async (path) => {
+    try {
+      await call('/api/create', jsonInit('POST', { path, type: 'file' }));
+      await clearDocGone(path).catch(() => { /* 무시 */ });
+      await refreshTree();
+      requestEditorFocus(); // 새 글은 본문에 바로 포커스
+      await openDoc(path);
+    } catch (e) { toast(errMsg(e), 'error'); }
+  },
+});
+
 export async function searchFiles(
   query: string,
   opts: { caseSensitive: boolean; regex: boolean },
@@ -452,6 +485,32 @@ export async function searchFiles(
     comments,
   };
 }
+
+// 전체 바꾸기(search/replaceAll.ts)의 서버 모드 구현.
+// 후보 글은 /api/search 결과의 파일이다. 결과가 상한(전체 500건 등)에 걸렸으면 파일이 빠졌을 수 있어 partial 로 알리고, 일치한 파일은 전체를 다시 읽어 바꾼다.
+export const replaceHost: ReplaceHost = {
+  async list(query, opts) {
+    const params = new URLSearchParams({ q: query, cs: opts.caseSensitive ? '1' : '0', re: opts.regex ? '1' : '0' });
+    const r = await call<{ results: { path: string }[]; truncated: boolean }>(`/api/search?${params}`);
+    return { refs: r.results.map((f) => ({ id: f.path, label: stripExt(f.path) })), partial: r.truncated };
+  },
+  async prepare() { syncFromEditor(); if (doc.path && doc.dirty) await save(); },
+  async read(ref) {
+    const f = await call<{ content: string; mtime?: number }>(`/api/file?path=${q(ref.id)}`);
+    return { content: f.content, token: f.mtime };
+  },
+  async write(ref, content, token) {
+    await putFile(ref.id, saveBody(content, token as number | undefined, false), false); // 읽은 뒤 바뀌었으면 409 로 실패한다
+    markChanged();
+  },
+  snapshot: (ref, content) => saveNamedVersion(ref.id, content, '바꾸기 전'),
+  async reloadOpen(ref) {
+    if (ref.id !== doc.path) return;
+    syncFromEditor();
+    if (doc.dirty) throw new Error('편집 중'); // 그 사이 입력한 내용을 덮어쓰지 않는다(다음 저장에서 충돌로 알린다)
+    await loadDoc(ref.id);
+  },
+};
 
 // ---- 파일 트리 조작 ----
 const BAD_NAME = /[\\/:*?"<>|]/;
@@ -556,7 +615,7 @@ function realNode(node: TreeNode): TreeNode {
 async function relocateOne(node: TreeNode, to: string): Promise<string> {
   const isFile = node.type === 'file';
   const moved = docPaths(realNode(node)).filter((p) => /\.md$/i.test(p));
-  await flushComments(); // 대기 중인 코멘트 저장이 옮기기 전 경로에 파일을 다시 만들지 않도록
+  if (!(await flushComments())) throw new Error('코멘트를 저장하지 못해 이름 변경을 중단했습니다'); // 대기 중인 코멘트 저장이 옮기기 전 경로에 파일을 다시 만들지 않도록
   await call('/api/rename', jsonInit('POST', { from: node.path, to }));
   // 옛 이름은 '지운 글'로 기록하고(다른 기기에서 되살아나지 않게), 새 이름의 묘비가 있으면 지운다
   await recordDocsGone(moved).catch(() => { /* 무시 */ });
@@ -573,11 +632,13 @@ async function relocateOne(node: TreeNode, to: string): Promise<string> {
 async function relocate(node: TreeNode, to: string) {
   const mine = affects(node.path);
   if (mine && !(await guardDirty())) return;
-  if (mine) await beginStructural();
+  if (mine && !(await beginStructural())) return;
   try {
+    const moves = movePairs(docPaths(realNode(node)), node.path, to); // 옮기기 전에 구해 둔다(글 사이 링크 `[[…]]` 갱신용)
     const reopen = await relocateOne(node, to);
     await refreshTree();
     if (reopen) { requestEditorFocus(); await loadDoc(reopen); } // 링크가 갱신된 파일을 다시 읽는다(이름 변경 직후 포커스)
+    await updateLinksAfterMove(linkHost, moves);
   } catch (e) {
     toast(errMsg(e), 'error');
   } finally {
@@ -598,14 +659,18 @@ export async function moveMany(nodes: TreeNode[], destDir: string): Promise<Bulk
   if (!list.length) return { ok: 0, failed: 0 };
   const mine = list.some((n) => affects(n.path));
   if (mine && !(await guardDirty())) return { ok: 0, failed: 0 };
-  if (mine) await beginStructural();
+  if (mine && !(await beginStructural())) return { ok: 0, failed: 0 };
   let ok = 0, failed = 0;
   let error: string | undefined;
+  const moves: ReturnType<typeof movePairs> = []; // 글 사이 링크 `[[…]]` 갱신용
   try {
     for (const node of list) {
       try {
-        const reopen = await relocateOne(node, joinPath(destDir, node.name));
+        const to = joinPath(destDir, node.name);
+        const pairs = movePairs(docPaths(node), node.path, to);
+        const reopen = await relocateOne(node, to);
         ok++;
+        moves.push(...pairs);
         if (reopen) await loadDoc(reopen).catch((e) => toast(errMsg(e), 'error')); // 링크가 갱신된 파일을 다시 읽는다
       } catch (e) {
         failed++;
@@ -614,6 +679,7 @@ export async function moveMany(nodes: TreeNode[], destDir: string): Promise<Bulk
     }
     expandFolder(destDir);
     await refreshTree().catch((e) => toast(errMsg(e), 'error'));
+    await updateLinksAfterMove(linkHost, moves);
   } finally {
     if (mine) endStructural();
   }
@@ -622,14 +688,26 @@ export async function moveMany(nodes: TreeNode[], destDir: string): Promise<Bulk
 
 // 열린 글의 이름 변경·삭제 전: 자동 저장·재시도·지연 스냅샷을 멈추고, 진행 중인 저장과 이력 기록이 끝나길 기다린다.
 // 그래야 늦게 끝난 저장이 옛 경로의 파일(과 이력)을 다시 만들지 않는다. 세대를 올려 그 뒤에 도착하는 응답은 버린다.
-async function beginStructural() {
+// 저장하지 않은 입력(자동 저장 대기 중)이 있으면 먼저 저장해 끝낸다 — 그래야 삭제 때 마지막 편집이 휴지통에도 남고, 이름 변경 때 옛 경로로 새지 않는다.
+// 저장에 실패하면 구간을 열지 않고 false 를 돌려준다(호출부는 중단한다. 안내는 여기서 한다).
+async function beginStructural(): Promise<boolean> {
   busy++;
   clearAutosave();
   clearRetry();
   clearTimeout(snapTimer);
+  syncFromEditor(); // 디바운스 때문에 doc.content 가 뒤처졌을 수 있다
+  if (doc.path && doc.dirty) {
+    const r = await runSave();
+    if (r !== 'ok' || (doc.path && doc.dirty)) {
+      busy = Math.max(0, busy - 1);
+      toast(`'${doc.name}' 의 변경을 저장하지 못해 중단했습니다`, 'error');
+      return false;
+    }
+  }
   await saveQueue;
   await Promise.allSettled([...snaps]);
   docGen++;
+  return true;
 }
 function endStructural() {
   busy = Math.max(0, busy - 1);
@@ -647,13 +725,13 @@ export async function deletePaths(nodes: TreeNode[]): Promise<BulkResult> {
   const list = nodes.map(realNode);
   if (!list.length) return { ok: 0, failed: 0 };
   const mine = list.some((n) => affects(n.path));
-  if (mine) await beginStructural();
+  if (mine && !(await beginStructural())) return { ok: 0, failed: list.length }; // 열린 글을 저장하지 못했다: 안내는 beginStructural 이 했다
   let ok = 0, failed = 0;
   let error: string | undefined;
   const sent: { id: string; node: TreeNode; docs: number; reopen: string }[] = [];
   try {
     try {
-      await flushComments();
+      if (!(await flushComments())) return { ok: 0, failed: list.length, error: '코멘트를 저장하지 못해 삭제를 중단했습니다' }; // 저장 못 한 코멘트는 휴지통에 담기지 않는다
     } catch (e) {
       return { ok: 0, failed: list.length, error: errMsg(e) };
     }
@@ -980,5 +1058,25 @@ export async function exportDocxCurrent() {
     await exportDocx(text, doc.name, template);
   } catch (e) {
     toast(`DOCX 내보내기 실패: ${errMsg(e)}`, 'error');
+  }
+}
+
+export async function exportHtmlCurrent() {
+  if (!doc.path) return;
+  try {
+    const { text } = await inlineImages(doc.content);
+    await exportHtml(text, doc.name);
+  } catch (e) {
+    toast(`HTML 내보내기 실패: ${errMsg(e)}`, 'error');
+  }
+}
+
+export async function exportEpubCurrent() {
+  if (!doc.path) return;
+  try {
+    const { text } = await inlineImages(doc.content);
+    await exportEpub(text, doc.name);
+  } catch (e) {
+    toast(`EPUB 내보내기 실패: ${errMsg(e)}`, 'error');
   }
 }

@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createReadStream } from 'node:fs';
+import { pipeline } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { randomBytes } from 'node:crypto';
@@ -17,6 +18,9 @@ const MAX_JSON = 20 * 1024 * 1024;
 const MAX_UPLOAD = 50 * 1024 * 1024;
 const SKIP_DIRS = new Set(['node_modules', 'assets']);
 const COMMENTS_DIR = '.comments'; // 코멘트 사이드카: .comments/<문서 경로>.json (숨김 폴더라 트리·검색에서 제외된다)
+// 동시에 도는 검색 워커 상한. 넘으면 가장 오래된 검색을 취소한다(클라이언트는 검색어를 고칠 때마다 이전 요청을 버린다)
+const MAX_SEARCHES = 2;
+const IO_CONCURRENCY = 16; // 트리·검색 목록·번들 목록의 readdir/stat 동시 실행 상한
 const SEARCH = { perFile: 50, total: 500, maxBytes: 2 * 1024 * 1024, timeoutMs: 8000 };
 // 노트 폴더 백업: 번들(.mwb 암호화 / .zip)을 숨김 폴더에 쌓고 보존 규칙(아래 backupsToDelete)대로 솎아 낸다(트리·검색에서 제외된다)
 const BACKUP_DIR = '.works-backup';
@@ -60,6 +64,18 @@ export function backupsToDelete(items, now, { keepRecent = KEEP_BACKUPS } = {}) 
     }
   });
   return del;
+}
+// fn 을 동시에 n 개까지만 실행하는 제한기(디렉터리 순회가 파일 핸들을 한꺼번에 소진하지 않게)
+function createLimiter(n) {
+  let active = 0;
+  const queue = [];
+  const next = () => {
+    if (active >= n || !queue.length) return;
+    active++;
+    const { fn, resolve, reject } = queue.shift();
+    fn().then(resolve, reject).finally(() => { active--; next(); });
+  };
+  return (fn) => new Promise((resolve, reject) => { queue.push({ fn, resolve, reject }); next(); });
 }
 const SEARCH_WORKER = fileURLToPath(new URL('./searchWorker.js', import.meta.url));
 
@@ -118,6 +134,8 @@ export function createApi(rootInput, opts = {}) {
   };
   const templatesDir = opts.templatesDir ? path.resolve(opts.templatesDir) : null;
   const now = () => (opts.now ?? Date.now)(); // 테스트에서 시각을 주입할 수 있게
+  const io = createLimiter(IO_CONCURRENCY);
+  const activeSearches = new Set();
 
   // 루트 기준 상대경로(슬래시)를 절대경로로 변환한다. symlink 를 해석해 루트 밖이면 거부한다.
   // trash: true 는 휴지통 코드만 쓴다. 그 밖의 모든 API 는 .works-trash 아래(symlink 로 돌아가는 경우 포함)를 403 으로 막는다.
@@ -183,8 +201,12 @@ export function createApi(rootInput, opts = {}) {
   }
   const readJson = async (req) => {
     const buf = await readBody(req, MAX_JSON);
-    try { return JSON.parse(buf.toString('utf8') || '{}'); }
+    let v;
+    try { v = JSON.parse(buf.toString('utf8') || '{}'); }
     catch { throw new HttpError(400, 'JSON 형식 오류'); }
+    // null·배열·원시값은 호출부의 구조분해가 TypeError(500)가 되므로 여기서 거른다
+    if (!v || typeof v !== 'object' || Array.isArray(v)) throw new HttpError(400, 'JSON 객체가 필요함');
+    return v;
   };
 
   async function exists(p) { try { await fs.access(p); return true; } catch { return false; } }
@@ -203,7 +225,9 @@ export function createApi(rootInput, opts = {}) {
       const b = await safe(`${COMMENTS_DIR}/${toRel}${sfx}`, { mustExist: false });
       await fs.mkdir(path.dirname(b), { recursive: true });
       await fs.rename(a, b);
+      return true;
     } catch { /* 코멘트가 없으면 그대로 */ }
+    return false;
   }
   const cleanComment = (c) => {
     if (!c || typeof c !== 'object' || typeof c.quote !== 'string' || !c.quote || typeof c.id !== 'string') return null;
@@ -215,14 +239,23 @@ export function createApi(rootInput, opts = {}) {
     };
   };
 
-  async function buildTree(dirAbs) {
-    const entries = await fs.readdir(dirAbs, { withFileTypes: true });
+  // 항목 하나의 readdir·stat 실패(삭제 경합, 권한 없는 폴더)는 그 항목만 건너뛴다. 루트(top)가 읽히지 않을 때만 오류로 둔다
+  async function buildTree(dirAbs, top = true) {
+    let entries;
+    try { entries = await io(() => fs.readdir(dirAbs, { withFileTypes: true })); }
+    catch (e) { if (top) throw e; return null; }
     // 폴더·파일 상태 조회를 한꺼번에 시작한다(하나씩 기다리면 글이 많을 때 트리를 읽는 데 오래 걸린다)
     const made = await Promise.all(entries.map(async (e) => {
       if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) return null;
       const abs = path.join(dirAbs, e.name);
-      if (e.isDirectory()) return { name: e.name, path: rel(abs), type: 'dir', children: await buildTree(abs) };
-      if (e.isFile() && isMd(e.name)) return { name: e.name, path: rel(abs), type: 'file', mtime: Math.round((await fs.stat(abs)).mtimeMs) };
+      if (e.isDirectory()) {
+        const children = await buildTree(abs, false);
+        return children && { name: e.name, path: rel(abs), type: 'dir', children };
+      }
+      if (e.isFile() && isMd(e.name)) {
+        try { return { name: e.name, path: rel(abs), type: 'file', mtime: Math.round((await io(() => fs.stat(abs))).mtimeMs) }; }
+        catch { return null; }
+      }
       return null;
     }));
     const out = made.filter(Boolean);
@@ -230,21 +263,39 @@ export function createApi(rootInput, opts = {}) {
     return out;
   }
 
-  // 검색 대상 .md 파일 목록 (트리와 같은 제외 규칙, 심볼릭 링크는 따라가지 않는다)
-  async function listMd(dirAbs, out = []) {
-    const entries = await fs.readdir(dirAbs, { withFileTypes: true });
-    for (const e of entries) {
-      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) continue;
+  // 검색 대상 .md 파일 목록 (트리와 같은 제외 규칙, 심볼릭 링크는 따라가지 않는다). 순서는 호출자가 정렬한다
+  async function listMd(dirAbs, out = [], top = true) {
+    let entries;
+    try { entries = await io(() => fs.readdir(dirAbs, { withFileTypes: true })); }
+    catch (e) { if (top) throw e; return out; }
+    await Promise.all(entries.map(async (e) => {
+      if (e.name.startsWith('.') || SKIP_DIRS.has(e.name)) return;
       const abs = path.join(dirAbs, e.name);
-      if (e.isDirectory()) await listMd(abs, out);
+      if (e.isDirectory()) await listMd(abs, out, false);
       else if (e.isFile() && isMd(e.name)) out.push({ path: rel(abs), abs });
-    }
+    }));
     return out;
   }
 
+  // 검색 한 건의 취소 상태. 핸들러 진입 즉시 만들어 'client-abort' 를 듣는다(목록을 읽는 동안 끊긴 요청도 놓치지 않게).
+  // 동시 검색이 MAX_SEARCHES 를 넘으면 가장 오래된 것을 취소한다
+  function beginSearch(req) {
+    const s = { aborted: false, stop: null };
+    s.abort = () => { s.aborted = true; s.stop?.(); };
+    req.once('client-abort', s.abort);
+    while (activeSearches.size >= MAX_SEARCHES) {
+      const oldest = activeSearches.values().next().value;
+      activeSearches.delete(oldest);
+      oldest.abort();
+    }
+    activeSearches.add(s);
+    return s;
+  }
+
   // 정규식이 오래 걸리면 워커를 끊는다
-  function runSearch(req, files, query, opts) {
+  function runSearch(search, files, query, opts) {
     return new Promise((resolve, reject) => {
+      if (search.aborted) { reject(new HttpError(499, '검색이 취소되었습니다')); return; }
       const worker = new Worker(SEARCH_WORKER, {
         workerData: { files, query, opts, perFile: SEARCH.perFile, total: SEARCH.total, maxBytes: SEARCH.maxBytes },
       });
@@ -253,7 +304,7 @@ export function createApi(rootInput, opts = {}) {
         reject(new HttpError(422, '검색 시간이 초과되었습니다. 검색어(정규식)를 단순하게 바꿔 보세요'));
       }, SEARCH.timeoutMs);
       // 클라이언트가 요청을 취소하면(검색어를 계속 고치는 중) 워커도 바로 끊는다
-      req.once('client-abort', () => { clearTimeout(timer); void worker.terminate(); reject(new HttpError(499, '검색이 취소되었습니다')); });
+      search.stop = () => { clearTimeout(timer); void worker.terminate(); reject(new HttpError(499, '검색이 취소되었습니다')); };
       worker.once('message', (m) => { clearTimeout(timer); resolve(m); });
       worker.once('error', (e) => { clearTimeout(timer); reject(e); });
     });
@@ -285,7 +336,8 @@ export function createApi(rootInput, opts = {}) {
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'no-store',
     });
-    createReadStream(abs).on('error', () => res.destroy()).pipe(res);
+    // 클라이언트가 끊으면 읽기 스트림도 닫는다(pipe 는 닫지 않는다)
+    pipeline(createReadStream(abs), res, () => {});
   }
 
   // ---- 번들(백업·동기화) 일괄 라우트용 ----
@@ -311,22 +363,29 @@ export function createApi(rootInput, opts = {}) {
     const docs = [];
     const assets = [];
     // inAssets: 0 = 일반 폴더, 1 = assets 폴더 바로 아래, 2 = assets/<폴더> 안
-    const walk = async (dirAbs, inAssets) => {
-      for (const e of await fs.readdir(dirAbs, { withFileTypes: true })) {
-        if (e.name.startsWith('.') || e.name === 'node_modules') continue;
+    const walk = async (dirAbs, inAssets, top = false) => {
+      let entries;
+      try { entries = await io(() => fs.readdir(dirAbs, { withFileTypes: true })); }
+      catch (e) { if (top) throw e; return; } // 삭제 경합·권한 없는 폴더는 건너뛴다
+      await Promise.all(entries.map(async (e) => {
+        if (e.name.startsWith('.') || e.name === 'node_modules') return;
         const abs = path.join(dirAbs, e.name);
         if (docs.length + assets.length > MAX_BUNDLE_ENTRIES) throw new HttpError(413, '파일이 너무 많음');
         if (e.isDirectory()) {
           if (inAssets === 0) await walk(abs, e.name === 'assets' ? 1 : 0);
           else if (inAssets === 1) await walk(abs, 2);
-          continue;
+          return;
         }
-        if (!e.isFile()) continue;
+        if (!e.isFile()) return;
         if (inAssets === 2) { if (IMAGE_EXT.has(path.extname(e.name).toLowerCase())) assets.push(rel(abs)); }
-        else if (inAssets === 0 && isMd(e.name)) docs.push({ path: rel(abs), mtime: Math.round((await fs.stat(abs)).mtimeMs) });
-      }
+        else if (inAssets === 0 && isMd(e.name)) {
+          try { docs.push({ path: rel(abs), mtime: Math.round((await io(() => fs.stat(abs))).mtimeMs) }); } catch { /* 사라진 글은 건너뛴다 */ }
+        }
+      }));
     };
-    await walk(root, 0);
+    await walk(root, 0, true);
+    docs.sort((a, b) => (a.path < b.path ? -1 : 1)); // 병렬 순회라 순서가 일정하지 않으므로 정렬한다
+    assets.sort();
     return { docs, assets };
   }
 
@@ -398,7 +457,13 @@ export function createApi(rootInput, opts = {}) {
         done.push(s);
       }
     } catch (e) {
-      for (const s of done.reverse()) await fs.rename(s.to, s.from).catch(() => {});
+      let stuck = 0;
+      for (const s of done.reverse()) await fs.rename(s.to, s.from).catch(() => { stuck++; });
+      if (stuck) {
+        // 되돌리지 못한 조각이 휴지통 폴더에 남아 있다: 호출자가 폴더를 지우지 않도록 표시한다
+        console.error('되돌리기 실패, 원래 오류:', e);
+        throw Object.assign(new HttpError(500, `이동 중 오류가 나 ${stuck}개 항목을 되돌리지 못함(휴지통에 보존됨)`), { rollbackFailed: true });
+      }
       if (e.code === 'ENOTDIR' || e.code === 'EEXIST') throw new HttpError(409, '대상 위치를 쓸 수 없음');
       throw e;
     }
@@ -442,7 +507,8 @@ export function createApi(rootInput, opts = {}) {
       await fs.writeFile(path.join(td, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
       await moveAll(steps);
     } catch (e) {
-      await fs.rm(td, { recursive: true, force: true }).catch(() => {});
+      // 되돌리기에 실패했으면 글이 아직 휴지통 폴더(meta.json 있음)에 있으므로 지우지 않고 보존한다
+      if (!e.rollbackFailed) await fs.rm(td, { recursive: true, force: true }).catch(() => {});
       throw e;
     }
     return id;
@@ -503,12 +569,15 @@ export function createApi(rootInput, opts = {}) {
         steps.push({ from: cmSrc, to: cmDst });
       }
       await moveAll(steps);
+      const warnings = [];
       // 이력·스레드 파티션: 이름이 바뀌었으면 파티션 이름(과 스레드 docKey)도 새 경로에 맞춘다
       for (const { coll, part } of Array.isArray(meta.parts) ? meta.parts : []) {
         if (!docColls.includes(coll) || typeof part !== 'string' || !(isFile ? part === meta.path : part.startsWith(meta.path + '/'))) continue;
         const sd = path.join(td, 'works', coll, encPart(part));
         if (!(await present(sd))) continue;
-        await works.importPart(coll, sd, isFile ? newRel : newRel + part.slice(meta.path.length)).catch(() => { /* 사이드카는 부가 데이터 */ });
+        // 실패해도 글은 이미 복구됐으므로 계속하되, 이력·스레드가 휴지통에 남도록 항목을 지우지 않고 경고를 싣는다
+        await works.importPart(coll, sd, isFile ? newRel : newRel + part.slice(meta.path.length))
+          .catch((e) => { console.error('휴지통 복구: 사이드카 이식 실패', coll, part, e); warnings.push(`${coll}:${part}`); });
       }
       if (isFile && newRel !== meta.path) {
         const oldName = path.basename(meta.path, path.extname(meta.path));
@@ -521,6 +590,7 @@ export function createApi(rootInput, opts = {}) {
           });
         }
       }
+      if (warnings.length) return { ok: true, path: newRel, type: meta.type, warnings };
       await fs.rm(td, { recursive: true, force: true });
       return { ok: true, path: newRel, type: meta.type };
     });
@@ -550,8 +620,11 @@ export function createApi(rootInput, opts = {}) {
       const opts = { caseSensitive: q.get('cs') === '1', regex: q.get('re') === '1' };
       const { error } = buildMatcher(query, opts);
       if (error) throw new HttpError(400, error);
-      const files = (await listMd(root)).sort((a, b) => a.path.localeCompare(b.path, 'ko'));
-      return runSearch(req, files, query, opts);
+      const search = beginSearch(req);
+      try {
+        const files = (await listMd(root)).sort((a, b) => a.path.localeCompare(b.path, 'ko'));
+        return await runSearch(search, files, query, opts);
+      } finally { activeSearches.delete(search); }
     },
 
     // 코멘트: 원문(.md)은 건드리지 않고 .comments/<문서 경로>.json 에 따로 둔다. 비면 파일을 지운다.
@@ -676,12 +749,19 @@ export function createApi(rootInput, opts = {}) {
       const { path: p, type } = await readJson(req);
       const abs = await safe(p, { mustExist: false });
       if (await exists(abs)) throw new HttpError(409, '이미 존재함');
-      if (type === 'dir') {
-        await fs.mkdir(abs, { recursive: true });
-      } else {
-        if (!isMd(abs)) throw new HttpError(400, '.md 파일만 허용');
-        await fs.mkdir(path.dirname(abs), { recursive: true });
-        await fs.writeFile(abs, '', 'utf8');
+      // exists 와 생성 사이에 같은 경로를 만든 요청이 있을 수 있으므로 배타 생성(wx / 마지막 단계만 mkdir)하고 EEXIST 는 409 로 바꾼다
+      try {
+        if (type === 'dir') {
+          await fs.mkdir(path.dirname(abs), { recursive: true });
+          await fs.mkdir(abs);
+        } else {
+          if (!isMd(abs)) throw new HttpError(400, '.md 파일만 허용');
+          await fs.mkdir(path.dirname(abs), { recursive: true });
+          await fs.writeFile(abs, '', { encoding: 'utf8', flag: 'wx' });
+        }
+      } catch (e) {
+        if (e.code === 'EEXIST') throw new HttpError(409, '이미 존재함');
+        throw e;
       }
       return { path: rel(abs) };
     },
@@ -691,36 +771,61 @@ export function createApi(rootInput, opts = {}) {
       const { from, to } = await readJson(req);
       const src = await safe(from);
       const dst = await safe(to, { mustExist: false });
-      // 대소문자만 바꾸는 이름 변경(a.md → A.md)은 대소문자를 구분하지 않는 파일 시스템에서 대상이 '이미 있는' 것처럼 보이지만 같은 파일이다.
-      // 경로가 대소문자 무시로 같고 inode 도 같을 때만 허용한다(대소문자를 구분하는 파일 시스템의 별개 파일 A.md 는 inode 가 달라 409)
-      if (await exists(dst)) {
-        const [ss, ds] = await Promise.all([fs.stat(src, { bigint: true }), fs.stat(dst, { bigint: true })]);
-        const sameFile = rel(src).toLowerCase() === rel(dst).toLowerCase() && ss.ino !== 0n && ss.ino === ds.ino && ss.dev === ds.dev;
-        if (!sameFile) throw new HttpError(409, '대상이 이미 존재함');
-      }
+      // trashMove 와 같은 규칙: 숨김(.works, .comments …) 항목은 옮기거나 그 이름으로 만들 수 없다
+      if ([rel(src), rel(dst)].some((r) => r.split('/').some((s) => s.startsWith('.')))) throw new HttpError(400, '숨김 항목은 이름을 바꿀 수 없음');
       const st = await fs.stat(src);
-      if (st.isFile() && !(isMd(src) && isMd(dst))) throw new HttpError(400, '.md 파일만 허용');
-      await fs.mkdir(path.dirname(dst), { recursive: true });
-      const oldAssets = st.isFile() ? docAssetsDir(src) : null;
-      await fs.rename(src, dst);
-      await moveComments(rel(src), rel(dst), st.isFile());
-      await works.moveDoc(rel(src), rel(dst), st.isFile()).catch(() => { /* 사이드카는 부가 데이터 */ });
-      if (oldAssets && (await exists(oldAssets))) {
-        const newAssets = docAssetsDir(dst);
-        await fs.mkdir(path.dirname(newAssets), { recursive: true });
-        await fs.rename(oldAssets, newAssets);
-        const oldName = path.basename(oldAssets);
-        const newName = path.basename(newAssets);
-        if (oldName !== newName) {
-          // 읽기-쓰기를 한 락 안에서 해 그 사이 저장이 덮어써지지 않게 한다. 링크는 디코딩해 비교하고 원래 인코딩 형태를 유지한다
-          await withFileLock(dst, async () => {
-            const text = await fs.readFile(dst, 'utf8');
-            const next = relinkAssets(text, oldName, newName);
-            if (next !== text) await writeFileAtomicUnlocked(dst, next, 'utf8');
-          });
+      const run = async () => {
+        // 대소문자만 바꾸는 이름 변경(a.md → A.md)은 대소문자를 구분하지 않는 파일 시스템에서 대상이 '이미 있는' 것처럼 보이지만 같은 파일이다.
+        // 경로가 대소문자 무시로 같고 inode 도 같을 때만 허용한다(대소문자를 구분하는 파일 시스템의 별개 파일 A.md 는 inode 가 달라 409)
+        if (await exists(dst)) {
+          const [ss, ds] = await Promise.all([fs.stat(src, { bigint: true }), fs.stat(dst, { bigint: true })]);
+          const sameFile = rel(src).toLowerCase() === rel(dst).toLowerCase() && ss.ino !== 0n && ss.ino === ds.ino && ss.dev === ds.dev;
+          if (!sameFile) throw new HttpError(409, '대상이 이미 존재함');
         }
-      }
-      return { path: rel(dst) };
+        if (st.isFile() && !(isMd(src) && isMd(dst))) throw new HttpError(400, '.md 파일만 허용');
+        const oldAssets = st.isFile() ? docAssetsDir(src) : null;
+        const newAssets = oldAssets && docAssetsDir(dst);
+        const moveAssets = !!oldAssets && oldAssets !== newAssets && (await exists(oldAssets));
+        // 문서를 옮긴 뒤에 assets 이동이 막혀 문서만 옮겨지지 않도록 미리 검사한다(같은 항목의 대소문자 변경은 허용)
+        if (moveAssets && (await present(newAssets))) {
+          const [a, b] = await Promise.all([fs.stat(oldAssets, { bigint: true }), fs.stat(newAssets, { bigint: true })]);
+          if (!(rel(oldAssets).toLowerCase() === rel(newAssets).toLowerCase() && a.ino !== 0n && a.ino === b.ino && a.dev === b.dev)) {
+            throw new HttpError(409, '대상 assets 폴더가 이미 존재함');
+          }
+        }
+        await fs.mkdir(path.dirname(dst), { recursive: true });
+        // 단계마다 되돌리기를 쌓아 두고, 중간에 실패하면 거꾸로 실행한다
+        const undo = [];
+        try {
+          await fs.rename(src, dst);
+          undo.push(() => fs.rename(dst, src));
+          if (await moveComments(rel(src), rel(dst), st.isFile())) undo.push(() => moveComments(rel(dst), rel(src), st.isFile()));
+          await works.moveDoc(rel(src), rel(dst), st.isFile()).catch(() => { /* 사이드카는 부가 데이터 */ });
+          undo.push(() => works.moveDoc(rel(dst), rel(src), st.isFile()));
+          if (moveAssets) {
+            await fs.mkdir(path.dirname(newAssets), { recursive: true });
+            await fs.rename(oldAssets, newAssets);
+            undo.push(() => fs.rename(newAssets, oldAssets));
+            const oldName = path.basename(oldAssets);
+            const newName = path.basename(newAssets);
+            if (oldName !== newName) {
+              // 읽기-쓰기를 같은 락(바깥에서 이미 잡았다) 안에서 해 그 사이 저장이 덮어써지지 않게 한다. 링크는 디코딩해 비교하고 원래 인코딩 형태를 유지한다
+              const text = await fs.readFile(dst, 'utf8');
+              const next = relinkAssets(text, oldName, newName);
+              if (next !== text) await writeFileAtomicUnlocked(dst, next, 'utf8');
+            }
+          }
+        } catch (e) {
+          for (const u of undo.reverse()) await u().catch(() => {});
+          throw e;
+        }
+        return { path: rel(dst) };
+      };
+      if (!st.isFile()) return run();
+      // 진행 중인 PUT /api/file 과 직렬화한다. 락을 두 개 잡으므로 항상 같은 순서(키 정렬)로 잡아 교착을 피하고, 같은 키(대소문자만 다른 이름)는 한 번만 잡는다
+      const key = (f) => (process.platform === 'win32' || process.platform === 'darwin' ? f.toLowerCase() : f);
+      const files = [...new Map([src, dst].map((f) => [key(f), f])).entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, f]) => f);
+      return files.reduceRight((inner, f) => () => withFileLock(f, inner), run)();
     },
 
     // 삭제는 휴지통으로 옮긴다(글의 assets·코멘트·이력·스레드, 폴더면 안의 모든 파일 포함). 복구는 POST /api/trash/restore
@@ -815,7 +920,7 @@ export function createApi(rootInput, opts = {}) {
       'Content-Length': st.size,
       'Cache-Control': 'public, max-age=86400',
     });
-    createReadStream(WASM_FILE).on('error', () => res.destroy()).pipe(res);
+    pipeline(createReadStream(WASM_FILE), res, () => {});
   }
 
   void purgeTrash().catch(() => {}); // 서버 시작 때 30일 지난 휴지통 항목 정리
@@ -848,7 +953,9 @@ export function createApi(rootInput, opts = {}) {
       const status = e instanceof HttpError || e instanceof WorksError ? e.status : 500;
       if (status === 500) console.error(e);
       res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: e.message, ...(e instanceof HttpError ? e.extra : null) }));
+      // 예상 못 한 오류의 message 는 경로 등 내부 정보를 담을 수 있어 응답에 싣지 않는다(상세는 위 로그)
+      const message = status === 500 && !(e instanceof HttpError) ? '서버 내부 오류' : e.message;
+      res.end(JSON.stringify({ error: message, ...(e instanceof HttpError ? e.extra : null) }));
     }
     return true;
   };

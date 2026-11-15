@@ -128,15 +128,15 @@ export function createStandaloneHost(opts: StandaloneHostOptions): BundleHost {
       await detachSnippetsFrom(store, rec.id);
       // 지운 글이 쓰던 이미지는 앱의 이미지 정리(gc)가 afterApply·setImporting(false) 뒤에 치운다
     },
-    async readDoc(info): Promise<HostDocBody> {
+    async readDoc(info, ctx): Promise<HostDocBody> {
       const rec = await req<Rec | undefined>('docs', 'readonly', (s) => s.get(info.key));
       const raw = rec?.content ?? '';
       if (!raw.includes('idb:')) return { content: raw, assets: [], raw };
-      const { text, assets } = await relinkNested(info.name.replace(/\.md$/i, ''), raw, loadImage);
+      const { text, assets } = await relinkNested(info.name.replace(/\.md$/i, ''), raw, loadImage, false, ctx?.imageCache);
       return { content: text, assets, raw };
     },
-    async textToBundle(stem, text) {
-      const { text: out, assets } = await relinkNested(stem, text, loadImage, true);
+    async textToBundle(stem, text, ctx) {
+      const { text: out, assets } = await relinkNested(stem, text, loadImage, true, ctx?.imageCache);
       return { text: out, assets: assets as BundleAsset[] };
     },
     beginImport(assets): ImportSession {

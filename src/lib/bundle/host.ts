@@ -3,6 +3,7 @@
 //   - 서버 호스트: 서버 API(글 목록·읽기·쓰기·에셋), worksStore = `.works/` 사이드카
 import type { WorksStore } from '../works/store';
 import type { Design } from '../design';
+import type { ImageCache } from '../archive';
 
 /** 번들 안의 파일(경로는 zip 내부 경로 = 서버 노트 폴더 기준 경로) */
 export interface BundleAsset { path: string; data: Uint8Array }
@@ -13,6 +14,11 @@ export interface HostDocInfo {
   /** 이력·스레드 파티션(docKey). 스탠드얼론은 문서 id, 서버는 경로(=name) */
   key: string;
   updatedAt: number;
+}
+
+/** 번들 만들기 한 번 동안 공유하는 상태 */
+export interface BuildContext {
+  imageCache: ImageCache;
 }
 
 export interface HostDocBody {
@@ -50,9 +56,10 @@ export interface BundleHost {
   /** 번들의 글 이름을 이 보관소의 이름으로 바꾼다(스탠드얼론: 폴더 펼치기·대소문자 맞춤). 같은 이름끼리 충돌하면 코어가 오류로 처리한다 */
   normalizeName(name: string): string;
   listDocs(): Promise<HostDocInfo[]>;
-  readDoc(d: HostDocInfo): Promise<HostDocBody>;
+  /** ctx.imageCache: 번들 한 번을 만드는 동안 이미지 id → 데이터 캐시를 공유한다(이력 버전마다 같은 이미지를 IDB 에서 다시 읽지 않게) */
+  readDoc(d: HostDocInfo, ctx?: BuildContext): Promise<HostDocBody>;
   /** 글 밖의 본문(이력 버전)을 번들 형식으로. 파일 이름은 이미지 id 기반(stable) */
-  textToBundle(stem: string, text: string): Promise<{ text: string; assets: BundleAsset[] }>;
+  textToBundle(stem: string, text: string, ctx?: BuildContext): Promise<{ text: string; assets: BundleAsset[] }>;
   /** assets: 번들에 들어 있는 모든 에셋(경로 → 데이터) */
   beginImport(assets: ReadonlyMap<string, Uint8Array>): ImportSession;
   /**

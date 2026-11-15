@@ -1,11 +1,9 @@
 <script lang="ts">
-  // 본문 오른쪽에 두고 쓰는 자료: 글감과 코멘트. 왼쪽 사이드바(파일·검색)와 따로 열고 닫는다.
+  // 본문 오른쪽에 두고 쓰는 자료: 글감·목차·코멘트·링크. 왼쪽 사이드바(파일·검색)와 따로 열고 닫는다.
   // 닫혀 있거나 집중 모드이면 오른쪽 가장자리에 마우스를 대면 팝오버로 나타난다.
   import Pin from '@lucide/svelte/icons/pin';
   import PinOff from '@lucide/svelte/icons/pin-off';
   import X from '@lucide/svelte/icons/x';
-  import SnippetPanel from './SnippetPanel.svelte';
-  import CommentsPanel from './CommentsPanel.svelte';
   import OutlinePanel from './OutlinePanel.svelte';
   import SheetBackdrop from './SheetBackdrop.svelte';
   import Resizer from './Resizer.svelte';
@@ -17,11 +15,22 @@
   import { settings } from '../store.svelte';
   import { tip } from '../tooltip.svelte';
   import { panelFx } from '../motion';
+  import CommentsPanel from './CommentsPanel.svelte';
+  import { lazyComponent } from '../lazy.svelte';
 
   // 닫아 둔 상태(또는 집중 모드)에서는 붙어 있지 않고 오른쪽 가장자리 호버로 팝오버처럼 나타난다
   const peek = $derived(!viewport.mobile && (writing.focus || !right.open));
   const shown = $derived(peek ? rightPeek.open : right.open);
   $effect(() => { if (!peek) rightPeek.open = false; });
+
+  // 글감·링크 패널은 그 탭이 처음 보일 때 받는다(목차·코멘트는 2KB 안팎으로 가벼워 그대로 둔다). 받는 동안은 빈 칸이고, 실패하면 토스트만 띄운다 — 탭을 다시 고르면 다시 시도한다
+  const snippetsPane = lazyComponent(() => import('./SnippetPanel.svelte'));
+  const linksPane = lazyComponent(() => import('./LinksPanel.svelte'));
+  $effect(() => {
+    if (!shown) return;
+    if (right.tab === 'snippets') snippetsPane.load();
+    else if (right.tab === 'links') linksPane.load();
+  });
 </script>
 
 {#if peek && !rightPeek.open && settings.rightHover}
@@ -29,7 +38,7 @@
 {/if}
 {#if shown}
   <aside
-    class="sidebar right-sidebar" class:peek aria-label="글감·목차·코멘트" style:--right-w="{right.width}px" transition:panelFx={{ side: viewport.mobile ? 'bottom' : 'right' }}
+    class="sidebar right-sidebar" class:peek aria-label="글감·목차·코멘트·링크" style:--right-w="{right.width}px" transition:panelFx={{ side: viewport.mobile ? 'bottom' : 'right' }}
     use:peekPanel={{ active: () => peek, close: () => (rightPeek.open = false) }}
   >
     <Resizer side="right" value={right.width} min={RIGHT_W.min} max={RIGHT_W.max} def={RIGHT_W.def} label="오른쪽 패널 폭 조절" onchange={(w, save) => setRightWidth(w, save)} />
@@ -37,6 +46,7 @@
       <button role="tab" class:on={right.tab === 'snippets'} aria-selected={right.tab === 'snippets'} onclick={() => setRightTab('snippets')} use:tip={{ title: '글감함', lines: ['Ctrl+Alt+G 문구로 찾기', 'Ctrl+Alt+S 선택을 글감으로'] }}>글감</button>
       <button role="tab" class:on={right.tab === 'outline'} aria-selected={right.tab === 'outline'} onclick={() => setRightTab('outline')} use:tip={'이 문서의 목차'}>목차</button>
       <button role="tab" class:on={right.tab === 'comments'} aria-selected={right.tab === 'comments'} onclick={() => setRightTab('comments')} use:tip={'이 문서의 코멘트'}>코멘트{#if openCount()} <span class="cm-badge">{openCount()}</span>{/if}</button>
+      <button role="tab" class:on={right.tab === 'links'} aria-selected={right.tab === 'links'} onclick={() => setRightTab('links')} use:tip={{ title: '글 사이 링크', lines: ['[[글 이름]] 으로 연결한 글', '이 글을 가리키는 글과 이 글에서 가리키는 글'] }}>링크</button>
       <span class="spacer"></span>
       {#if !viewport.mobile}
         <button class="icon-btn rs-close pin-btn" class:on={!peek} aria-pressed={!peek} aria-label={peek ? '오른쪽 패널 고정' : '오른쪽 패널 고정 해제'}
@@ -46,9 +56,10 @@
         <button class="icon-btn rs-close" aria-label="오른쪽 패널 닫기" use:tip={'닫기'} onclick={closeRight}><X size={18} /></button>
       {/if}
     </div>
-    <div class="tabpane" hidden={right.tab !== 'snippets'}><SnippetPanel /></div>
+    <div class="tabpane" hidden={right.tab !== 'snippets'}>{#if snippetsPane.Comp}{@const Snippets = snippetsPane.Comp}<Snippets />{/if}</div>
     <div class="tabpane" hidden={right.tab !== 'outline'}><OutlinePanel active={right.tab === 'outline'} /></div>
     <div class="tabpane" hidden={right.tab !== 'comments'}><CommentsPanel /></div>
+    <div class="tabpane" hidden={right.tab !== 'links'}>{#if linksPane.Comp}{@const Links = linksPane.Comp}<Links active={right.tab === 'links'} />{/if}</div>
   </aside>
 {/if}
 <SheetBackdrop open={right.open && !peek} onClose={closeRight} />

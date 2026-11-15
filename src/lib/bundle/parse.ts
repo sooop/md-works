@@ -3,7 +3,8 @@
 import { unzipSync, type UnzipFileInfo } from 'fflate';
 import { decPart } from './partName';
 import type { Snippet, Thread, Version } from '../works/types';
-import { cleanSnippet, cleanThread, cleanVersion, ID_RE } from './records';
+import { cleanSnippet, cleanThread, cleanVersion, clampTime, ID_RE } from './records';
+import { cleanDays, type Days } from '../stats/logic';
 
 export class BundleError extends Error {}
 
@@ -79,10 +80,12 @@ export interface ParsedBundle {
   /** serializeDesign() 결과 원문 */
   design?: string;
   tombstones: { docs: Record<string, number> };
+  /** 날짜별 집필 통계(깨진 항목은 빠진 값). 파일이 없으면 undefined */
+  stats?: Days;
 }
 
 type Kind =
-  | { k: 'manifest' } | { k: 'docs' } | { k: 'design' } | { k: 'tombstones' }
+  | { k: 'manifest' } | { k: 'docs' } | { k: 'design' } | { k: 'tombstones' } | { k: 'stats' }
   | { k: 'doc' } | { k: 'asset' }
   | { k: 'version' | 'thread'; part: string; id: string }
   | { k: 'versions'; part: string; seq: number }
@@ -95,6 +98,7 @@ function classify(path: string): Kind | null {
     if (f.length === 1 && f[0] === 'docs.json') return { k: 'docs' };
     if (f.length === 1 && f[0] === 'design.json') return { k: 'design' };
     if (f.length === 1 && f[0] === 'tombstones.json') return { k: 'tombstones' };
+    if (f.length === 1 && f[0] === 'stats.json') return { k: 'stats' };
     // 새 배치: 글 하나의 이력 묶음. `<글>.json`(= 1번) 또는 나뉜 `<글>.N.json`(N ≥ 2). 글 이름은 항상 .md 로 끝나 모호하지 않다
     if (f.length === 2 && f[0] === 'versions') {
       const m = /^(.+\.md)(?:\.(\d{1,6}))?\.json$/i.exec(f[1]);
@@ -122,24 +126,45 @@ function jsonOf(data: Uint8Array): unknown {
 }
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+/** zip 이 쓰는 CRC-32. fflate 는 이 함수를 내보내지 않고 풀 때 검증도 하지 않아 직접 둔다 */
+export function crc32(data: Uint8Array): number {
+  const t = CRC_TABLE;
+  let c = 0xffffffff;
+  for (let i = 0; i < data.length; i++) c = t[(c ^ data[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
 /**
  * 중앙 디렉터리가 선언한 압축 해제 크기와 각 항목 앞의 로컬 헤더가 선언한 크기를 대조한다.
  * 다르면 한쪽이 조작·손상된 것이다(fflate 는 중앙 디렉터리의 크기만큼만 풀어, 작게 선언되면 조용히 잘린 글이 나온다).
  * 로컬 헤더에 크기가 없는(데이터 설명자, 플래그 bit 3) 항목은 대조할 수 없어 건너뛴다.
+ * 돌려주는 값은 중앙 디렉터리의 항목 이름(fflate 가 읽는 이름과 같은 규칙) → CRC-32 이다. 푼 데이터와 대조하는 데 쓴다.
  */
-function checkDeclaredSizes(bytes: Uint8Array): void {
-  if (bytes.length < 22) return;
+function checkDeclaredSizes(bytes: Uint8Array): Map<string, number> {
+  const crcs = new Map<string, number>();
+  if (bytes.length < 22) return crcs;
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
   for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65_535); i--) {
     if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
   }
-  if (eocd < 0) return; // zip 이 아니면 unzipSync 가 오류를 낸다
+  if (eocd < 0) return crcs; // zip 이 아니면 unzipSync 가 오류를 낸다
   const count = dv.getUint16(eocd + 10, true);
   let p = dv.getUint32(eocd + 16, true);
   for (let n = 0; n < count; n++) {
-    if (p + 46 > bytes.length || dv.getUint32(p, true) !== 0x02014b50) return;
+    if (p + 46 > bytes.length || dv.getUint32(p, true) !== 0x02014b50) return crcs;
     const flags = dv.getUint16(p + 8, true);
+    const crc = dv.getUint32(p + 16, true);
     const usize = dv.getUint32(p + 24, true);
     const nameLen = dv.getUint16(p + 28, true);
     const extraLen = dv.getUint16(p + 30, true);
@@ -148,13 +173,19 @@ function checkDeclaredSizes(bytes: Uint8Array): void {
     if (!(flags & 8) && local + 30 <= bytes.length && dv.getUint32(local, true) === 0x04034b50 && dv.getUint32(local + 22, true) !== usize) {
       throw new BundleError('번들 항목의 크기 정보가 서로 달라 손상된 것으로 보입니다');
     }
+    if (p + 46 + nameLen <= bytes.length) {
+      const raw = bytes.subarray(p + 46, p + 46 + nameLen);
+      crcs.set(flags & 0x800 ? dec.decode(raw) : String.fromCharCode(...raw), crc); // 이름 칸의 UTF-8 표시(bit 11)가 없으면 fflate 는 latin1 로 읽는다
+    }
     p += 46 + nameLen + extraLen + commentLen;
   }
+  return crcs;
 }
 
 /** 번들 zip 을 검증하고 파싱한다. 형식·경로·크기에 문제가 있으면 BundleError 를 던진다. */
-export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } = {}): ParsedBundle {
+export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number; now?: number } = {}): ParsedBundle {
   const maxEntries = limits.maxEntries ?? MAX_ENTRIES;
+  const now = limits.now ?? Date.now(); // 번들의 updatedAt·deletedAt 상한 기준(clampTime)
   const kinds = new Map<string, Kind>();
   const declared = new Map<string, number>(); // zip 헤더가 선언한 압축 해제 크기
   let total = 0;
@@ -181,7 +212,7 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
     if (e instanceof BundleError) throw e;
     throw new BundleError('번들(zip)을 읽지 못했습니다: 손상되었거나 zip 형식이 아닙니다');
   }
-  checkDeclaredSizes(bytes); // 선언보다 적게 풀려 조용히 잘린 글을 막는다
+  const crcs = checkDeclaredSizes(bytes); // 선언보다 적게 풀려 조용히 잘린 글을 막는다
   // 헤더가 크기를 속여도(선언보다 많이 풀림) 실제 크기로 한 번 더 상한을 검사한다
   let real = 0;
   for (const [name, data] of Object.entries(entries)) {
@@ -191,6 +222,9 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
     // 선언과 실제 크기가 다르면 조용히 잘린(또는 부풀려진) 내용일 수 있으니 가져오지 않는다
     if (kind && declared.get(name) !== data.length) throw new BundleError(`번들 항목의 크기가 헤더와 달라 손상된 것으로 보입니다: ${name}`);
     if (kind && kind.k !== 'asset' && data.length > MAX_TEXT_ENTRY_BYTES) throw new BundleError(`번들 항목이 너무 큽니다: ${name}`);
+    // fflate 는 풀 때 CRC-32 를 검증하지 않는다 — 손상된 평문 zip 이 조용히 들어오지 않게 중앙 디렉터리의 값과 대조한다(읽는 항목만)
+    const want = kind ? crcs.get(name) : undefined;
+    if (want !== undefined && crc32(data) !== want) throw new BundleError(`번들 항목의 내용이 손상되었습니다 (CRC32 불일치): ${name}`);
   }
 
   const manifestEntry = Object.keys(entries).find((n) => kinds.get(n)?.k === 'manifest');
@@ -223,8 +257,14 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
       case 'tombstones': {
         const j = jsonOf(data);
         if (isObj(j) && isObj(j.docs)) {
-          for (const [n, t] of Object.entries(j.docs)) if (typeof t === 'number' && Number.isFinite(t) && n.length <= 1024) out.tombstones.docs[n] = t;
+          for (const [n, t] of Object.entries(j.docs)) if (typeof t === 'number' && Number.isFinite(t) && n.length <= 1024) out.tombstones.docs[n] = clampTime(t, now);
         }
+        break;
+      }
+      case 'stats': {
+        // 통계는 보조 정보라 형식이 깨져도 번들 전체를 거부하지 않는다(날짜 항목 단위로 버린다)
+        const j = jsonOf(data);
+        if (isObj(j)) out.stats = cleanDays(j.days);
         break;
       }
       case 'version': case 'thread': sidecars.push({ kind, data }); break;
@@ -237,7 +277,7 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
   for (const [n, doc] of out.docs) {
     const meta = docMeta[n];
     const t = isObj(meta) && typeof meta.updatedAt === 'number' && Number.isFinite(meta.updatedAt) ? meta.updatedAt : undefined;
-    if (t !== undefined) doc.updatedAt = t;
+    if (t !== undefined) doc.updatedAt = clampTime(t, now);
   }
 
   // 이력: 새 배치(글당 묶음)를 먼저, 그다음 옛 배치(버전당 파일). 같은 id 는 처음 것 하나만 둔다(섞인 번들도 된다)
@@ -258,7 +298,7 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
     const j = jsonOf(data);
     if (!Array.isArray(j)) continue; // 배열이 아니면 그 묶음은 버린다
     for (const item of j) {
-      const rec = cleanVersion(item, docName);
+      const rec = cleanVersion(item, docName, now);
       if (rec) addVersion(docName, rec);
     }
   }
@@ -266,7 +306,7 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
     const docName = decPart(kind.part);
     if (!isDocName(docName)) continue; // 글 이름으로 풀리지 않는 파티션은 버린다
     const j = jsonOf(data);
-    const rec = kind.k === 'version' ? cleanVersion(j, docName) : cleanThread(j, docName);
+    const rec = kind.k === 'version' ? cleanVersion(j, docName, now) : cleanThread(j, docName, now);
     if (!rec || rec.id !== kind.id) continue;
     if (kind.k === 'version') { addVersion(docName, rec as Version); continue; }
     const list = out.threads.get(docName) ?? [];
@@ -274,7 +314,7 @@ export function parseBundle(bytes: Uint8Array, limits: { maxEntries?: number } =
     out.threads.set(docName, list);
   }
   for (const { id, data } of snippetData) {
-    const s = cleanSnippet(jsonOf(data));
+    const s = cleanSnippet(jsonOf(data), now);
     if (s && s.id === id) out.snippets.push(s);
   }
   return out;

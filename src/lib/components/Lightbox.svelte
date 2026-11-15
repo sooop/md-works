@@ -18,6 +18,7 @@
   const MAX = 8;
 
   let src = $state<string | null>(null);
+  let alt = $state(''); // 원본 이미지의 대체 텍스트(비면 기본 문구)
   let scale = $state(1);
   let tx = $state(0);
   let ty = $state(0);
@@ -30,6 +31,7 @@
     if (!url) return;
     reset();
     src = url;
+    alt = img.alt?.trim() ?? '';
     await tick();
     closeBtn?.focus();
   }
@@ -112,7 +114,7 @@
       class="lb-img"
       transition:modalFx
       {src}
-      alt="확대 이미지"
+      alt={alt || '확대 이미지'}
       draggable="false"
       style:transform="translate({tx}px, {ty}px) scale({scale})"
       onclick={(e) => e.stopPropagation()}

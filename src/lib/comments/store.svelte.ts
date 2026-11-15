@@ -44,21 +44,52 @@ const dirty = new Set<string>(); // 저장할 스레드 id
 const removed = new Map<string, Thread>(); // 저장소에서 지울 스레드
 let pending: Promise<void> = Promise.resolve(); // 마지막 저장 (같은 문서를 곧바로 다시 열 때 기다린다)
 
+const failedPuts = new Map<string, Thread>(); // 저장에 실패한 스레드의 사본(문서를 닫아 화면 상태에서 사라져도 재시도한다)
+const baseAnchor = new Map<string, Thread['anchor']>(); // 저장소에 있는 앵커: 실제로 달라진 스레드만 다시 쓴다
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+let failStreak = 0; // 연속으로 실패한 배치 수(백오프 계산)
+let lastFailed = false; // 마지막 저장 시도에 실패한 항목이 있었는가
+export const retryDelay = (n: number) => Math.min(60_000, 2000 * 2 ** Math.max(0, n - 1)); // 2s, 4s, 8s … 최대 60s
+
 function persistNow() {
   clearTimeout(saveTimer);
+  clearTimeout(retryTimer);
   if (!dirty.size && !removed.size) return;
-  const puts = [...dirty].map((id) => cm.items.find((c) => c.id === id)).filter((c): c is Thread => !!c)
-    .map((c) => $state.snapshot(c) as Thread);
+  const puts: Thread[] = [];
+  for (const id of dirty) {
+    const live = cm.items.find((c) => c.id === id);
+    const t = live ? ($state.snapshot(live) as Thread) : failedPuts.get(id);
+    if (t) puts.push(t);
+  }
   const dels = [...removed.values()];
   dirty.clear();
   removed.clear();
-  pending = pending
-    .then(async () => {
-      for (const t of puts) await saveThread(t);
-      for (const t of dels) await deleteThread(t);
-      notifyTabs({ t: 'threads', keys: [...new Set([...puts, ...dels].map((t) => t.docKey))] }); // 다른 탭이 같은 글의 코멘트를 다시 읽게 한다
-    })
-    .catch((e) => { toast(`코멘트를 저장하지 못했습니다: ${errMsg(e)}`, 'error'); });
+  failedPuts.clear();
+  pending = pending.then(async () => {
+    const done: Thread[] = [];
+    let err: unknown;
+    let failed = false;
+    // 항목 하나의 실패가 나머지를 막지 않는다. 실패한 것은 되돌려 놓고 백오프로 다시 시도한다
+    for (const t of puts) {
+      try { await saveThread(t); baseAnchor.set(t.id, t.anchor); done.push(t); } catch (e) {
+        failed = true; err ??= e;
+        failedPuts.set(t.id, t);
+        if (!removed.has(t.id)) dirty.add(t.id);
+      }
+    }
+    for (const t of dels) {
+      try { await deleteThread(t); baseAnchor.delete(t.id); done.push(t); } catch (e) {
+        failed = true; err ??= e;
+        removed.set(t.id, t);
+      }
+    }
+    if (done.length) notifyTabs({ t: 'threads', keys: [...new Set(done.map((t) => t.docKey))] }); // 다른 탭이 같은 글의 코멘트를 다시 읽게 한다
+    lastFailed = failed;
+    if (!failed) { failStreak = 0; return; }
+    if (!failStreak) toast(`코멘트를 저장하지 못했습니다: ${errMsg(err)} (자동으로 다시 시도합니다)`, 'error');
+    failStreak++;
+    retryTimer = setTimeout(persistNow, retryDelay(failStreak));
+  }).catch(() => { /* 위에서 항목별로 처리한다 */ });
 }
 function persist(id: string) {
   dirty.add(id);
@@ -85,16 +116,19 @@ async function reloadThreads(key: string) {
   }
   cm.items = list;
   cm.ranges = ranges;
+  for (const c of list) baseAnchor.set(c.id, c.anchor);
   push();
 }
 onTabMessage((m) => { if (m.t === 'threads' && cur && m.keys.includes(cur.key)) void reloadThreads(cur.key).catch(() => { /* 다음 알림 때 다시 읽는다 */ }); });
 
-/** 대기 중인 저장을 즉시 끝낸다 (서버 모드에서 이름 변경·삭제 전에 호출) */
-export async function flushComments() {
+/** 대기 중인 저장을 즉시 끝낸다 (서버 모드에서 이름 변경·삭제 전에 호출). 마지막 시도에 실패한 항목이 있으면 false */
+export async function flushComments(): Promise<boolean> {
   persistNow();
   await pending;
+  return !lastFailed;
 }
 
+const sameAnchor = (a: Thread['anchor'], b: Thread['anchor']) => a.quote === b.quote && a.prefix === b.prefix && a.suffix === b.suffix;
 const entryOf = (c: Thread, r: Range): Entry => ({ id: c.id, from: r.from, to: r.to, resolved: c.resolved });
 
 // 현재 items + ranges 를 플러그인에 반영한다
@@ -105,14 +139,18 @@ function push() {
 
 // 편집 뒤 정리: 살아 있는 범위는 앵커(원문·문맥)를 새 내용으로 갱신하고, 잃은 코멘트는 다시 찾아 본다
 function refresh() {
-  if (!cur) return;
+  if (!cur || !cm.items.length) return; // 스레드가 없으면 전 문서를 훑을 까닭이 없다
   const flat = flatten(cur.ctl.doc());
   let moved = false;
   for (const c of cm.items) {
     const r = cm.ranges[c.id];
     if (r && r.from < r.to) {
       const a = anchorOf(flat, r.from, r.to);
-      if (a && (a.quote !== c.anchor.quote || a.prefix !== c.anchor.prefix || a.suffix !== c.anchor.suffix)) { c.anchor = a; persist(c.id); }
+      if (a && !sameAnchor(a, c.anchor)) {
+        const base = baseAnchor.get(c.id) ?? c.anchor;
+        c.anchor = a;
+        if (!sameAnchor(a, base)) persist(c.id); // 저장된 앵커와 달라진 스레드만 다시 쓴다
+      }
     } else {
       const loc = locate(flat, c.anchor, r?.from ?? -1);
       if (loc) { cm.ranges[c.id] = loc; moved = true; }
@@ -164,6 +202,7 @@ export function bindComments(view: EditorView, docKey: string): () => void {
       }
       cm.items = list;
       cm.ranges = ranges;
+      for (const c of list) baseAnchor.set(c.id, c.anchor);
       cm.loaded = true;
       push();
     })
@@ -271,6 +310,7 @@ function dropLocal(id: string) {
   cm.items.splice(i, 1);
   delete cm.ranges[id];
   dirty.delete(id);
+  failedPuts.delete(id);
   if (cm.pick) {
     cm.pick.ids = cm.pick.ids.filter((x) => x !== id);
     if (!cm.pick.ids.length) cm.pick = null;

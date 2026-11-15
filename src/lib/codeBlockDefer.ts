@@ -76,9 +76,14 @@ export function deferCodeMirrorDuringScroll() {
 
   // 화면 밖으로 나간 블록의 해제도 스크롤 중에는 미룬다(그 사이 다시 보이면 건너뛴다)
   const tear = proto.teardownCodeMirror;
+  // 블록당 대기 타이머는 하나만 둔다(스크롤 중 teardown 이 여러 번 불려도 1초 재시도가 쌓이지 않게)
+  const tearTimers = new WeakMap<Block, ReturnType<typeof setTimeout>>();
   const safeTear = function (this: Block) {
     if (!this.dom.isConnected) return;
-    if (scrolling) { setTimeout(() => safeTear.call(this), 1000); return; }
+    if (scrolling) {
+      if (!tearTimers.has(this)) tearTimers.set(this, setTimeout(() => { tearTimers.delete(this); safeTear.call(this); }, 1000));
+      return;
+    }
     if (nearViewport(this)) return;
     tear.call(this);
   };

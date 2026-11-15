@@ -14,35 +14,56 @@
   const HEADINGS = '.editor-wrap .ProseMirror :is(h1, h2, h3, h4, h5, h6)';
   const headingEls = () => [...document.querySelectorAll<HTMLElement>(HEADINGS)];
 
-  function scan() {
-    const next = headingEls().map((el) => ({ text: (el.textContent ?? '').trim(), level: Number(el.tagName[1]) }));
-    if (next.length !== items.length || next.some((n, i) => n.text !== items[i].text || n.level !== items[i].level)) items = next;
-    markCurrent();
+  // 제목 위치(스크롤 내용 기준 y). 스캔·리사이즈 때 한 번만 재고, 스크롤 중에는 이 캐시를 이진 탐색한다(제목마다 getBoundingClientRect 를 부르지 않는다)
+  let tops: number[] = [];
+  function measure(wrap: HTMLElement, els: HTMLElement[]) {
+    const base = wrap.getBoundingClientRect().top - wrap.scrollTop;
+    tops = els.map((el) => el.getBoundingClientRect().top - base);
   }
 
-  // 읽고 있는 위치: 화면 위쪽에 걸린 마지막 제목
-  function markCurrent() {
-    const wrap = document.querySelector<HTMLElement>('.editor-wrap');
-    if (!wrap) { current = -1; return; }
-    const top = wrap.getBoundingClientRect().top + 48;
-    let idx = -1;
-    headingEls().forEach((el, i) => { if (el.getBoundingClientRect().top <= top) idx = i; });
+  function scan(wrap: HTMLElement) {
+    const els = headingEls();
+    const next = els.map((el) => ({ text: (el.textContent ?? '').trim(), level: Number(el.tagName[1]) }));
+    if (next.length !== items.length || next.some((n, i) => n.text !== items[i].text || n.level !== items[i].level)) items = next;
+    measure(wrap, els);
+    markCurrent(wrap);
+  }
+
+  // 읽고 있는 위치: 화면 위쪽(48px)에 걸린 마지막 제목. tops 는 위에서 아래로 정렬돼 있어 이진 탐색
+  function markCurrent(wrap: HTMLElement) {
+    const line = wrap.scrollTop + 48;
+    let lo = 0, hi = tops.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (tops[mid] <= line) lo = mid + 1; else hi = mid; }
+    const idx = lo - 1;
     if (idx !== current) current = idx;
   }
 
   $effect(() => {
-    if (!active || !doc.path) { items = []; return; }
-    const wrap = document.querySelector<HTMLElement>('.editor-wrap');
-    if (!wrap) return;
+    if (!active || !doc.path) { items = []; tops = []; return; }
     let t: ReturnType<typeof setTimeout> | undefined;
-    const later = () => { clearTimeout(t); t = setTimeout(scan, 200); };
-    scan();
-    const mo = new MutationObserver(later);
-    mo.observe(wrap, { childList: true, subtree: true, characterData: true });
-    let raf = 0;
-    const onScroll = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(markCurrent); };
-    wrap.addEventListener('scroll', onScroll, { passive: true });
-    return () => { mo.disconnect(); clearTimeout(t); cancelAnimationFrame(raf); wrap.removeEventListener('scroll', onScroll); };
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let cleanup: (() => void) | undefined;
+    const attach = (wrap: HTMLElement) => {
+      const later = () => { clearTimeout(t); t = setTimeout(() => scan(wrap), 200); };
+      scan(wrap);
+      const mo = new MutationObserver(later);
+      mo.observe(wrap, { childList: true, subtree: true, characterData: true });
+      const ro = new ResizeObserver(later); // 폭이 바뀌면 줄바꿈이 달라져 제목 위치도 달라진다
+      ro.observe(wrap);
+      let raf = 0;
+      const onScroll = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => markCurrent(wrap)); };
+      wrap.addEventListener('scroll', onScroll, { passive: true });
+      cleanup = () => { mo.disconnect(); ro.disconnect(); cancelAnimationFrame(raf); wrap.removeEventListener('scroll', onScroll); };
+    };
+    // .editor-wrap 이 아직 없으면(에디터가 늦게 붙는 경우) 짧게 다시 찾는다
+    let tries = 0;
+    const find = () => {
+      const wrap = document.querySelector<HTMLElement>('.editor-wrap');
+      if (wrap) { attach(wrap); return; }
+      if (++tries < 30) retry = setTimeout(find, 100);
+    };
+    find();
+    return () => { clearTimeout(t); clearTimeout(retry); cleanup?.(); };
   });
 
   // 목차 이동: 긴 거리를 smooth 로 스크롤하는 동안 레이아웃이 바뀌면(모바일 주소창 접힘, 시트 닫힘, 지연 렌더링) 목표가 어긋난다.

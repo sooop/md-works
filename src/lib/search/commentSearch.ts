@@ -8,6 +8,8 @@ export type { CommentHit };
 
 /** 코멘트 결과 개수 상한 (전체 검색의 SEARCH_TOTAL 과 같은 크기) */
 export const COMMENT_TOTAL = 500;
+/** 스레드 파티션을 동시에 읽는 수 */
+const READ_CONCURRENCY = 6;
 
 /**
  * docs 의 각 문서(id = 스레드 파티션 docKey)에서 코멘트 메시지를 검색한다.
@@ -15,7 +17,7 @@ export const COMMENT_TOTAL = 500;
  * 상한(COMMENT_TOTAL)에 닿으면 거기서 멈춘다.
  */
 export async function searchComments(
-  store: Pick<WorksStore, 'list'>,
+  store: Pick<WorksStore, 'list' | 'parts'>,
   docs: { id: string; label: string }[],
   query: string,
   opts: { caseSensitive: boolean; regex: boolean },
@@ -24,11 +26,28 @@ export async function searchComments(
   const m = buildMatcher(query, opts);
   if (m.error !== undefined) throw new Error(m.error);
   const hits: CommentHit[] = [];
-  for (const d of docs) {
+  // 스레드가 있는 문서만 읽는다(문서마다 요청하지 않는다). 결과 순서는 docs 순서 그대로
+  const withThreads = new Set(await store.parts('threads'));
+  const targets = docs.filter((d) => withThreads.has(d.id));
+  const read = (d: { id: string }) => store.list<Thread>('threads', d.id).then((l) => l
+    .filter((t) => !t.deletedAt)
+    .sort((a, b) => a.createdAt - b.createdAt));
+  const loaded = new Map<number, Promise<Thread[]>>();
+  let started = 0;
+  // 앞쪽 문서가 상한을 채우면 뒤쪽은 읽지 않도록, 소비하는 위치보다 CONCURRENCY 개까지만 앞서 읽는다
+  const ensure = (upTo: number) => {
+    for (; started < targets.length && started <= upTo; started++) {
+      const p = read(targets[started]);
+      p.catch(() => { /* 소비할 때 던져진다 */ });
+      loaded.set(started, p);
+    }
+  };
+  for (let i = 0; i < targets.length; i++) {
     if (hits.length >= limit) break;
-    const threads = (await store.list<Thread>('threads', d.id))
-      .filter((t) => !t.deletedAt)
-      .sort((a, b) => a.createdAt - b.createdAt);
+    ensure(i + READ_CONCURRENCY - 1);
+    const d = targets[i];
+    const threads = await loaded.get(i)!;
+    loaded.delete(i);
     for (const t of threads) {
       if (hits.length >= limit) break;
       for (const msg of t.messages) {

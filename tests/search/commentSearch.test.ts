@@ -10,6 +10,7 @@ const T = (id: string, docKey: string, texts: string[], over: Partial<Thread> = 
 /** 파티션별 메모리 저장소 */
 const fake = (data: Record<string, Thread[]>) => ({
   list: (async (_c: string, part?: string) => data[part ?? ''] ?? []) as never,
+  parts: (async () => Object.keys(data).filter((k) => data[k].length)) as never,
 });
 const O = { caseSensitive: false, regex: false };
 const docs = [{ id: 'a', label: '가' }, { id: 'b', label: '나' }];
@@ -48,5 +49,28 @@ describe('searchComments', () => {
     const many = Array.from({ length: 10 }, (_, i) => T(`t${i}`, 'a', ['x']));
     const s = fake({ a: many, b: [T('tb', 'b', ['x'])] });
     expect(await searchComments(s, docs, 'x', O, 3)).toHaveLength(3);
+  });
+  it('스레드가 없는 문서는 읽지 않고, 결과는 문서 순서를 지키며, 동시에 6개까지만 읽는다', async () => {
+    const ids = Array.from({ length: 20 }, (_, i) => 'd' + i);
+    const data: Record<string, Thread[]> = {};
+    for (const id of ids) if (id !== 'd3') data[id] = [T('t-' + id, id, ['x'])];
+    let active = 0, peak = 0;
+    const read: string[] = [];
+    const s = {
+      parts: (async () => Object.keys(data)) as never,
+      // 뒤쪽 문서일수록 먼저 끝나게 해 순서가 읽기 완료 순서에 따라 흔들리지 않는지 본다
+      list: (async (_c: string, part?: string) => {
+        read.push(part!); active++; peak = Math.max(peak, active);
+        await new Promise((r) => setTimeout(r, 20 - Number(part!.slice(1))));
+        active--; return data[part!];
+      }) as never,
+    };
+    const all = [...ids.map((id) => ({ id, label: id })), { id: 'none', label: 'none' }];
+    const r = await searchComments(s, all, 'x', O);
+    expect(r.map((h) => h.docId)).toEqual(ids.filter((id) => id !== 'd3'));
+    expect(read).not.toContain('d3');
+    expect(read).not.toContain('none');
+    expect(peak).toBeLessThanOrEqual(6);
+    expect(peak).toBeGreaterThan(1);
   });
 });
