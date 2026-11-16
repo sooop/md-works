@@ -154,6 +154,7 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === 'Escape' && left.open && !viewport.mobile && !e.defaultPrevented && (document.activeElement as HTMLElement | null)?.closest('.left-sidebar')) closeLeft();
     if (searchShortcut(e, !!doc.path) === 'global') openLeft();
+    if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && !e.isComposing && e.code === 'KeyC' && doc.path) { e.preventDefault(); void copyMdCurrent(); }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p' && doc.path) {
       e.preventDefault();
       void printDoc();

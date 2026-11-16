@@ -139,8 +139,8 @@
     if (await addSnippet(body)) text = '';
   }
   function onKey(e: KeyboardEvent) {
-    // 한글 조합 중 Enter 는 글자 확정이므로 추가하지 않는다
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void add(); }
+    // Ctrl/⌘+Enter 로 담는다(Enter 는 줄바꿈). 한글 조합 중 Enter 는 글자 확정이므로 추가하지 않는다
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); void add(); }
   }
 
   function insertAtCursor(snippet: string) {
@@ -180,7 +180,7 @@
     : sn.query.trim() || sn.color ? '조건에 맞는 글감이 없습니다.'
     : sn.view === 'trash' ? '휴지통이 비어 있습니다.'
     : sn.view === 'doc' ? (doc.path ? '이 글에 꽂힌 글감이 없습니다. 위에서 적거나 모든 글감에서 핀을 꽂으세요.' : '문서를 열면 이 글에 꽂힌 글감이 보입니다.')
-    : '글감이 없습니다. 위 입력창에 적고 Enter 를 누르세요.',
+    : '글감이 없습니다. 위 입력창에 적고 Ctrl+Enter 를 누르세요.',
   );
   const hasMore = $derived(!trashView && (colorsOn || reorderable));
   /** 목록이 너무 길면 카드 들고 남·자리 이동 효과를 끈다 */
@@ -193,21 +193,21 @@
     <textarea
       bind:this={input}
       bind:value={text}
-      use:tabIndent={{ isNewline: (e) => e.shiftKey }}
+      use:tabIndent
       onkeydown={onKey}
       onpaste={onPaste}
       ondragover={(e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); }}
       ondrop={onDrop}
       rows="2"
-      placeholder="글감을 적고 Enter  ( # 제목 · @출처 · > 인용 )"
+      placeholder="글감을 적고 Ctrl+Enter  ( # 제목 · @출처 · > 인용 )"
       aria-label="새 글감"
     ></textarea>
     {#if text.trim()}
-      <p class="sn-keys" transition:slideFx aria-hidden="true"><kbd>Enter</kbd> 담기 <kbd>Shift+Enter</kbd> 줄바꿈 <kbd>Tab</kbd> 들여쓰기</p>
+      <p class="sn-keys" transition:slideFx aria-hidden="true"><kbd>Ctrl+Enter</kbd> 담기 <kbd>Tab</kbd> 들여쓰기</p>
     {/if}
     <div class="sn-row">
       <span class="spacer"></span>
-      <!-- 키보드가 없는 터치 폭에서만 보이는 글자 버튼(아이콘 없음) — 데스크톱은 Enter 로 붙인다 -->
+      <!-- 키보드가 없는 터치 폭에서만 보이는 글자 버튼(아이콘 없음) — 데스크톱은 Ctrl+Enter 로 붙인다 -->
       <button class="sn-add-m" disabled={!text.trim() || busy} onclick={add}>글감 담기</button>
     </div>
   </div>

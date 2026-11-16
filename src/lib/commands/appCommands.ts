@@ -59,7 +59,7 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     // ---- 문서 ----
     { id: 'doc.history', group: '문서', title: '이전 버전 (이력)', keywords: 'history version 복구', when: hasDoc, run: c.history },
     { id: 'doc.md', group: '문서', title: '.md 파일로 저장', keywords: 'export markdown 내보내기', when: hasDoc, run: c.exportMd },
-    { id: 'doc.copymd', group: '문서', title: '마크다운 텍스트 복사', keywords: 'copy clipboard 복사', when: hasDoc, run: c.copyMd },
+    { id: 'doc.copymd', group: '문서', title: '마크다운 텍스트 복사', shortcut: 'Ctrl+Alt+C', keywords: 'copy clipboard 복사', when: hasDoc, run: c.copyMd },
     { id: 'doc.docx', group: '문서', title: '.docx 로 내보내기', keywords: 'word export 워드', when: hasDoc, run: c.exportDocx },
     { id: 'doc.html', group: '문서', title: 'HTML 로 내보내기', keywords: 'export web 웹 html 내보내기', when: hasDoc, run: c.exportHtml },
     { id: 'doc.epub', group: '문서', title: 'EPUB 으로 내보내기', keywords: 'export ebook 전자책 epub 이펍 내보내기', when: hasDoc, run: c.exportEpub },

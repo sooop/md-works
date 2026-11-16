@@ -3,6 +3,7 @@ import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/
 import { exitCode } from '@milkdown/kit/prose/commands';
 import { EditorView as CM } from '@codemirror/view';
 import { $prose } from '@milkdown/kit/utils';
+import { attachLatexToolbar, latexMenuOpen } from './latexToolbar';
 
 // ───────── 수식 블록($$) : 코드 블록(언어 LaTeX) + KaTeX 미리보기 ─────────
 
@@ -20,6 +21,14 @@ function collapseToPreview(block: HTMLElement) {
   const host = block.querySelector<HTMLElement>('.codemirror-host');
   const toggle = block.querySelector<HTMLElement>('.preview-toggle-button');
   if (host && !host.classList.contains('hidden') && toggle) toggle.click();
+}
+
+/** 블록이 뷰포트(하단 도구줄 여유 포함) 밖에 있으면 가운데로 스크롤한다. 이미 충분히 보이면 건드리지 않는다. */
+function ensureVisible(el: HTMLElement | null) {
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  const margin = 80;
+  if (r.top < margin || r.bottom > window.innerHeight - margin) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 /** 편집 상자를 열고(미리보기 전용이면 전환) 입력 포커스를 끝에 둔다. CodeMirror 는 지연 생성되므로 잠시 재시도한다. */
@@ -40,6 +49,7 @@ function revealLatexEditor(getDom: () => HTMLElement | null, tries = 12) {
   if (!cm) return;
   cm.focus();
   cm.dispatch({ selection: { anchor: cm.state.doc.length } });
+  ensureVisible(dom);
 }
 
 /** `$$ ` 로 새 수식 블록을 만들면 편집 상자를 열고 포커스한다. 첫 글자가 들어가 미리보기가 생겨도 편집 상자가 닫히지 않게 한다.
@@ -61,7 +71,16 @@ export const latexBlockFocus = $prose(
         update(view, prev) {
           if (!view.editable) return;
           const cur = latexAt(view.state);
-          if (!cur) return;
+          if (!cur) {
+            // 새로 열린 코드 블록이 뷰포트 밖이면 스크롤한다
+            const { $from } = view.state.selection;
+            const p = prev.selection.$from;
+            if ($from.parent.type.name === 'code_block' && (p.parent !== $from.parent || p.before() !== $from.before()) && view.state.doc !== prev.doc) {
+              const pos = $from.before();
+              setTimeout(() => ensureVisible(view.nodeDOM(pos) as HTMLElement | null), 50);
+            }
+            return;
+          }
           const was = latexAt(prev);
           const wasEmpty = !!was && was.node.content.size === 0;
           const created = cur.node.content.size === 0 && !wasEmpty;
@@ -153,6 +172,9 @@ export function attachLatexKeys(view: EditorView): () => void {
     const enter = e.key === 'Enter';
     const esc = e.key === 'Escape';
     if (!enter && !esc) return;
+    // 줄바꿈 간격 추천이 열려 있으면 Esc 는 추천 닫기만 한다(수식 편집 취소로 번지지 않게)
+    if (esc && latexMenuOpen()) return; // 삽입 메뉴가 열려 있으면 메뉴만 닫는다
+    if (esc && t?.closest?.('.mo-latex-block') && document.querySelector('.cm-tooltip-autocomplete')) return;
 
     if (t?.closest?.('.milkdown-latex-inline-edit')) {
       if (enter && e.shiftKey) return;
@@ -196,6 +218,7 @@ export function attachLatexKeys(view: EditorView): () => void {
     revealLatexEditor(() => block);
   };
 
+  const detachBar = attachLatexToolbar(view.dom as HTMLElement);
   decoratePopover(view);
   const parent = view.dom.parentElement;
   const mo = parent ? new MutationObserver(() => decoratePopover(view)) : null;
@@ -209,5 +232,6 @@ export function attachLatexKeys(view: EditorView): () => void {
     document.removeEventListener('focusin', onFocusIn, true);
     view.dom.removeEventListener('dblclick', onDbl);
     mo?.disconnect();
+    detachBar();
   };
 }

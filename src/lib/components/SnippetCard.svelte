@@ -62,10 +62,10 @@
     await editSnippet(s.id, { body: body.trim(), source: undefined }); // 원전은 이제 본문의 마커 줄이다
     editing = false;
   }
-  // Enter 저장, Shift+Enter 줄바꿈(한글 조합 중 Enter 는 글자 확정이라 건드리지 않는다)
+  // Ctrl/⌘+Enter 저장, Enter 줄바꿈(한글 조합 중 Enter 는 글자 확정이라 건드리지 않는다)
   function onEditKey(e: KeyboardEvent) {
     if (e.isComposing) return;
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void saveEdit(); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void saveEdit(); }
     else if (e.key === 'Escape') { e.stopPropagation(); editing = false; }
   }
   /** 접힌 카드에서 본문이 잘렸는지 재서, 잘렸을 때만 아래쪽을 흐리게 한다(더 있다는 표시) */
@@ -178,9 +178,9 @@
       onclick={(e) => { e.stopPropagation(); void detachHere(s.id); }} ondblclick={(e) => e.stopPropagation()}><Pin size={15} /></button>
   {/if}
   {#if editing}
-    <textarea class="sn-edit" bind:this={editArea} bind:value={body} use:tabIndent={{ isNewline: (e) => e.shiftKey }} onkeydown={onEditKey} rows="4" aria-label="글감 내용" placeholder="Enter 저장 · Shift+Enter 줄바꿈 · Tab 들여쓰기 · Esc 취소  ( # 제목 · @출처 · > 인용 )"></textarea>
+    <textarea class="sn-edit" bind:this={editArea} bind:value={body} use:tabIndent onkeydown={onEditKey} rows="4" aria-label="글감 내용" placeholder="Ctrl+Enter 저장 · Tab 들여쓰기 · Esc 취소  ( # 제목 · @출처 · > 인용 )"></textarea>
     <div class="sn-ops">
-      <span class="sn-edit-keys" aria-hidden="true">Enter 저장 · Tab 들여쓰기</span>
+      <span class="sn-edit-keys" aria-hidden="true">Ctrl+Enter 저장 · Tab 들여쓰기</span>
       <button onclick={() => (editing = false)}>취소</button>
       <button class="primary" onclick={saveEdit} disabled={!body.trim()}>저장</button>
     </div>

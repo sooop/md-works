@@ -135,15 +135,15 @@
       {#if hasDoc}
         <button role="menuitem" class="mi" onclick={() => run(onHistory)}><History size={16} /><span class="t">이전 버전 (이력)</span></button>
 
+        {#if onCopyMd}<button role="menuitem" class="mi" onclick={() => run(onCopyMd)}><Copy size={16} /><span class="t">마크다운 텍스트 복사</span><kbd>Ctrl+Alt+C</kbd></button>{/if}
         <button role="menuitem" class="mi" data-sub="export" aria-haspopup="true" aria-expanded={sub === 'export'} onclick={() => flip('export')}>
           <Download size={16} /><span class="t">내보내기</span>{#if sub === 'export'}<ChevronDown size={14} class="chev" />{:else}<ChevronRight size={14} class="chev" />{/if}
         </button>
         {#if sub === 'export'}
           <div class="subgroup" role="group" aria-label="내보내기" transition:slideFx>
-            {#if onMd || onCopyMd}
+            {#if onMd}
               <span class="label">텍스트</span>
               {#if onMd}<button role="menuitem" class="mi" onclick={() => run(onMd)}><FileDown size={15} /><span class="t">.md 파일로 저장</span></button>{/if}
-              {#if onCopyMd}<button role="menuitem" class="mi" onclick={() => run(onCopyMd)}><Copy size={15} /><span class="t">마크다운 텍스트 복사</span></button>{/if}
               <hr />
             {/if}
             <span class="label">문서 파일</span>
