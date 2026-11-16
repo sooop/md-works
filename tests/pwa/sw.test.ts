@@ -78,6 +78,6 @@ describe('매니페스트', () => {
     expect(MANIFEST.start_url).toBe('./');
     expect(MANIFEST.scope).toBe('./');
     expect(MANIFEST.theme_color).toBe('#faf9f5');
-    expect(MANIFEST.icons.map((i) => i.purpose)).toEqual(['any', 'maskable']);
+    expect(MANIFEST.icons.map((i) => i.purpose)).toEqual(['any', 'any', 'maskable', 'maskable', 'any']);
   });
 });

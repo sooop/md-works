@@ -1,7 +1,7 @@
 // 정적 빌드(--mode static) 전용 Vite 플러그인: 매니페스트·아이콘·sw.js 를 산출물에 더하고 index.html 에 링크를 주입한다.
 import type { Plugin } from 'vite';
 import { buildServiceWorker, pickPrecache, versionHash, type OutFile } from './build';
-import { ICON_ANY, ICON_MASKABLE, PWA_BG } from './icons';
+import { ICON_FILES, PWA_BG, readIcon } from './icons';
 
 export const MANIFEST = {
   name: 'md-works',
@@ -13,8 +13,11 @@ export const MANIFEST = {
   theme_color: PWA_BG,
   background_color: PWA_BG,
   icons: [
+    { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+    { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+    { src: 'icon-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+    { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
-    { src: 'icon-maskable.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' },
   ],
 };
 
@@ -31,13 +34,12 @@ export function pwaPlugin(): Plugin {
     },
     generateBundle(_o, bundle) {
       this.emitFile({ type: 'asset', fileName: 'manifest.webmanifest', source: JSON.stringify(MANIFEST, null, 2) + '\n' });
-      this.emitFile({ type: 'asset', fileName: 'icon.svg', source: ICON_ANY });
-      this.emitFile({ type: 'asset', fileName: 'icon-maskable.svg', source: ICON_MASKABLE });
+      const icons = ICON_FILES.map((fileName) => ({ fileName, source: readIcon(fileName) }));
+      for (const f of icons) this.emitFile({ type: 'asset', ...f });
       const files: OutFile[] = Object.values(bundle).map((o) => ({ fileName: o.fileName, source: o.type === 'chunk' ? o.code : o.source }));
       files.push(
         { fileName: 'manifest.webmanifest', source: JSON.stringify(MANIFEST, null, 2) + '\n' },
-        { fileName: 'icon.svg', source: ICON_ANY },
-        { fileName: 'icon-maskable.svg', source: ICON_MASKABLE },
+        ...icons,
       );
       const list = pickPrecache(files).map((f) => f.fileName);
       this.emitFile({ type: 'asset', fileName: 'sw.js', source: buildServiceWorker(list, versionHash(files)) });
