@@ -61,7 +61,7 @@
   <p class="mv-title">{what} 옮길 위치</p>
   <div class="mv-list" role="menu">
     {#each targets as t, i (t.path)}
-      <button role="menuitem" class="mv-row" data-i={i} disabled={t.disabled} style:padding-left="{10 + t.depth * 14}px" onclick={() => { onClose(); onPick(t.path); }}>
+      <button role="menuitem" class="mv-row" data-i={i} disabled={t.disabled} style:padding-left="{10 + t.depth * 14}px" onclick={() => { onPick(t.path); onClose(); }}>
         {#if t.path === ''}<Home size={15} />{:else}<Folder size={15} />{/if}
         <span class="mv-name">{t.label}</span>
         {#if t.note}<small>{t.note}</small>{/if}

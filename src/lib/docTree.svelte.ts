@@ -1,8 +1,6 @@
-// 글 목록 트리의 화면 상태: 정렬 기준, 접힌 폴더, 폴더별 직접 순서. 이 브라우저에만 저장한다(번들에는 싣지 않는다).
+// 글 목록 트리의 화면 상태: 접힌 폴더, 폴더별 직접 순서(정렬은 항상 직접 정렬이고, 순서가 없는 항목만 폴더 먼저·이름순이다). 이 브라우저에만 저장한다(번들에는 싣지 않는다).
 // 서버 모드와 단일 모드는 같은 브라우저에서 번갈아 쓸 수 있어 저장 키를 모드별로 나눈다.
-import { renameInOrders, reorder, reorderMany, withParents, type OrderMap, type SortMode } from './docTree';
-
-export const SORT_LABEL: Record<SortMode, string> = { name: '이름순', mtime: '최근 수정순', manual: '직접 정렬' };
+import { renameInOrders, reorder, reorderMany, withParents, type OrderMap } from './docTree';
 
 let scope = 'standalone';
 const key = (k: string) => `works.tree.${scope}.${k}`;
@@ -11,18 +9,15 @@ const read = <T>(k: string, fallback: T): T => {
 };
 const write = (k: string, v: unknown) => { try { localStorage.setItem(key(k), JSON.stringify(v)); } catch { /* 무시 */ } };
 
-export const treeUi = $state<{ sort: SortMode; collapsed: string[]; orders: OrderMap }>({ sort: 'name', collapsed: [], orders: {} });
+export const treeUi = $state<{ collapsed: string[]; orders: OrderMap }>({ collapsed: [], orders: {} });
 
 /** 모드가 정해지면 한 번 부른다: 그 모드의 저장값을 읽는다 */
 export function initTreeUi(mode: 'server' | 'standalone') {
   scope = mode;
-  const s = read<string>('sort', 'name');
-  treeUi.sort = s === 'mtime' || s === 'manual' ? s : 'name';
   treeUi.collapsed = read<string[]>('collapsed', []);
   treeUi.orders = read<OrderMap>('orders', {});
 }
 
-export function setSort(mode: SortMode) { treeUi.sort = mode; write('sort', mode); }
 /** 폴더별 직접 순서 값을 통째로 바꾼다 */
 export function setOrders(orders: OrderMap) { treeUi.orders = orders; write('orders', orders); }
 

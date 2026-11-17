@@ -2,6 +2,8 @@
 // 키보드(Shift+F10·메뉴 키)·터치(길게 누르기)·버튼으로 열 때는 openContextMenuAt 을 쓴다.
 export interface CtxItem { label: string; run: () => void | Promise<void>; danger?: boolean; sep?: boolean }
 export const ctx = $state<{ open: boolean; x: number; y: number; items: CtxItem[] }>({ open: false, x: 0, y: 0, items: [] });
+/** 메뉴가 열린 시각. 길게 눌러 연 직후 손가락을 뗄 때의 클릭이 메뉴 항목에 떨어져 실행되는 것을 막는 데 쓴다 */
+export const ctxOpenedAt = (): number => openedAt;
 
 /** 메뉴를 연 요소: Esc 로 닫으면 포커스를 되돌린다 */
 let opener: HTMLElement | null = null;
@@ -50,11 +52,13 @@ export function longPress(node: HTMLElement, getItems: () => CtxItem[]) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sx = 0, sy = 0;
   let fired = false;
+  let touching = false; // 이번 누름이 터치인가(터치로 시작된 네이티브 끌기를 막는다)
   const cancel = () => { clearTimeout(timer); timer = undefined; };
 
   function down(e: PointerEvent) {
     fired = false;
     cancel();
+    touching = e.pointerType === 'touch';
     if (e.pointerType !== 'touch' || !e.isPrimary) return;
     if ((e.target as HTMLElement).closest('input, textarea, .ops')) return; // 이름 입력·행 단추는 제외
     sx = e.clientX; sy = e.clientY;
@@ -76,18 +80,20 @@ export function longPress(node: HTMLElement, getItems: () => CtxItem[]) {
     e.preventDefault();
     e.stopPropagation();
   }
+  // 터치는 끌어서 옮기지 않는다(길게 누르면 브라우저가 끌기를 시작해 행이 접힌 채 남는다. 옮기기는 메뉴의 '이동…' 을 쓴다)
   function dragstart(e: DragEvent) {
     cancel();
-    if (fired) e.preventDefault();
+    if (fired || touching) { e.preventDefault(); e.stopImmediatePropagation(); }
   }
 
   node.addEventListener('pointerdown', down);
   node.addEventListener('pointermove', move);
   node.addEventListener('pointerup', cancel);
+  node.addEventListener('contextmenu', (e) => { if (touching) e.preventDefault(); });
   node.addEventListener('pointercancel', cancel);
   node.addEventListener('pointerleave', cancel);
   node.addEventListener('click', click, true);
-  node.addEventListener('dragstart', dragstart);
+  node.addEventListener('dragstart', dragstart, true);
   return {
     destroy() {
       cancel();
@@ -97,7 +103,7 @@ export function longPress(node: HTMLElement, getItems: () => CtxItem[]) {
       node.removeEventListener('pointercancel', cancel);
       node.removeEventListener('pointerleave', cancel);
       node.removeEventListener('click', click, true);
-      node.removeEventListener('dragstart', dragstart);
+      node.removeEventListener('dragstart', dragstart, true);
     },
   };
 }

@@ -1,13 +1,8 @@
 <script lang="ts">
-  // 글 목록: 파일명 찾기 + 정렬 기준 선택 + 폴더 트리. 서버 모드와 단일 모드가 같이 쓰고, 모드별 동작은 ctl 로 받는다.
+  // 글 목록: 파일명 찾기 + 폴더 트리(순서는 항상 직접 정렬). 서버 모드와 단일 모드가 같이 쓰고, 모드별 동작은 ctl 로 받는다.
   import { onDestroy, setContext, tick, untrack } from 'svelte';
   import Search from '@lucide/svelte/icons/search';
   import X from '@lucide/svelte/icons/x';
-  import ArrowDownAZ from '@lucide/svelte/icons/arrow-down-a-z';
-  import Clock from '@lucide/svelte/icons/clock';
-  import Hand from '@lucide/svelte/icons/hand';
-  import Check from '@lucide/svelte/icons/check';
-  import ListFilter from '@lucide/svelte/icons/list-filter';
   import FolderInput from '@lucide/svelte/icons/folder-input';
   import Download from '@lucide/svelte/icons/download';
   import Trash2 from '@lucide/svelte/icons/trash-2';
@@ -23,8 +18,8 @@
   import { stripExt } from '../utils';
   import { renamedPaths as matchRenames, type TreeInfo } from '../treeRename';
   import { toast, errMsg } from '../store.svelte';
-  import { sortTree, ordersOf, type DocNode, type SortMode } from '../docTree';
-  import { treeUi, setSort, setOrders, SORT_LABEL, treeNav, treeKb, onActiveChange, isCollapsed, toggleFolder, expandFolder } from '../docTree.svelte';
+  import { sortTree, type DocNode } from '../docTree';
+  import { treeUi, treeNav, treeKb, onActiveChange, isCollapsed, toggleFolder, expandFolder } from '../docTree.svelte';
   import { tsel, setVisible, prune, reset as resetSel, clear as clearSel, setMode, selectAll, extendTo, moveAnchor } from '../treeSelect.svelte';
   import { pickedRoots, movableTo, dirOf } from '../treeSelect';
   import { flattenVisible, navigate, moveTargetsMany, indexOfPath, NAV_KEYS } from '../treeKeys';
@@ -84,15 +79,8 @@
       indEl.style.height = '3px';
     }
   };
-  let sortOpen = $state(false);
-
-  const sorted = $derived(sortTree(nodes, treeUi.sort, treeUi.orders));
-  // 이름순·수정일순은 정렬 방법이면서 직접 순서의 출발점이기도 하다: 지금 보이는 순서를 직접 순서 값으로 조용히 옮겨 둔다
-  dndUi.seedOrders = () => setOrders(ordersOf(sorted));
-  function chooseSort(mode: SortMode) {
-    if (mode !== 'manual') setOrders(ordersOf(sortTree(nodes, mode, {})));
-    setSort(mode);
-  }
+  // 항상 직접 정렬: 저장된 순서가 있는 항목은 그 순서대로, 없는 항목(처음·새로 생긴 것)은 폴더 먼저·이름순으로 뒤에 붙는다
+  const sorted = $derived(sortTree(nodes, 'manual', treeUi.orders));
 
   /** 파일명 검색: 폴더 경로까지 이어 붙인 이름이 일치하면 남긴다(폴더는 일치하는 하위 항목이 있을 때만) */
   function filterNodes(list: DocNode[], q: string, prefix = ''): DocNode[] {
@@ -357,13 +345,6 @@
     return list.map((n) => n.name);
   }
 
-  const SORTS: { id: SortMode; icon: typeof Clock; desc: string }[] = [
-    { id: 'name', icon: ArrowDownAZ, desc: '폴더가 먼저, 이름의 가나다·숫자 순' },
-    { id: 'mtime', icon: Clock, desc: '가장 최근에 고친 글이 위로' },
-    { id: 'manual', icon: Hand, desc: '끌어서 순서를 정합니다(폴더별로 기억)' },
-  ];
-  const current = $derived(SORTS.find((s) => s.id === treeUi.sort) ?? SORTS[0]);
-
   // 빈 곳(행이 아닌 목록 바탕)에 놓으면 최상위로 옮긴다
   const draggedNodes = (): DocNode[] => (drag.nodes?.length ? drag.nodes : drag.node ? [drag.node] : []);
   function onRootOver(e: DragEvent) {
@@ -391,25 +372,8 @@
 
 <div class="filterbox">
   <Search size={14} />
-  <input bind:value={typed} oninput={onFilterInput} placeholder="파일 이름 검색 (초성 가능)" aria-label="파일 이름 검색" spellcheck="false" />
+  <input bind:value={typed} oninput={onFilterInput} onkeydown={(e) => { if (e.key === 'Escape' && !e.isComposing && typed) { e.preventDefault(); e.stopPropagation(); clearTimeout(filterTimer); filterTimer = undefined; typed = ''; filter = ''; } }} placeholder="파일 이름 검색 (초성 가능)" aria-label="파일 이름 검색" spellcheck="false" />
   {#if typed}<button class="icon-btn" use:tip={'지우기'} aria-label="검색어 지우기" onclick={() => { clearTimeout(filterTimer); filterTimer = undefined; typed = ''; filter = ''; }}><X size={14} /></button>{/if}
-  <Pop bind:open={sortOpen} label="정렬 기준" width={290}>
-    {#snippet trigger({ toggle, open })}
-      <button class="icon-btn" class:on={open} aria-haspopup="dialog" aria-expanded={open} aria-label="정렬 기준: {SORT_LABEL[treeUi.sort]}"
-        use:tip={{ title: SORT_LABEL[treeUi.sort], lines: ['눌러서 정렬 기준 바꾸기'] }} onclick={toggle}>
-        <current.icon size={14} />
-      </button>
-    {/snippet}
-    {#snippet children({ close })}
-      {#each SORTS as s (s.id)}
-        <button class="pop-row" class:on={treeUi.sort === s.id} onclick={() => { chooseSort(s.id); close(); }}>
-          <s.icon size={18} />
-          <span class="txt"><b>{SORT_LABEL[s.id]}</b><small>{s.desc}</small></span>
-          {#if treeUi.sort === s.id}<Check size={15} />{/if}
-        </button>
-      {/each}
-    {/snippet}
-  </Pop>
   <TreeSelectToggle size={14} />
 </div>
 {#if tsel.picked.length}

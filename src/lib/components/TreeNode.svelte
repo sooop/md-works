@@ -24,7 +24,7 @@
   import { tip } from '../tooltip.svelte';
   import { openContextMenu, openContextMenuAt, longPress, ctx } from '../contextmenu.svelte';
   import { highlight } from '../search/nameMatch';
-  import { isCollapsed, toggleFolder, expandFolder, treeUi, treeNav, treeKb, moveInOrder, moveManyInOrder, setSort } from '../docTree.svelte';
+  import { isCollapsed, toggleFolder, expandFolder, treeNav, treeKb, moveInOrder, moveManyInOrder } from '../docTree.svelte';
   import { splitPath, type DocNode } from '../docTree';
   import { exportFolder } from '../folderExportUi';
   import { TREE_CTL, dndUi, kbUi, selUi, type DragState, type TreeCtl } from './treeCtl';
@@ -77,10 +77,26 @@
       ...(ctl.removeMany ? [{ label: `${n}개 휴지통으로 이동`, run: () => selUi.remove(), danger: true, sep: true }] : []),
     ];
   });
+  // 같은 폴더 안에서 한 칸 위·아래로(끌어 놓기의 대체 경로: 터치·키보드). 메뉴에는 움직일 수 있는 방향만 넣는다
+  const slot = $derived.by(() => {
+    const cur = siblings(parent);
+    const i = cur.indexOf(node.name);
+    return { cur, i, canUp: i > 0, canDown: i >= 0 && i < cur.length - 1 };
+  });
+  function shift(delta: -1 | 1) {
+    const { cur, i } = slot;
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= cur.length) return;
+    const rest = cur.filter((n) => n !== node.name);
+    moveInOrder(parent, cur, node.name, rest[j]); // rest[j] 가 없으면 맨 뒤
+    void tick().then(() => kbUi.focus(node.path));
+  }
   const singleItems = $derived([
     ...(node.type === 'dir' ? [{ label: '새 문서', run: () => ctl.createDoc(node.path) }, { label: '새 폴더', run: () => ctl.createFolder(node.path) }] : []),
     { label: '이름 변경', run: () => { renaming = true; }, sep: node.type === 'dir' },
     { label: '이동…', run: () => kbUi.moveTo(node, { x: ctx.x, y: ctx.y }, nameEl) },
+    ...(slot.canUp ? [{ label: '위로 올리기', run: () => shift(-1) }] : []),
+    ...(slot.canDown ? [{ label: '아래로 내리기', run: () => shift(1) }] : []),
     ...(node.type === 'dir' ? [
       { label: '내보내기 · 백업 JSON', run: () => void exportFolder('json', node) },
       { label: '내보내기 · MD 압축(zip)', run: () => void exportFolder('zip', node) },
@@ -113,6 +129,7 @@
     // Ctrl+Space(선택 모드에서는 Space)는 선택 토글
     if (e.key === ' ' && (e.ctrlKey || tsel.mode) && !e.altKey && !e.metaKey && !e.shiftKey) { e.preventDefault(); togglePick(node.path); return; }
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); run(); return; }
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !filter.trim()) { e.preventDefault(); shift(e.key === 'ArrowUp' ? -1 : 1); return; } // Alt+↑/↓: 순서 바꾸기
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.key === 'F2' && !e.shiftKey) { e.preventDefault(); renaming = true; }
     else if (e.key === 'Delete' && !e.shiftKey) { e.preventDefault(); void removeByKey(); }
@@ -158,7 +175,6 @@
   }
 
   // ---- 끌어서 옮기기·순서 바꾸기 ----
-  const manual = $derived(treeUi.sort === 'manual');
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   const isSelfOrChild = (src: DocNode, destDir: string) => src.type === 'dir' && (destDir === src.path || destDir.startsWith(src.path + '/'));
 
@@ -262,8 +278,6 @@
     // 안내 줄은 위치가 선만으로 알 수 없는 경우에만 쓴다(같은 문장이면 다시 대입해도 화면은 바뀌지 않는다)
     if (pos === 'into') drag.hint = `${many}'${node.name}' 폴더 안으로 옮깁니다`;
     else if (srcs.some((s) => dirOf(s) !== dest)) drag.hint = `${many}${where}로 옮깁니다`;
-    else if (srcs.some((s) => s.type !== node.type) && !manual && srcs.length === 1) drag.hint = '놓으면 정렬이 직접 정렬로 바뀝니다';
-    else if (srcs.length > 1 && !manual) drag.hint = '놓으면 정렬이 직접 정렬로 바뀝니다';
     else drag.hint = '';
     // 접힌 폴더 위에 잠깐 머물면 펼친다
     clearTimeout(hoverTimer);
@@ -324,9 +338,7 @@
     if (many) { if (movable.length) await selUi.moveNodes(movable, dest); }
     else if (dest !== srcDir) await ctl.move(src, dest);
     // 형제 사이에 놓으면(폴더 안으로 넣는 경우 제외) 그 자리에 끼워 넣는다. 글·폴더 혼합, 여러 개도 상대 순서를 유지한다.
-    // 이름순·수정일순에서 놓았으면 보이던 순서를 출발점으로 삼아 '직접 정렬'로 바꾼다.
     if (!into) {
-      if (!manual) dndUi.seedOrders(); // 모든 폴더의 보이던 순서를 직접 순서의 출발점으로(확인 없이 조용히)
       const current = siblings(dest); // 놓기 직전 화면에 보이던 순서
       if (many) {
         const names = srcs.map((s) => s.name).filter((n) => current.includes(n)); // 실제로 이 폴더에 와 있는 것만
@@ -339,7 +351,6 @@
         const before = pos === 'before' ? node.name : sib[at + 1];
         moveInOrder(dest, current, src.name, before);
       }
-      if (!manual) setSort('manual');
     }
   }
 </script>

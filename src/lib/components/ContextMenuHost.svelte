@@ -2,7 +2,7 @@
   // 우클릭 메뉴를 그리는 단일 호스트(App 에 한 번만 둔다). 바깥 클릭·Esc·스크롤·창 전환으로 닫는다.
   // 키: ↑/↓ 이동(끝에서 돌아감), Home/End, Esc 는 닫고 메뉴를 연 요소로 포커스 복귀, Tab 은 닫는다.
   import { tick } from 'svelte';
-  import { ctx, closeContextMenu } from '../contextmenu.svelte';
+  import { ctx, ctxOpenedAt, closeContextMenu } from '../contextmenu.svelte';
   import { hideTip } from '../tooltip.svelte';
   import { popFx } from '../motion';
 
@@ -37,6 +37,7 @@
     btns[to]?.focus();
   }
   function run(fn: () => void | Promise<void>) {
+    if (performance.now() - ctxOpenedAt() < 350) return; // 길게 눌러 연 직후 손가락을 뗄 때의 클릭은 항목을 고른 것이 아니다
     closeContextMenu();
     void fn();
   }
