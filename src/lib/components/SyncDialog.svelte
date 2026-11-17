@@ -20,8 +20,7 @@
   import { formatAgo } from '../bundle/backupLogic';
   import ModalClose from './ModalClose.svelte';
   import Switch from './Switch.svelte';
-  import { LIMITS } from '../sync/protocol';
-  import { phaseLabel, phaseTone, problemTitle, usageRatio, isNearLimit, groupKeyInput } from '../sync/syncLabels';
+  import { LIMITS, phaseLabel, phaseTone, problemTitle, usageRatio, isNearLimit, groupKeyInput } from 'sync-kit';
   import {
     sync, syncUi, SyncInputError, connectNew, connectExisting, disconnect, clearSyncMeta, pause, resume, syncNow, resolveResync, resolveMassDelete,
   } from '../sync/state.svelte';

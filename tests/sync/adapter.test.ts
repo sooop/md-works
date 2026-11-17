@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { standaloneDevice } from '../bundle/helpers';
 import { createSyncAdapter, docItemId, snippetItemId, threadItemId } from '../../src/lib/sync/adapter';
 import { contentHash } from '../../src/lib/bundle/merge';
-import { ITEM_ID_RE, type DocData, type LocalItem, type SnippetData, type ThreadData } from '../../src/lib/sync/protocol';
+import { ITEM_ID_RE, type LocalItem } from 'sync-kit';
+import type { DocData, SnippetData, ThreadData } from '../../src/lib/sync/appTypes';
 import type { Snippet, Thread, Version } from '../../src/lib/works/types';
 
 function device() {

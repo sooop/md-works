@@ -1,9 +1,12 @@
-// 동기화 반응형 상태·설정 저장. 엔진(engine.ts)·어댑터(adapter.ts)·메타(metaStore.ts)는 동적 import 로 만든다(buildEngine 한 곳).
+// 동기화 반응형 상태·설정 저장. 엔진·메타는 sync-kit 패키지, 어댑터(adapter.ts)는 동적 import 로 만든다(buildEngine 한 곳).
 // 설정은 localStorage 'works.sync'({workerUrl, syncKey, inviteCode?, enabled})에만 둔다.
 // 동기화 키·Worker 주소·초대 코드는 번들·내보내기·백업에 절대 포함하지 않는다(backupState 의 텔레그램 토큰과 같은 원칙).
 import { bundleHost } from '../bundle/host';
-import { generateSyncKey, normalizeSyncKey, formatSyncKey } from './keys';
-import type { SyncAdapter, SyncConfig, SyncEngine, SyncMetaStore, SyncStatus } from './protocol';
+import {
+  createIdbMetaStore, createSyncEngine, formatSyncKey, generateSyncKey, normalizeSyncKey,
+  type SyncAdapter, type SyncConfig, type SyncEngine, type SyncMetaStore, type SyncStatus,
+} from 'sync-kit';
+import { APP_ID } from './appTypes';
 
 const KEY = 'works.sync';
 
@@ -65,20 +68,16 @@ let generation = 0; // 엔진을 만드는 중에 설정이 바뀌면 이전 요
 
 /**
  * 다른 모듈이 만들어 주는 부품을 모아 엔진을 만든다. 시그니처를 가정한 곳은 여기뿐이다.
- *  - createSyncEngine(opts: SyncEngineOptions): SyncEngine                (./engine)
+ *  - createSyncEngine(opts: SyncEngineOptions): SyncEngine                (sync-kit)
  *  - createSyncAdapter(deps: { host: BundleHost; store: WorksStore }): SyncAdapter  (./adapter)
- *  - createIdbMetaStore(): SyncMetaStore                                   (./metaStore)
+ *  - createIdbMetaStore(dbName): SyncMetaStore                             (sync-kit; 기본 DB 이름 'works-sync' 를 명시해 기존 기기의 메타를 유지한다)
  */
 async function buildEngine(config: SyncConfig): Promise<SyncEngine> {
-  const [{ createSyncEngine }, { createSyncAdapter }, { createIdbMetaStore }] = await Promise.all([
-    import('./engine'),
-    import('./adapter'),
-    import('./metaStore'),
-  ]);
+  const { createSyncAdapter } = await import('./adapter');
   const host = bundleHost();
   const adapter: SyncAdapter = createSyncAdapter({ host, store: host.store });
-  const meta: SyncMetaStore = createIdbMetaStore();
-  return createSyncEngine({ config, adapter, meta });
+  const meta: SyncMetaStore = createIdbMetaStore('works-sync');
+  return createSyncEngine({ appId: APP_ID, config, adapter, meta });
 }
 
 function stopEngine() {
@@ -188,8 +187,7 @@ export function disconnect(): void {
 
 /** 로컬 동기화 메타(커서·항목별 rev)를 지운다. 다른 공간에 새로 연결하기 전에 쓴다 */
 export async function clearSyncMeta(): Promise<void> {
-  const { createIdbMetaStore } = await import('./metaStore');
-  const meta: SyncMetaStore = createIdbMetaStore();
+  const meta: SyncMetaStore = createIdbMetaStore('works-sync');
   await meta.clear();
 }
 

@@ -14,13 +14,18 @@ import { createDocDb, type DocDb, type DocRec } from '../works/docDb';
 import type { WorksStore } from '../works/store';
 import { compress } from '../history/compress';
 import type { Snippet, SnippetColor, Thread, Version } from '../works/types';
-import type { DocData, ItemKind, LocalItem, SnippetData, SyncAdapter, ThreadData } from './protocol';
+import type { ItemKind, LocalItem, SyncAdapter } from 'sync-kit';
+import type { DocData, SnippetData, ThreadData } from './appTypes';
 
 // ───────── 항목 id ─────────
 const MAX_ID = 62;
 function prefixed(prefix: string, id: string): string {
   const s = prefix + id;
   return s.length <= MAX_ID ? s : prefix + contentHash(id);
+}
+/** id 접두로 종류를 알려 준다(이전 엔진의 추정 규칙과 같다): 's-' 글감, 't-' 스레드, 그 외 글. 해시로 줄인 id 도 접두는 같다 */
+export function kindOfId(id: string): ItemKind {
+  return id.startsWith('s-') ? 'snippet' : id.startsWith('t-') ? 'thread' : 'doc';
 }
 /** 글: 'd' + contentHash(이름 소문자). 이름은 폴더 포함 전체 경로 */
 export const docItemId = (name: string): string => `d${contentHash(name.toLowerCase())}`;
@@ -209,12 +214,13 @@ export function createSyncAdapter(deps: SyncAdapterDeps): SyncAdapter {
     }
   }
 
-  const KIND_APPLY: Record<ItemKind, (item: LocalItem) => Promise<'applied' | 'deferred'>> = {
+  const KIND_APPLY: Record<string, (item: LocalItem) => Promise<'applied' | 'deferred'>> = {
     doc: applyDoc, snippet: applySnippet, thread: applyThread,
   };
 
   return {
     listLocal,
+    kindOfId,
     apply: (item) => applying(() => KIND_APPLY[item.kind](item)),
     async preserveLoser(item) {
       if (item.kind !== 'doc' || !item.data) return;

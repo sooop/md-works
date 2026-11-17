@@ -2,21 +2,12 @@
 // 동기화 전 구간 통합: 실제 서버 핸들러(+D1 shim) · 실제 코덱/키 · 실제 전송 · 실제 엔진/메타 저장소 · 실제 어댑터(+fake-indexeddb).
 import { describe, expect, it } from 'vitest';
 import { standaloneDevice } from '../bundle/helpers';
-import { D1Shim } from '../../sync-worker/test/d1shim';
+import { handleRequest, type Env } from 'sync-kit/handler';
+import { D1Shim } from 'sync-kit/testing';
 import { createSyncAdapter, docItemId, snippetItemId, threadItemId } from '../../src/lib/sync/adapter';
-import { createSyncEngine } from '../../src/lib/sync/engine';
-import { createIdbMetaStore } from '../../src/lib/sync/metaStore';
-import { createCodec } from '../../src/lib/sync/codec';
-import { deriveKeys, generateSyncKey } from '../../src/lib/sync/keys';
-import { createTransport } from '../../src/lib/sync/transport';
-import { APP_ID, type SyncRequest, type SyncResponse } from '../../src/lib/sync/protocol';
+import { createCodec, createIdbMetaStore, createSyncEngine, createTransport, deriveKeys, generateSyncKey, type SyncRequest, type SyncResponse } from 'sync-kit';
+import { APP_ID } from '../../src/lib/sync/appTypes';
 import type { Snippet, Thread } from '../../src/lib/works/types';
-
-// sync-worker 의 소스는 '.ts' 확장자로 서로 import 해 루트 tsconfig(svelte-check)가 받아들이지 못한다. 런타임에만 읽는다.
-interface Env { DB: unknown; INVITE_CODE?: string; ALLOWED_APPS?: string; [k: string]: unknown }
-type HandleRequest = (request: Request, env: Env, deps?: { now?: () => number; random?: () => number }) => Promise<Response>;
-const HANDLER_PATH = '../../sync-worker/src/handler.ts';
-const { handleRequest } = (await import(/* @vite-ignore */ HANDLER_PATH)) as { handleRequest: HandleRequest };
 
 const URL_BASE = 'https://sync.test';
 const INVITE = 'invite-code';
@@ -61,7 +52,7 @@ async function makeDevice(server: Server, syncKey: string, opts: { invite?: bool
   const meta = createIdbMetaStore(`works-sync-it-${seqN++}`);
   const engine = createSyncEngine({
     config: { workerUrl: URL_BASE, syncKey, ...(opts.invite === false ? {} : { inviteCode: INVITE }) },
-    adapter, meta, codec: createCodec(keys.encKey), transport, autoSchedule: false,
+    appId: APP_ID, adapter, meta, codec: createCodec(keys.encKey), transport, autoSchedule: false,
   });
   return { dev, adapter, meta, engine, keys };
 }
@@ -302,6 +293,7 @@ describe('동기화 전 구간 통합', () => {
     const meta = createIdbMetaStore(`works-sync-it-${seqN++}`);
     const dev = standaloneDevice();
     const wrong = createSyncEngine({
+      appId: APP_ID,
       config: { workerUrl: URL_BASE, syncKey: 'unused', inviteCode: INVITE },
       adapter: createSyncAdapter({ host: dev.host, dbName: dev.dbName }), meta, codec: createCodec(keys.encKey),
       transport: createTransport({ workerUrl: URL_BASE, appId: APP_ID, spaceId: A.keys.spaceId, authToken: keys.authToken }, server.fetch),
@@ -323,6 +315,7 @@ describe('동기화 전 구간 통합', () => {
     const other = await deriveKeys(generateSyncKey(), APP_ID);
     const dev = standaloneDevice();
     const e = createSyncEngine({
+      appId: APP_ID,
       config: { workerUrl: URL_BASE, syncKey: key },
       adapter: createSyncAdapter({ host: dev.host, dbName: dev.dbName }), meta: createIdbMetaStore(`works-sync-it-${seqN++}`),
       codec: createCodec(other.encKey),

@@ -44,6 +44,7 @@
     "@milkdown/kit": "^7.22.3",
     "fflate": "^0.8.3",
     "js-yaml": "^4.3.2",
+    "sync-kit": "file:../sync-kit",
     "pandoc-wasm": "^1.1.0"
   }
 }
