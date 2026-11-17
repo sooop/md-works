@@ -32,6 +32,8 @@ export interface AppCommandCtx {
   images?: (to: 'base64' | 'file') => void;
   settings: () => void;
   backup: () => void;
+  /** 기기 간 동기화 대화상자(스탠드얼론만) */
+  sync?: () => void;
 }
 
 const hasDoc = () => !!doc.path;
@@ -92,6 +94,7 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
     { id: 'view.system', group: '보기', title: '테마: 시스템 설정 따르기', keywords: 'theme system auto', run: () => setTheme('system') },
     { id: 'app.settings', group: '앱', title: '설정', keywords: 'settings preferences 환경설정 디자인 테마 글꼴', run: c.settings },
     { id: 'app.backup', group: '앱', title: '백업 · 가져오기', keywords: 'backup import export 번들 복원', run: c.backup },
+    ...(c.sync ? [{ id: 'app.sync', group: '앱', title: '기기 간 동기화', keywords: 'sync 동기화 기기 클라우드 키 worker', run: c.sync }] : []),
 
     // ---- 서식(편집기) ----
     fmt('bold', '굵게', 'bold', 'Ctrl+B', 'bold strong'),

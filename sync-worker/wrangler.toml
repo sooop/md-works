@@ -1,0 +1,18 @@
+name = "md-works-sync"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "md-works-sync"
+database_id = "afde90b6-0a74-4fe7-94a4-63f3dd4e14a8"
+
+# INVITE_CODE 는 secret 이다: npx wrangler secret put INVITE_CODE
+[vars]
+ALLOWED_APPS = "md-works"
+MAX_ITEM_BYTES = "262144"
+MAX_SPACE_BYTES = "5242880"
+MAX_SPACES = "60"
+MAX_ITEMS_PER_SPACE = "1000"
+MAX_DAILY_WRITES = "300"
+TOMBSTONE_DAYS = "30"

@@ -26,7 +26,8 @@ import { startTabSync, notifyTabs, onTabMessage, runExclusive } from './works/ta
 import { useBackend, flushComments } from './comments/store.svelte';
 import { sanitize, type Comment } from './comments/anchor';
 import { useWorksStore, worksStore } from './works/store';
-import { markChanged, divertBundleDrop } from './bundle/backupState.svelte';
+import { markChanged, onChanged, divertBundleDrop } from './bundle/backupState.svelte';
+import { notifyLocalChange, startSyncIfConfigured } from './sync/state.svelte';
 import { commentToThread, listThreads, threadToComment } from './comments/threads';
 import { createIdbStore } from './works/idbStore';import { useBundleHost } from './bundle/host';
 import { recordDocGone, clearDocGone } from './bundle/tombstones';
@@ -415,6 +416,9 @@ export async function init() {
   } catch (e) {
     toast(`보관소를 열지 못했습니다: ${errMsg(e)}`, 'error');
   }
+  // 기기 간 동기화: 설정이 있으면 시작한다. 로컬 변경은 백업의 변경 기록과 함께 알린다
+  onChanged(notifyLocalChange);
+  void startSyncIfConfigured();
 }
 
 // 번들을 가져온 뒤: IndexedDB 의 문서를 메모리 사본으로 다시 읽고, 열린 문서가 바뀌었으면 편집기를 갱신한다

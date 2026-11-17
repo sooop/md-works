@@ -93,8 +93,12 @@ let persistTimer: ReturnType<typeof setTimeout> | undefined;
  */
 let preparing = 0;
 /** 글 저장·글감/이력/스레드 쓰기에서 호출한다. 입력마다 저장소를 두드리지 않도록 기록은 2초 묶어서 한다. */
+let changeHook: (() => void) | undefined;
+/** 변경 기록과 함께 알림을 받는다(동기화가 로컬 변경을 알아채는 데 쓴다). onWorksWrite 는 단일 리스너라 여기서 나눠 준다 */
+export function onChanged(fn: () => void) { changeHook = fn; }
 export function markChanged() {
   if (preparing > 0) return;
+  changeHook?.();
   backup.lastChange = Date.now();
   clearTimeout(persistTimer);
   persistTimer = setTimeout(persist, 2000);

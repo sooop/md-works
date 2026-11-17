@@ -31,6 +31,7 @@
   import { left, viewport, isDocked, toggleLeft, openLeft, closeLeft, togglePin, setLeftWidth, LEFT_W, rightPeek } from '../sidebar/state.svelte';
   import { edgeHover, peekPanel } from '../sidebar/peek';
   import { backupUi, isStale } from '../bundle/backupState.svelte';
+  import { syncUi } from '../sync/state.svelte';
   import SnippetShortcuts from './SnippetShortcuts.svelte';
   import PanelShortcuts from './PanelShortcuts.svelte';
   import FindBar from './FindBar.svelte';
@@ -81,6 +82,8 @@
   // 가끔 쓰는 화면은 처음 열 때 받는다. 열림 상태가 true 가 되는 즉시 받기 시작하고, 받은 뒤에는 계속 마운트해 닫힘 애니메이션을 유지한다.
   // 실패하면 토스트로 알리고 열림 상태를 되돌린다(lazyComponent)
   const backupDlg = lazyComponent(() => import('./BackupDialog.svelte'));
+  const syncDlg = lazyComponent(() => import('./SyncDialog.svelte'));
+  $effect(() => { if (syncUi.open) syncDlg.load(() => (syncUi.open = false)); });
   const settingsDlg = lazyComponent(() => import('./Settings.svelte'));
   const historyDlg = lazyComponent(() => import('./HistoryPanel.svelte'));
   const trashView = lazyComponent(() => import('./TrashPanel.svelte'));
@@ -116,6 +119,7 @@
     deleteDoc: () => { const m = metaOf(doc.path); if (m) void removeDoc(m); },
     settings: () => { settingsOpen = true; },
     backup: () => { backupUi.open = true; },
+    sync: () => { syncUi.open = true; },
   };
   const paletteCommands = buildAppCommands(paletteCtx);
 
@@ -253,6 +257,7 @@
         />
       <RightToggle />
       {#if backupDlg.Comp}{@const Backup = backupDlg.Comp}<Backup trigger={false} />{/if}
+      {#if syncDlg.Comp}{@const SyncDlg = syncDlg.Comp}<SyncDlg />{/if}
       {#if settingsDlg.Comp}{@const SettingsDlg = settingsDlg.Comp}<SettingsDlg trigger={false} bind:open={settingsOpen} />{/if}
     </header>
 
