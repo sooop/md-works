@@ -26,6 +26,9 @@
     FOLDER_DEFAULT_MINUTES, type FolderBackup, type BackupTab,
   } from '../bundle/backupState.svelte';
 
+  import { phaseLabel, phaseTone } from 'sync-kit';
+  import { sync, syncUi, pause as pauseSync, resume as resumeSync } from '../sync/state.svelte';
+
   let { server = false, trigger = true }: { server?: boolean; trigger?: boolean } = $props();
 
   const hasKey = keyAvailable();
@@ -337,7 +340,12 @@
   const folderStatus = $derived(pathStatus('folder'));
   const exportStatus = $derived(pathStatus('export'));
   // '자동 백업' 탭에 문제가 있으면 탭 제목에 점을 단다
-  const autoProblem = $derived(isFailing(tgStatus) || telegramStale() || (server && isFailing(folderStatus)));
+  // 기기 간 동기화는 스탠드얼론에서만 있다. 자동 동기화는 켜고 끄기만 여기서 하고, 연결·키·사용량은 동기화 대화상자(다른 모달)에서 다룬다
+  const syncConnected = $derived(!server && !!sync.config);
+  const syncTone = $derived(phaseTone(sync.status.phase));
+  const syncProblem = $derived(syncConnected && sync.enabled && sync.status.phase === 'error');
+  const toggleSync = (on: boolean) => { if (on) resumeSync(); else pauseSync(); };
+  const autoProblem = $derived(isFailing(tgStatus) || telegramStale() || (server && isFailing(folderStatus)) || syncProblem);
 </script>
 
 {#snippet statusLine(label: string, s: PathStatus, stale = false)}
@@ -369,6 +377,22 @@
         마지막 백업: <b>{lastBackupAt() ? `${fmtTime(lastBackupAt())} (${ago(lastBackupAt())})` : '없음'}</b>
         {#if hasUnbacked()}<span class="warn"> · 이후 변경이 있습니다</span>{:else if lastBackupAt()}<span class="ok"> · 최신 상태입니다</span>{/if}
       </p>
+
+      {#if !server}
+        <!-- 기기 간 동기화: 탭과 무관한 독립 영역. 상태·자동 토글만 여기서 다루고 연결·키·사용량은 상세 관리 패널에서 한다 -->
+        <section class="syncbox" aria-labelledby="bk-h-sync">
+          <div class="syncrow">
+            <h3 id="bk-h-sync">기기 간 동기화</h3>
+            <button class="small" disabled={!!busy} onclick={() => (syncUi.open = true)}>{syncConnected ? '상세 관리 패널 열기' : '연결하기…'}</button>
+          </div>
+          {#if syncConnected}
+            <p class="line" class:ok={syncTone === 'ok'} class:warn={syncProblem}>{phaseLabel(sync.status)}{#if sync.status.lastSyncAt}<span class="hint"> · 마지막 동기화 {ago(sync.status.lastSyncAt)}</span>{/if}</p>
+            <Switch checked={sync.enabled} onchange={toggleSync}>자동 동기화 (끄면 멈춥니다)</Switch>
+          {:else}
+            <p class="hint">같은 키를 쓰는 기기끼리 글·글감·코멘트를 암호화해 공유합니다. 아직 연결되지 않았습니다.</p>
+          {/if}
+        </section>
+      {/if}
 
       <div class="sidetabs bk-tabs" role="tablist" aria-label="백업 구분">
         {#each TABS as t (t.id)}
@@ -612,6 +636,9 @@
   .dialog.backup { display: flex; flex-direction: column; height: min(680px, calc(100dvh - 32px)); overflow: hidden; }
   .dialog.backup .dlg-head { flex: none; }
   .summary { flex: none; margin-bottom: 10px !important; }
+  .syncbox { flex: none; padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); gap: 6px; }
+  .syncbox:first-child { border-top: 1px solid var(--border); }
+  .syncrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
   .bk-tabs { flex: none; padding: 0; }
   .bk-tabs button { position: relative; }
   .tab-dot { display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--danger); vertical-align: middle; }
