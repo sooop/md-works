@@ -28,6 +28,8 @@
   import { openPalette } from '../commands/registry.svelte';
   import { tip } from '../tooltip.svelte';
   import { savePdf } from '../export/pdf';
+  import { cm } from '../comments/store.svelte';
+  import MessageSquareText from '@lucide/svelte/icons/message-square-text';
   import { popFx, slideFx } from '../motion';
   interface Props {
     /** 열린 문서가 있는가 — 없으면 문서 관련 항목(이력·내보내기·도구)을 숨긴다 */
@@ -153,6 +155,7 @@
             <hr />
             <span class="label">인쇄·PDF</span>
             <button role="menuitem" class="mi" onclick={() => run(() => void savePdf())}><FileOutput size={15} /><span class="t">PDF로 저장(인쇄)</span></button>
+            {#if cm.items.length}<button role="menuitem" class="mi" onclick={() => run(() => void savePdf({ comments: true }))}><MessageSquareText size={15} /><span class="t">코멘트 포함 PDF</span></button>{/if}
             {#if onPrint}<button role="menuitem" class="mi" onclick={() => run(onPrint)}><Printer size={15} /><span class="t">인쇄…</span></button>{/if}
           </div>
         {/if}

@@ -20,6 +20,7 @@ function loadSettings() {
     tableCopyFormat: 'tsv' as 'tsv' | 'csv', // 표 '복사' 단추의 기본 형식(다른 형식은 메뉴에서)
     animations: true, // 패널·툴팁·모달·팝오버의 나타남/사라짐과 flash(빌드 옵션 __ANIM__ 이 꺼져 있으면 무시)
     snippetColors: false, // 글감 색 지정·색 필터 같은 '고급' 기능을 쓸지(기본 꺼짐: 화면을 어지럽히지 않는다)
+    commentView: false, // 읽기 모드에서 본문에 코멘트 번호 배지와 문서 끝 '코멘트' 절을 보일지(편집 모드에서는 항상 꺼진 것으로 취급)
     rightHover: false, // 오른쪽 가장자리에 마우스를 대면 글감·목차·코멘트 패널을 팝오버로 띄울지(기본 꺼짐: 옆에 자료 창을 두고 쓸 때 거슬린다)
     version: SETTINGS_VERSION,
   };
@@ -89,7 +90,7 @@ export type EditorCommand =
 
 export const editorBridge: {
   getMarkdown: () => string;
-  preparePrint: (() => Promise<() => void>) | null;
+  preparePrint: ((comments?: boolean) => Promise<() => void>) | null;
   focus: (() => void) | null;
   command: ((name: EditorCommand) => void) | null;
   /** 변환기가 만든 표(첫 행이 머리글)·코드 블록을 커서 위치에 넣는다. 읽기 모드이거나 에디터가 없으면 false */

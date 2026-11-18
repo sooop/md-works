@@ -6,7 +6,7 @@ import { toggleFocus } from '../writing/state.svelte';
 import { ui } from '../search/state.svelte';
 import { toggleLeft, openLeft } from '../sidebar/state.svelte';
 import { toggleRight, openRight } from '../rightbar/state.svelte';
-import { sendSelection, findByEditorText } from '../snippets/state.svelte';
+import { sendSelection, findByEditorText, openLibrary } from '../snippets/state.svelte';
 import { startDraft } from '../comments/store.svelte';
 import { openListImport } from '../tableListUi.svelte';
 import { savePdf } from '../export/pdf';
@@ -82,6 +82,7 @@ export function buildAppCommands(c: AppCommandCtx): Command[] {
 
     // ---- 글감·코멘트 ----
     { id: 'sn.add', group: '글감·코멘트', title: '선택한 문장을 글감으로 담기', shortcut: 'Ctrl+Alt+S', keywords: 'snippet add 포스트잇', when: hasDoc, run: () => void sendSelection() },
+    { id: 'sn.library', group: '글감·코멘트', title: '글감 보관함 열기', shortcut: 'Ctrl+Alt+L', keywords: 'snippet library 글감 보관함 포스트잇 모든 글감', run: () => openLibrary() },
     { id: 'cm.add', group: '글감·코멘트', title: '선택한 문장에 코멘트 달기', shortcut: 'Ctrl+Alt+M', keywords: 'comment', when: hasDoc, run: startDraft },
 
     // ---- 보기 ----

@@ -7,12 +7,23 @@ import type { Node as PMNode } from '@milkdown/kit/prose/model';
 export interface Entry { id: string; from: number; to: number; resolved: boolean }
 export interface SelInfo { from: number; to: number; x: number; y: number }
 
-interface PluginState { entries: Entry[]; active: string; deco: DecorationSet }
+/** 읽기 모드 '코멘트 보기'·인쇄용 배지 번호(코멘트 id → 번호). null 이면 배지를 그리지 않는다 */
+export type Badges = Record<string, number> | null;
+interface PluginState { entries: Entry[]; active: string; badges: Badges; deco: DecorationSet }
 export const key = new PluginKey<PluginState>('md-works-comments');
 
 const live = (e: Entry) => e.from < e.to;
 
-function build(doc: PMNode, entries: Entry[], active: string): DecorationSet {
+function badgeEl(n: number, resolved: boolean, block: boolean): HTMLElement {
+  const el = document.createElement('span');
+  el.className = 'cm-badge' + (resolved ? ' cm-resolved' : '') + (block ? ' cm-badge-block' : '');
+  el.textContent = `C${n}`;
+  el.setAttribute('contenteditable', 'false');
+  el.setAttribute('aria-label', `코멘트 ${n}`);
+  return el;
+}
+
+function build(doc: PMNode, entries: Entry[], active: string, badges: Badges): DecorationSet {
   const decos: Decoration[] = [];
   for (const e of entries) {
     if (!live(e) || e.to > doc.content.size) continue;
@@ -22,8 +33,13 @@ function build(doc: PMNode, entries: Entry[], active: string): DecorationSet {
       // 코드 블록은 CodeMirror 가 따로 그리므로 블록 단위로 표시한다
       const start = $from.before();
       decos.push(Decoration.node(start, start + $from.parent.nodeSize, { class: `cm-comment-code${mods}`, 'data-cid': e.id }));
+      // 코드 블록 안에는 위젯을 둘 수 없으니 블록 바로 뒤에 둔다
+      const n = badges?.[e.id];
+      if (n) decos.push(Decoration.widget(start + $from.parent.nodeSize, () => badgeEl(n, e.resolved, true), { side: -1, key: `cb-${e.id}-${n}-${e.resolved}` }));
     } else {
       decos.push(Decoration.inline(e.from, e.to, { class: `cm-comment${mods}`, 'data-cid': e.id }));
+      const n = badges?.[e.id];
+      if (n) decos.push(Decoration.widget(e.to, () => badgeEl(n, e.resolved, false), { side: 1, key: `cb-${e.id}-${n}-${e.resolved}` }));
     }
   }
   return DecorationSet.create(doc, decos);
@@ -40,6 +56,8 @@ export interface Handlers {
 
 export interface CommentCtl {
   set(entries: Entry[]): void;
+  /** 본문 배지(번호) 표시. null 이면 끈다. 문서 내용은 바뀌지 않는다(데코레이션만) */
+  setBadges(badges: Badges): void;
   setActive(id: string): void;
   ranges(): Entry[];
   doc(): PMNode;
@@ -52,10 +70,10 @@ export function makePlugin(h: Handlers): Plugin<PluginState> {
   return new Plugin<PluginState>({
     key,
     state: {
-      init: () => ({ entries: [], active: '', deco: DecorationSet.empty }),
+      init: () => ({ entries: [], active: '', badges: null, deco: DecorationSet.empty }),
       apply(tr, prev) {
-        const meta = tr.getMeta(key) as { entries?: Entry[]; active?: string } | undefined;
-        let { entries, active } = prev;
+        const meta = tr.getMeta(key) as { entries?: Entry[]; active?: string; badges?: Badges } | undefined;
+        let { entries, active, badges } = prev;
         if (meta?.entries) entries = meta.entries;
         else if (tr.docChanged) {
           // 코멘트가 없거나 위치가 그대로면 같은 배열을 돌려줘 onRanges·반응형 상태 교체를 피한다
@@ -72,9 +90,10 @@ export function makePlugin(h: Handlers): Plugin<PluginState> {
           }
         }
         if (meta?.active !== undefined) active = meta.active;
+        if (meta && 'badges' in meta) badges = meta.badges ?? null;
         // 코멘트가 없으면 문서가 바뀌어도 표시할 것이 없다
-        if (entries === prev.entries && active === prev.active && (!tr.docChanged || !entries.length)) return prev;
-        return { entries, active, deco: build(tr.doc, entries, active) };
+        if (entries === prev.entries && active === prev.active && badges === prev.badges && (!tr.docChanged || !entries.length)) return prev;
+        return { entries, active, badges, deco: build(tr.doc, entries, active, badges) };
       },
     },
     props: { decorations: (s) => key.getState(s)?.deco },
@@ -122,6 +141,7 @@ export function attachComments(view: EditorView, h: Handlers): CommentCtl {
 
   return {
     set: (entries) => dispatch({ entries }),
+    setBadges: (badges) => dispatch({ badges }),
     setActive: (id) => dispatch({ active: id }),
     ranges: () => state().entries,
     doc: () => view.state.doc,

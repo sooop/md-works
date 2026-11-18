@@ -3,7 +3,8 @@ import { LanguageDescription } from '@codemirror/language';
 import type { EditorView } from '@milkdown/kit/prose/view';
 import { codeHighlightStyle, codeLanguages } from './codeLanguages';
 import katex from 'katex';
-import { editorBridge, toast } from './store.svelte';
+import { editorBridge, toast, doc, settings } from './store.svelte';
+import { commentSectionEl, showBadgesForPrint } from './comments/store.svelte';
 
 // 인쇄용 코드 블록: CodeMirror 는 화면에 보이는 줄만 그리므로, 문서 상태의 원문으로 하이라이트된 pre > code 를 만든다.
 async function highlighted(code: string, lang: string): Promise<DocumentFragment> {
@@ -35,8 +36,12 @@ async function highlighted(code: string, lang: string): Promise<DocumentFragment
 }
 
 /** 에디터 DOM 의 정적 사본을 만들어 옆에 붙인다. 인쇄 CSS 는 원본 대신 사본을 출력한다. 반환값은 사본을 지우는 함수. */
-export async function buildPrintClone(view: EditorView, host: HTMLElement): Promise<() => void> {
-  const clone = host.cloneNode(true) as HTMLElement;
+export async function buildPrintClone(view: EditorView, host: HTMLElement, comments = false): Promise<() => void> {
+  // 코멘트 포함: 본문 배지(데코레이션)를 잠시 켜서 복제하고 곧바로 되돌린다(편집 모드에서도 원본 화면은 그대로)
+  const restoreBadges = comments ? showBadgesForPrint() : null;
+  let clone: HTMLElement;
+  try { clone = host.cloneNode(true) as HTMLElement; } finally { restoreBadges?.(); }
+  if (!comments) clone.querySelectorAll('.cm-badge').forEach((el) => el.remove()); // 화면의 코멘트 보기 배지는 요청이 없으면 인쇄하지 않는다
   clone.classList.add('print-clone');
   clone.removeAttribute('contenteditable');
   // 가상 커서·갭 커서·포커스 표시·선택 흔적은 복제본에서 지운다(인쇄물에 남지 않게)
@@ -72,6 +77,10 @@ export async function buildPrintClone(view: EditorView, host: HTMLElement): Prom
     }));
   }
 
+  if (comments) {
+    const sec = commentSectionEl(); // 각주 정의(본문 끝) 아래에 '코멘트' 절
+    if (sec) clone.append(sec);
+  }
   host.after(clone);
   // 사본의 이미지가 모두 로드된 뒤에 인쇄한다 (최대 3초)
   const pending = [...clone.querySelectorAll('img')].filter((img) => !img.complete);
@@ -108,12 +117,16 @@ function afterPrint(): Promise<void> {
 }
 
 /** 현재 문서 인쇄. 탭 제목(= PDF 저장 시 기본 파일명)에서 저장 안 됨 표시를 뺀다. */
-export async function printDoc() {
+export async function printDoc(opts: { comments?: boolean } = {}) {
   const title = document.title;
   const root = document.documentElement.style;
   let cleanup: (() => void) | undefined;
+  // 코멘트 포함 여부: 명시하지 않으면 읽기 모드에서 '코멘트 보기'가 켜져 있을 때만
+  const comments = opts.comments ?? (!doc.edit && settings.commentView);
+  const html = document.documentElement;
   try {
-    cleanup = await editorBridge.preparePrint?.();
+    cleanup = await editorBridge.preparePrint?.(comments);
+    if (comments) html.setAttribute('data-print-comments', '');
     const name = title.replace(/^● /, '');
     document.title = name;
     root.setProperty('--print-title', JSON.stringify(name));
@@ -125,6 +138,7 @@ export async function printDoc() {
   } finally {
     root.removeProperty('--print-title');
     root.removeProperty('--print-date');
+    html.removeAttribute('data-print-comments');
     document.title = title;
     cleanup?.();
   }

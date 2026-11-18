@@ -26,7 +26,7 @@
   import { tableViewer } from '../tableViewer.svelte';
   import { openListImport, openListExport } from '../tableListUi.svelte';
   import { attachFinder } from '../search/pmSearch';
-  import { bindComments } from '../comments/store.svelte';
+  import { bindComments, setScreenBadges } from '../comments/store.svelte';
   import { finder } from '../search/state.svelte';
   import { codeLanguages, codeHighlight } from '../codeLanguages';
   import { swapBasicSetup } from '../codeSetup';
@@ -49,6 +49,7 @@
   import { openWikiLink } from '../wikilink/actions';
   import { wiki } from '../wikilink/env.svelte';
   import WikiSuggest from './WikiSuggest.svelte';
+  import CommentSection from './CommentSection.svelte';
 
   interface Props {
     initial: string;
@@ -89,6 +90,12 @@
   $effect(() => {
     const ro = readonly;
     if (ready) builder?.setReadonly(ro);
+  });
+
+  // 읽기 모드 '코멘트 보기': 토글·모드가 바뀌면 본문 배지를 다시 그린다(편집 모드에서는 꺼진다)
+  $effect(() => {
+    const on = readonly && settings.commentView;
+    if (ready && !preview) setScreenBadges(on);
   });
 
   // 글 사이 링크 `[[…]]`: 표시·클릭(wikilink/plugin)과 `[[` 자동 완성(wikilink/suggest). 글 목록은 모드가 내주는 LinkHost 에서 읽는다
@@ -252,7 +259,7 @@
           if (!preview) {
             editorBridge.getMarkdown = () => emit(c.getMarkdown());
             const pv = c.editor.action((ctx) => ctx.get(editorViewCtx));
-            editorBridge.preparePrint = () => buildPrintClone(pv, host);
+            editorBridge.preparePrint = (comments) => buildPrintClone(pv, host, !!comments);
             // 문서 내 검색·코멘트: 열린 문서의 에디터만 연결한다
             const view = c.editor.action((ctx) => ctx.get(editorViewCtx));
             ctl = attachFinder(view, (st) => Object.assign(finder, st));
@@ -335,6 +342,7 @@
   </details>
 {/if}
 <div class="editor-host" class:is-readonly={readonly} bind:this={host}></div>
+{#if readonly && settings.commentView && !preview}<CommentSection />{/if}
 <WikiSuggest v={suggest} onpick={(i) => suggestCtl?.pick(i)} />
 
 <style>

@@ -5,6 +5,8 @@ import { toast, errMsg, askConfirm } from '../store.svelte';
 import { anchorOf, flatten, locate, MAX_QUOTE } from './anchor';
 import { notifyTabs, onTabMessage } from '../works/tabSync';
 import { attachComments, type CommentCtl, type Entry } from './pmComments';
+import { commentRows, numberComments } from './numbering';
+import { buildCommentSection } from './readView';
 import type { Thread } from '../works/types';
 import { newId } from '../works/types';
 import {
@@ -135,6 +137,47 @@ const entryOf = (c: Thread, r: Range): Entry => ({ id: c.id, from: r.from, to: r
 function push() {
   if (!cur) return;
   cur.ctl.set(cm.items.filter((c) => cm.ranges[c.id]).map((c) => entryOf(c, cm.ranges[c.id])));
+  refreshBadges();
+}
+
+// ---- 읽기 모드 '코멘트 보기' / 코멘트 포함 인쇄: 본문 배지(데코레이션)와 문서 끝 '코멘트' 절 ----
+let printBadges = false; // 인쇄 사본을 만드는 동안만 켠다(편집 모드에서도 배지를 그려 사본에 담기 위해)
+let screenBadges = false; // 읽기 모드 + '코멘트 보기' 토글(Editor 가 알려 준다. 편집 모드에서는 항상 false)
+let badgesShown = false; // 플러그인에 배지가 지금 켜져 있는가(꺼진 채로는 불필요한 트랜잭션을 만들지 않는다)
+const badgesWanted = () => cm.loaded && (printBadges || screenBadges);
+
+export function setScreenBadges(on: boolean) {
+  screenBadges = on;
+  refreshBadges();
+}
+
+/** 에디터의 실제 위치(편집으로 움직인 값)를 기준으로 배지를 다시 그린다. 문서 내용은 건드리지 않는다 */
+export function refreshBadges() {
+  if (!cur) return;
+  if (!badgesWanted()) {
+    if (badgesShown) { badgesShown = false; cur.ctl.setBadges(null); }
+    return;
+  }
+  badgesShown = true;
+  const live: Record<string, Range> = {};
+  for (const e of cur.ctl.ranges()) live[e.id] = { from: e.from, to: e.to };
+  cur.ctl.setBadges(numberComments(cm.items, live));
+}
+
+/** 인쇄용: 본문 배지를 잠시 켜고 되돌리는 함수를 돌려준다. 사본(cloneNode)을 만든 직후 되돌리면 된다 */
+export function showBadgesForPrint(): () => void {
+  printBadges = true;
+  refreshBadges();
+  return () => { printBadges = false; refreshBadges(); };
+}
+
+/** '코멘트' 절 DOM(없으면 null). 번호는 에디터의 실제 위치 기준 */
+export function commentSectionEl(): HTMLElement | null {
+  if (!cm.loaded) return null;
+  const live: Record<string, Range> = {};
+  if (cur) for (const e of cur.ctl.ranges()) live[e.id] = { from: e.from, to: e.to };
+  else Object.assign(live, cm.ranges);
+  return buildCommentSection(commentRows($state.snapshot(cm.items) as Thread[], live));
 }
 
 // 편집 뒤 정리: 살아 있는 범위는 앵커(원문·문맥)를 새 내용으로 갱신하고, 잃은 코멘트는 다시 찾아 본다
@@ -216,6 +259,7 @@ export function bindComments(view: EditorView, docKey: string): () => void {
     ctl.destroy();
     if (cur?.ctl === ctl) cur = null;
     Object.assign(cm, { key: '', loaded: false, items: [], ranges: {}, active: '', sel: null, pick: null, draft: null });
+    badgesShown = false;
   };
 }
 

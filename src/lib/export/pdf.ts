@@ -2,9 +2,9 @@
 import { printDoc } from '../printCode';
 import { toast } from '../store.svelte';
 
-export async function savePdf() {
+export async function savePdf(opts: { comments?: boolean } = {}) {
   toast("인쇄 창에서 대상(프린터)을 'PDF로 저장'으로 고르세요");
   // window.print() 는 화면을 멈추므로, 토스트가 먼저 그려질 틈을 준다
   await new Promise((r) => setTimeout(r, 150));
-  await printDoc();
+  await printDoc(opts);
 }
