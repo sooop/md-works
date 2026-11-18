@@ -13,6 +13,8 @@
   import Copy from '@lucide/svelte/icons/copy';
   import Eye from '@lucide/svelte/icons/eye';
   import EyeOff from '@lucide/svelte/icons/eye-off';
+  import QrCode from '@lucide/svelte/icons/qr-code';
+  import qrcode from 'qrcode-generator';
   import { backdropFx, modalFx, listFx } from '../motion';
   import { modal } from '../modal';
   import { tip } from '../tooltip.svelte';
@@ -20,7 +22,7 @@
   import { formatAgo } from '../bundle/backupLogic';
   import ModalClose from './ModalClose.svelte';
   import Switch from './Switch.svelte';
-  import { LIMITS, phaseLabel, phaseTone, problemTitle, usageRatio, isNearLimit, groupKeyInput } from 'sync-kit';
+  import { LIMITS, phaseLabel, phaseTone, problemTitle, usageRatio, isNearLimit, groupKeyInput, expandWorkerUrl } from 'sync-kit';
   import {
     sync, syncUi, SyncInputError, connectNew, connectExisting, disconnect, clearSyncMeta, pause, resume, syncNow, resolveResync, resolveMassDelete,
   } from '../sync/state.svelte';
@@ -59,13 +61,14 @@
   let workerUrl = $state('');
   let inviteCode = $state('');
   let keyInput = $state('');
+  const urlPreview = $derived(/^[A-Za-z0-9-]+$/.test(workerUrl.trim()) ? expandWorkerUrl(workerUrl, 'md-works-sync') : '');
   let errUrl = $state('');
   let errInvite = $state('');
   let errKey = $state('');
   let createdKey = $state(''); // 방금 만든 키를 한 번 보여 준다(보관 안내)
 
   function resetForms() {
-    keyInput = ''; inviteCode = ''; errUrl = errInvite = errKey = ''; reKey = false; confirming = null; keyShown = false; createdKey = '';
+    keyInput = ''; inviteCode = ''; errUrl = errInvite = errKey = ''; reKey = false; confirming = null; keyShown = false; qrShown = false; createdKey = '';
   }
 
   const MODES: { id: Mode; label: string }[] = [
@@ -118,6 +121,14 @@
 
   // ---- 키 표시·복사 ----
   let keyShown = $state(false);
+  let qrShown = $state(false);
+  // 모바일 입력용 QR: 키 문자열만 담는다(카메라로 읽어 키 칸에 붙여 넣는다). 어두운 모드에서도 읽히도록 흰 바탕 고정
+  const qrSvg = $derived.by(() => {
+    const k = sync.config?.syncKey;
+    if (!qrShown || !k) return '';
+    const q = qrcode(0, 'M'); q.addData(k); q.make();
+    return q.createSvgTag({ cellSize: 4, margin: 4, scalable: true });
+  });
   let copied = $state(false);
   let copyFallback = $state(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
@@ -162,7 +173,7 @@
     await run('연결을 해제하는 중…', async () => {
       disconnect();
       await clearSyncMeta().catch(() => {}); // 키를 지웠으니 이 공간의 커서·rev 는 쓸모없다(글은 그대로)
-      createdKey = ''; keyShown = false; mode = 'new';
+      createdKey = ''; keyShown = false; qrShown = false; mode = 'new';
     });
   }
   const doResync = (c: 'upload' | 'delete') => { confirming = null; return run(c === 'upload' ? '서버에 올리는 중…' : '이 기기에서 지우는 중…', () => resolveResync(c)); };
@@ -223,10 +234,11 @@
             <p class="hint">같은 키를 입력한 기기끼리 글·글감·코멘트를 공유합니다. 내용은 이 기기에서 암호화해 올리며, 서버는 읽을 수 없습니다. 서버는 직접 배포한 Cloudflare Worker 입니다.</p>
 
             <label class="field"><span>Worker 주소</span>
-              <input id="sy-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://md-works-sync.내이름.workers.dev"
+              <input id="sy-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="내이름  (또는 https://md-works-sync.내이름.workers.dev)"
                 bind:value={workerUrl} oninput={() => (errUrl = '')} aria-invalid={!!errUrl} aria-describedby={errUrl ? 'sy-url-err' : undefined} disabled={!!busy} />
             </label>
-            {#if errUrl}<p id="sy-url-err" class="hint inline err" role="alert">{errUrl}</p>{/if}
+            {#if errUrl}<p id="sy-url-err" class="hint inline err" role="alert">{errUrl}</p>
+            {:else if urlPreview}<p class="hint inline">연결할 주소: <span class="mono wrap">{urlPreview}</span></p>{/if}
 
             <div class="seg" role="radiogroup" aria-label="연결 방법">
               {#each MODES as m (m.id)}
@@ -369,7 +381,12 @@
               <button type="button" class="icon-btn" aria-label={copied ? '복사했습니다' : '키 복사'} use:tip={copied ? '복사했습니다' : '키 복사'} onclick={copyKey}>
                 {#if copied}<Check size={16} />{:else}<Copy size={16} />{/if}
               </button>
+              <button type="button" class="icon-btn" aria-label={qrShown ? 'QR 코드 닫기' : 'QR 코드로 보기'} aria-pressed={qrShown} use:tip={qrShown ? 'QR 코드 닫기' : 'QR 코드로 보기'} onclick={() => (qrShown = !qrShown)}>
+                <QrCode size={16} />
+              </button>
             </div>
+            {#if qrSvg}<div class="qr" role="img" aria-label="동기화 키 QR 코드">{@html qrSvg}</div>
+              <p class="hint">다른 기기의 카메라로 읽으면 키 문자열이 나옵니다. 그 기기에서 '다른 기기의 키로 연결'의 키 칸에 붙여 넣으세요.</p>{/if}
             <div class="sr-only" role="status" aria-live="polite">{copied ? '키를 복사했습니다' : ''}</div>
             {#if copyFallback}<p class="hint inline">클립보드를 쓸 수 없습니다. 위 입력에서 키를 선택해 직접 복사하세요.</p>{/if}
             <p class="hint">서버: <span class="mono wrap">{sync.config?.workerUrl}</span></p>
@@ -466,6 +483,8 @@
   .seg button { flex: 1; }
   .keyrow { display: flex; gap: 4px; align-items: center; width: 100%; }
   .keyrow input { flex: 1; min-width: 0; margin: 0; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); width: auto; }
+  .qr { width: 176px; max-width: 100%; align-self: center; background: #fff; border-radius: 8px; line-height: 0; }
+  .qr :global(svg) { width: 100%; height: auto; display: block; }
   .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; width: 100%; flex-wrap: wrap; }
   button.danger { background: var(--danger); border-color: var(--danger); color: var(--bg); }
   button.danger:hover:not(:disabled) { background: var(--danger); filter: brightness(1.08); }
