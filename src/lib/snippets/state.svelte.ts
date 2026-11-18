@@ -10,13 +10,14 @@ import type { Snippet, SnippetColor, SnippetSource } from '../works/types';
 import { hasWorksStore, onWorksReady } from '../works/store';
 import { openRight } from '../rightbar/state.svelte';
 import { filterSnippets, findByPhrase, type SnippetView } from './filter';
+import { DEFAULT_VIEW, canReorderIn, newLibraryState } from './library';
 import { notifyTabs, onTabMessage } from '../works/tabSync';
 
 export const sn = $state({
   active: [] as Snippet[],
   trashed: [] as Snippet[],
   loaded: false,
-  view: 'doc' as SnippetView,
+  view: DEFAULT_VIEW as SnippetView, // 사이드바의 보기. 보관함 모달은 아래 lib 가 따로 가진다
   color: '' as SnippetColor | '',
   query: '',
   phrase: '', // '문구로 글감 찾기' 입력
@@ -59,12 +60,41 @@ export function reload(): Promise<void> {
   return inflight;
 }
 
+/** 인라인 편집 중인 카드가 등록한다(한 번에 하나). 다른 카드가 보관함을 열기 전에 편집을 접도록 묻는 데 쓴다 */
+let activeEdit: { cancel: () => void } | undefined;
+export const registerEdit = (e: { cancel: () => void } | undefined) => { activeEdit = e; };
+/** 인라인 편집 중이면 확인을 받고 편집을 취소한 뒤 보관함을 연다. 편집 중이 아니면 그냥 연다 */
+export async function openLibraryGuarded(id = '') {
+  if (activeEdit) {
+    if (!(await askConfirm('편집 중인 글감이 있습니다. 편집을 취소하고 열까요?', '취소하고 열기', false))) return;
+    activeEdit?.cancel();
+  }
+  openLibrary(id);
+}
+
+/** 글감 보관함 모달의 상태(사이드바 sn 과 보기·색·검색을 공유하지 않는다) */
+export const lib = $state(newLibraryState());
+/** 보관함 모달을 연다. id 가 있으면 그 글감을 오른쪽에 보인다 */
+export function openLibrary(id = '') {
+  if (id) {
+    // 고른 글감이 목록에 보이도록 보기·필터를 맞춘다
+    lib.selectedId = id;
+    lib.query = '';
+    lib.color = '';
+    if (sn.trashed.some((s) => s.id === id)) lib.view = 'trash';
+    else if (lib.view === 'trash' || (lib.view === 'doc' && !sn.active.find((s) => s.id === id)?.attachedDocs.includes(doc.path))) lib.view = 'all';
+  }
+  lib.open = true;
+  if (!sn.loaded) void reload();
+}
+export const closeLibrary = () => { lib.open = false; };
+
 /** 현재 화면에 보일 글감: 문구 검색이 있으면 관련도 순, 없으면 보기·색·검색어 필터 */
 export const visible = (): Snippet[] =>
   sn.phrase.trim() ? findByPhrase(sn.phrase, sn.active) : filterSnippets(sn.active, sn.trashed, { view: sn.view, docKey: doc.path, color: sn.color, query: sn.query });
 
 /** 정렬 값을 바꿀 수 있는 상태인가: '이 글에 꽂힌 글감' 보기이고 문구 찾기·검색어·색 필터가 없을 때 */
-export const canReorder = (): boolean => sn.view === 'doc' && !!doc.path && !sn.phrase.trim() && !sn.query.trim() && !sn.color;
+export const canReorder = (): boolean => canReorderIn(sn, doc.path);
 
 /** 순서를 바꿀 수 없을 때 보여 줄 안내(바꿀 수 있으면 빈 문자열) */
 export function reorderHint(): string {

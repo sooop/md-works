@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, onDestroy } from 'svelte';
   import Pin from '@lucide/svelte/icons/pin';
   import PinOff from '@lucide/svelte/icons/pin-off';
   import Palette from '@lucide/svelte/icons/palette';
@@ -24,7 +24,7 @@
   import { parseSnippet, editableText } from '../snippets/parse';
   import {
     sn, editSnippet, attachHere, detachHere, discardSnippet, recoverSnippet, deleteForever,
-    toggleSelect, selectRangeTo, dragGroup, moveStep,
+    toggleSelect, selectRangeTo, dragGroup, moveStep, openLibraryGuarded, registerEdit,
   } from '../snippets/state.svelte';
 
   interface Props {
@@ -50,6 +50,13 @@
   const host = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
   const badgeText = (label: string, url: string) => label || (url ? host(url) : '');
   let editArea = $state<HTMLTextAreaElement>();
+  const editHandle = { cancel: () => { editing = false; } };
+  // 편집 중인 카드만 등록해 두고, 편집이 끝나거나 카드가 사라지면 푼다
+  $effect(() => {
+    if (!editing) return;
+    registerEdit(editHandle);
+    return () => registerEdit(undefined);
+  });
   async function startEdit() {
     body = editableText(s); // 옛 원전 필드는 마커 줄로 풀어서 보여 준다
     editing = true;
@@ -105,14 +112,25 @@
     if (e.ctrlKey || e.metaKey || sn.selectMode) { toggleSelect(s.id); return true; }
     return false;
   }
+  // 그냥 클릭은 보관함 모달에서 이 글감을 연다. 더블 클릭(인라인 편집)과 구분하려고 잠깐 기다렸다 연다
+  const OPEN_DELAY = 260;
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelOpen = () => { clearTimeout(openTimer); openTimer = undefined; };
+  onDestroy(cancelOpen);
   function toggle(e: MouseEvent) {
     if ((e.target as HTMLElement).closest(INTERACTIVE)) return;
     if (!editing && pick(e)) return;
     sn.anchor = s.id; // 그냥 클릭은 선택을 건드리지 않고 Shift 범위의 기준만 옮긴다
-    sn.openId = open ? '' : s.id;
+    if (editing) { sn.openId = open ? '' : s.id; return; }
+    if (window.getSelection()?.toString()) return; // 글자를 끌어 고른 뒤의 클릭은 열지 않는다
+    cancelOpen();
+    if (e.detail > 1) return; // 더블 클릭의 두 번째 클릭
+    const id = s.id;
+    openTimer = setTimeout(() => { openTimer = undefined; void openLibraryGuarded(id); }, trashed ? 0 : OPEN_DELAY);
   }
   // 더블 클릭으로 편집 모드를 연다(휴지통의 글감은 제외). 버튼·링크 위에서는 하지 않는다
   function onDblClick(e: MouseEvent) {
+    cancelOpen();
     if (editing || trashed || (e.target as HTMLElement).closest(INTERACTIVE)) return;
     window.getSelection()?.removeAllRanges(); // 더블 클릭으로 잡힌 단어 선택을 지운다
     startEdit();
