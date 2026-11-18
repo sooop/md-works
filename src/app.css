@@ -509,6 +509,20 @@ button svg { flex: none; }
 :root .milkdown .ProseMirror p { padding: var(--ed-para-gap, 0.65em) 0; line-height: var(--ed-line-height, 1.5); }
 :root .milkdown .ProseMirror ul,
 :root .milkdown .ProseMirror ol { margin: 8px 0; }
+/* 목록: Crepe 는 불릿·번호 칸을 32px 고정 높이로 가운데 맞추는데, 본문 문단은 줄 높이·위아래 여백이 따로라 첫 줄과 어긋난다.
+   항목 안 문단의 위아래 여백(--li-gap)과 줄 높이를 불릿·번호 칸이 똑같이 쓰게 해 첫 줄 가운데에 맞춘다. 항목 사이 간격도 문단 간격의 절반 이하로 줄인다 */
+:root .milkdown .ProseMirror .milkdown-list-item-block li { --li-gap: calc(var(--ed-para-gap, 0.65em) * 0.4); gap: 6px; }
+:root .milkdown .ProseMirror .milkdown-list-item-block li > .children > .content-dom > p { padding: var(--li-gap) 0; }
+:root .milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper {
+  box-sizing: content-box; height: calc(var(--ed-line-height, 1.5) * 1em); padding-top: var(--li-gap);
+  width: 1.6em; align-items: center; flex: none;
+}
+:root .milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper .label {
+  display: flex; align-items: center; justify-content: flex-end; height: 100%; padding: 0; width: 100%;
+  line-height: var(--ed-line-height, 1.5); font-size: inherit; font-variant-numeric: tabular-nums;
+}
+/* 불릿은 24px 인라인 svg 라 글줄 기준선에 얹혀 위로 뜬다 — block 으로 바꿔 칸 가운데에 둔다(번호는 글자라 영향 없음) */
+:root .milkdown .ProseMirror .milkdown-list-item-block li .label-wrapper svg { display: block; flex: none; margin: 0 auto; max-height: 100%; }
 :root .milkdown .ProseMirror blockquote { margin: 16px 0; padding-top: 2px; padding-bottom: 2px; }
 :root .milkdown .ProseMirror hr { margin: 20px 0; }
 :root .milkdown .milkdown-table-block { margin: 16px 0; }
