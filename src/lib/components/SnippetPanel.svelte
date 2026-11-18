@@ -39,6 +39,7 @@
   let moreOpen = $state(false);
   let text = $state('');
   let busy = $state(false);
+  let adding = $state(false);
   const list = $derived(visible());
   const phraseMode = $derived(!!sn.phrase.trim());
   const filtering = $derived(!!(sn.phrase.trim() || sn.query.trim()));
@@ -134,9 +135,13 @@
 
   async function add() {
     const body = text.trim();
-    if (!body || busy) return;
-    // 제목(# )·원전(@ 또는 URL 줄)·인용(> )은 쓴 그대로 저장하고 카드를 그릴 때 알아본다
-    if (await addSnippet(body)) text = '';
+    if (!body || busy || adding) return;
+    // 저장이 끝나기 전에 Ctrl+Enter 를 또 누르면 같은 글감이 중복으로 들어가므로, 진행 중에는 다시 받지 않는다
+    adding = true;
+    try {
+      // 제목(# )·원전(@ 또는 URL 줄)·인용(> )은 쓴 그대로 저장하고 카드를 그릴 때 알아본다
+      if (await addSnippet(body) && text.trim() === body) text = '';
+    } finally { adding = false; }
   }
   function onKey(e: KeyboardEvent) {
     // Ctrl/⌘+Enter 로 담는다(Enter 는 줄바꿈). 한글 조합 중 Enter 는 글자 확정이므로 추가하지 않는다
@@ -208,7 +213,7 @@
     <div class="sn-row">
       <span class="spacer"></span>
       <!-- 키보드가 없는 터치 폭에서만 보이는 글자 버튼(아이콘 없음) — 데스크톱은 Ctrl+Enter 로 붙인다 -->
-      <button class="sn-add-m" disabled={!text.trim() || busy} onclick={add}>글감 담기</button>
+      <button class="sn-add-m" disabled={!text.trim() || busy || adding} onclick={add}>글감 담기</button>
     </div>
   </div>
 
