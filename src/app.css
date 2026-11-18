@@ -246,8 +246,10 @@ input, textarea, select { transition: border-color var(--dur-1) var(--ease-out),
   border-bottom: 1px solid var(--border);
 }
 .sidebar .root { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree { flex: 1; overflow: auto; padding: 6px 4px 16px; }
+.tree { flex: 1; overflow: auto; padding: 0 4px 16px; }
 .tree ul { list-style: none; margin: 0; padding: 0; }
+/* 위 여백은 스크롤 영역의 padding 이 아니라 목록 안쪽에 둔다. padding 이면 sticky 폴더 행이 그 아래(6px)에 붙어, 위 6px 틈으로 스크롤 중인 행이 비쳐 보인다 */
+.tree > ul { padding-top: 6px; }
 .tree .empty { color: var(--muted); padding: 12px; font-size: 13px; }
 .row { display: flex; align-items: center; border-radius: 6px; padding-right: 4px; transition: background-color var(--dur-1) var(--ease-out); }
 .row:hover, .row:focus-within { background: var(--hover); }
