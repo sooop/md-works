@@ -10,8 +10,7 @@
   import { lazyComponent } from '../lazy.svelte';
   import { printDoc } from '../printCode';
   import ModeToggle from './ModeToggle.svelte';
-  import DocTitle from './DocTitle.svelte';
-  import PathBadges from './PathBadges.svelte';
+  import TopbarPath from './TopbarPath.svelte';
   import { revealFolder } from '../docTree.svelte';
   import CommentLayer from './CommentLayer.svelte';
   import RightSidebar from './RightSidebar.svelte';
@@ -50,7 +49,7 @@
   import Archive from '@lucide/svelte/icons/archive';
   import FileText from '@lucide/svelte/icons/file-text';
   import PanelLeft from '@lucide/svelte/icons/panel-left';
-  import { doc } from '../store.svelte';
+  import { doc, settings } from '../store.svelte';
   import {
     lib, docUpdatedAt, docFullPath, renameDocBy, renameFolder, removeFolder, moveFolder, moveDoc, createFolder, init, save, flush, exportMd, copyMd, exportAll, openPicker, openDoc, createDoc, removeDoc, onEditorChange,
     upload, resolveUrl, importFiles, createFromText, exportDocxCurrent, exportHtmlCurrent, exportEpubCurrent, tpl, pickTemplate, clearTemplate, restoreVersion, searchLibrary, replaceHost, renameCurrent, retrySave, hasUnsavedWork,
@@ -208,7 +207,7 @@
       <div class="tabpane" hidden={ui.tab !== 'files'}>
         {#if trashOpen && trashView.Comp}
           {@const Trash = trashView.Comp}
-          <Trash ctl={trashCtl} onBack={() => (trashOpen = false)} />
+          <Trash ctl={trashCtl} days={settings.trashDays} onBack={() => (trashOpen = false)} />
         {:else}
           <DocTree nodes={treeNodes} ctl={treeCtl} bind:filter={lib.filter} emptyText="문서가 없습니다. 위의 새 문서 버튼으로 만들거나 .md · .txt · .docx · .html · .odt · .epub 등 · 백업 .zip 파일을 끌어다 놓으세요. 문서는 이 브라우저에 보관됩니다." />
           <TrashFooter count={trash.count} onOpen={() => (trashOpen = true)} />
@@ -228,8 +227,7 @@
     <div class="top-edge"></div>
     <header class="topbar">
       <button class="icon-btn" class:on={docked} aria-label="사이드바 토글" use:tip={{ title: '파일 목록', lines: [left.pinned ? '누르면 숨깁니다' : '누르면 본문 옆에 열립니다(고정). 왼쪽 가장자리에 마우스를 대도 잠깐 열립니다'] }} onclick={() => { toggleLeft(); if (left.open) closeRightOnMobile(); }}><PanelLeft size={18} /></button>
-      {#if doc.path}<PathBadges folder={splitPath(docFullPath(doc.path)).folder} onPick={pickCrumb} />{/if}
-      <DocTitle title={doc.path ? stripExt(doc.name) : '문서를 선택하세요'} editable={!!doc.path} onRename={renameCurrent} />
+      <TopbarPath ctl={treeCtl} nodes={treeNodes} docPath={doc.path} docName={doc.name} folder={doc.path ? splitPath(docFullPath(doc.path)).folder : ''} onPick={pickCrumb} onRenameDoc={renameCurrent} />
       <span class="spacer"></span>
       <SaveFailBadge onRetry={() => void retrySave()} />
       {#if doc.path}

@@ -24,7 +24,7 @@
   import { tip } from '../tooltip.svelte';
   import { openContextMenu, openContextMenuAt, longPress, ctx } from '../contextmenu.svelte';
   import { highlight } from '../search/nameMatch';
-  import { isCollapsed, toggleFolder, expandFolder, treeNav, treeKb, moveInOrder, moveManyInOrder } from '../docTree.svelte';
+  import { isCollapsed, toggleFolder, expandFolder, treeNav, treeKb, moveInOrder, moveManyInOrder, isArchived, setArchived } from '../docTree.svelte';
   import { splitPath, type DocNode } from '../docTree';
   import { exportFolder } from '../folderExportUi';
   import { TREE_CTL, dndUi, kbUi, selUi, type DragState, type TreeCtl } from './treeCtl';
@@ -42,8 +42,10 @@
     /** 같은 폴더의 마지막 항목인지(연결선이 'ㄴ' 자로 끝난다) */
     last?: boolean;
     fx: TreeFx;
+    /** '보관됨' 구역 안의 항목인가(끌어 옮기기·새 글 만들기를 막고 메뉴에 '보관 해제'를 둔다) */
+    arch?: boolean;
   }
-  let { node, depth = 0, filter = '', drag, siblings, last = false, fx }: Props = $props();
+  let { node, depth = 0, filter = '', drag, siblings, last = false, fx, arch = false }: Props = $props();
   const ctl = getContext<TreeCtl>(TREE_CTL);
 
   let renaming = $state(false);
@@ -67,8 +69,11 @@
   }
   const bulkItems = $derived.by(() => {
     const n = group.length;
+    const allArch = group.every((g) => isArchived(g.path));
+    const noneArch = !arch && group.every((g) => !isArchived(g.path));
     return [
       { label: `${n}개 이동…`, run: () => selUi.moveTo({ x: ctx.x, y: ctx.y }, nameEl) },
+      ...(allArch ? [{ label: `${n}개 보관 해제`, run: () => selUi.archive(false) }] : noneArch ? [{ label: `${n}개 보관`, run: () => selUi.archive(true) }] : []),
       ...(ctl.downloadMany ? [
         { label: `${n}개 내려받기 · 백업 JSON`, run: () => selUi.download('json') },
         { label: `${n}개 내려받기 · MD 압축(zip)`, run: () => selUi.download('zip') },
@@ -92,11 +97,12 @@
     void tick().then(() => kbUi.focus(node.path));
   }
   const singleItems = $derived([
-    ...(node.type === 'dir' ? [{ label: '새 문서', run: () => ctl.createDoc(node.path) }, { label: '새 폴더', run: () => ctl.createFolder(node.path) }] : []),
-    { label: '이름 변경', run: () => { renaming = true; }, sep: node.type === 'dir' },
+    ...(node.type === 'dir' && !arch ? [{ label: '새 문서', run: () => ctl.createDoc(node.path) }, { label: '새 폴더', run: () => ctl.createFolder(node.path) }] : []),
+    { label: '이름 변경', run: () => { renaming = true; }, sep: node.type === 'dir' && !arch },
     { label: '이동…', run: () => kbUi.moveTo(node, { x: ctx.x, y: ctx.y }, nameEl) },
     ...(slot.canUp ? [{ label: '위로 올리기', run: () => shift(-1) }] : []),
     ...(slot.canDown ? [{ label: '아래로 내리기', run: () => shift(1) }] : []),
+    ...(isArchived(node.path) ? [{ label: '보관 해제', run: () => setArchived([node.path], false) }] : arch ? [] : [{ label: '보관', run: () => setArchived([node.path], true) }]),
     ...(node.type === 'dir' ? [
       { label: '내보내기 · 백업 JSON', run: () => void exportFolder('json', node) },
       { label: '내보내기 · MD 압축(zip)', run: () => void exportFolder('zip', node) },
@@ -158,7 +164,7 @@
   function clickDir(e: MouseEvent) {
     if (pick(e)) { clearTimeout(clickTimer); clickTimer = undefined; return; } // 선택만 바꾼다(폴더 선택·접기 없음)
     plainClick(node.path);
-    ctl.selectDir(node.path);
+    if (!arch) ctl.selectDir(node.path); // 보관된 폴더는 새 글이 만들어질 곳으로 고르지 않는다
     if (e.detail >= 2) {
       if (clickTimer) { clearTimeout(clickTimer); clickTimer = undefined; }
       else if (performance.now() - toggledAt < 700) { toggledAt = 0; toggleFolder(node.path); }
@@ -262,7 +268,7 @@
   function onDragEnd(keepGap = false) { dndUi.ghost = null; drag.node = null; drag.nodes = []; drag.hint = ''; dndUi.pos = ''; if (!keepGap) dndUi.indicate(null, ''); clearTimeout(hoverTimer); dropSource(); }
   function onDragOver(e: DragEvent) {
     const src = drag.node;
-    if (!src) return;
+    if (!src || arch) return; // 보관됨 구역에는 놓을 수 없다
     const srcs = dragged();
     if (srcs.some((s) => s.path === node.path)) return; // 끌던 항목(묶음의 구성원)에게는 놓을 수 없다
     const pos = posOf(e);
@@ -276,12 +282,12 @@
     const where = dest ? `'${dest}' 폴더` : '최상위';
     const many = srcs.length > 1 ? `선택한 ${srcs.length}개를 ` : '';
     // 안내 줄은 위치가 선만으로 알 수 없는 경우에만 쓴다(같은 문장이면 다시 대입해도 화면은 바뀌지 않는다)
-    if (pos === 'into') drag.hint = `${many}'${node.name}' 폴더 안으로 옮깁니다`;
+    if (pos === 'into') drag.hint = `${many}'${node.name}' 폴더 맨 끝에 넣습니다`;
     else if (srcs.some((s) => dirOf(s) !== dest)) drag.hint = `${many}${where}로 옮깁니다`;
     else drag.hint = '';
     // 접힌 폴더 위에 잠깐 머물면 펼친다
     clearTimeout(hoverTimer);
-    if (node.type === 'dir' && pos === 'into' && isCollapsed(node.path)) hoverTimer = setTimeout(() => expandFolder(node.path), 700);
+    if (node.type === 'dir' && pos === 'into' && isCollapsed(node.path)) hoverTimer = setTimeout(() => expandFolder(node.path), 250);
   }
   function onDragLeave() { clearTimeout(hoverTimer); } // 표시는 목록을 벗어날 때(DocTree)·놓을 때 거둔다 — 행 사이를 지날 때 깜빡이지 않게
   // 놓은 자리: 형제 사이면 슬롯이 열려 있던 곳(아직 덜 열렸으면 열릴 자리), 폴더 안이면 그 폴더 행
@@ -310,15 +316,18 @@
     if (real) (real as HTMLElement).style.visibility = '';
   }
   async function onDrop(e: DragEvent) {
+    if (arch) return;
     const src = drag.node;
     const srcs = dragged();
     const many = srcs.length > 1;
     const pos = dndUi.pos || posOf(e);
     const row = e.currentTarget as HTMLElement;
     const ghost = dndUi.ghost;
-    const landing = landingRect(row, pos);
     const at = { x: e.clientX, y: e.clientY };
     const into = pos === 'into';
+    // 폴더 안쪽에 슬롯이 열려 있으면 고스트는 그 슬롯으로 날아간다(없으면 폴더 행으로)
+    const slotAt = into ? dndUi.slotRect() : null;
+    const landing = slotAt ?? landingRect(row, pos);
     const dest = into ? node.path : parent;
     const srcDir = src ? dirOf(src) : '';
     // 이 폴더로 실제 옮길 항목(이미 그 폴더에 있는 것은 뺀다)
@@ -326,7 +335,7 @@
     // 다른 폴더로 옮길 때는 새 행이 그려질 때까지 슬롯을 열어 둔다. 같은 폴더 안이면 이미 펼쳐진 자리에 바로 앉도록
     // 끌던 항목의 접힘과 슬롯을 한꺼번에 거둬, 주변 행이 다시 움직이지 않게 한다
     const ok = !!src && !srcs.some((s) => s.path === node.path || isSelfOrChild(s, dest));
-    const keepGap = ok && !into && movable.length > 0;
+    const keepGap = ok && (!into || !!slotAt) && movable.length > 0;
     if (ok && !keepGap) dndUi.restoreSource?.();
     onDragEnd(keepGap);
     if (!src || !ok) return;
@@ -335,23 +344,26 @@
     dndUi.moving = true; // 옮기기는 삭제·삽입 효과 대신 고스트가 날아가는 효과로 보인다
     setTimeout(() => { dndUi.moving = false; }, 1200);
     if (ghost) void flyToLanding(ghost, at, landing, into, `${dest ? dest + '/' : ''}${(movable[0] ?? src).name}`, keepGap);
+    // 놓을 자리의 순서를 옮기기 '전에' 기록한다. 옮긴 뒤에 기록하면 새 폴더에서 맨 끝에 먼저 나타났다가 제자리로 넘어온다.
+    // 폴더 안으로 넣으면 그 폴더 맨 끝에, 형제 사이에 놓으면 그 자리에 끼워 넣는다. 글·폴더 혼합, 여러 개도 상대 순서를 유지한다
+    const names = srcs.map((s) => s.name);
+    const current = siblings(dest); // 놓기 직전 화면에 보이던 순서(아직 옮기기 전이면 옮길 항목이 없다)
+    if (many) {
+      const cur = [...current, ...names.filter((n) => !current.includes(n))];
+      if (into) moveManyInOrder(dest, cur, names, undefined);
+      else {
+        const sib = cur.filter((n) => !names.includes(n));
+        const idx = sib.indexOf(node.name);
+        moveManyInOrder(dest, cur, names, pos === 'before' ? node.name : sib[idx + 1]);
+      }
+    } else if (into) moveInOrder(dest, current, src.name, undefined);
+    else {
+      const sib = current.filter((n) => n !== src.name);
+      const idx = sib.indexOf(node.name);
+      moveInOrder(dest, current, src.name, pos === 'before' ? node.name : sib[idx + 1]);
+    }
     if (many) { if (movable.length) await selUi.moveNodes(movable, dest); }
     else if (dest !== srcDir) await ctl.move(src, dest);
-    // 형제 사이에 놓으면(폴더 안으로 넣는 경우 제외) 그 자리에 끼워 넣는다. 글·폴더 혼합, 여러 개도 상대 순서를 유지한다.
-    if (!into) {
-      const current = siblings(dest); // 놓기 직전 화면에 보이던 순서
-      if (many) {
-        const names = srcs.map((s) => s.name).filter((n) => current.includes(n)); // 실제로 이 폴더에 와 있는 것만
-        const sib = current.filter((n) => !names.includes(n));
-        const at = sib.indexOf(node.name);
-        moveManyInOrder(dest, current, names, pos === 'before' ? node.name : sib[at + 1]);
-      } else {
-        const sib = current.filter((n) => n !== src.name);
-        const at = sib.indexOf(node.name);
-        const before = pos === 'before' ? node.name : sib[at + 1];
-        moveInOrder(dest, current, src.name, before);
-      }
-    }
   }
 </script>
 
@@ -369,7 +381,7 @@
     style:padding-left="{8 + depth * 14}px"
     oncontextmenu={(e) => openContextMenu(e, menuItems)}
     use:longPress={() => menuItems}
-    draggable={!renaming}
+    draggable={!renaming && !arch}
     ondragstart={onDragStart}
     ondragend={() => onDragEnd()}
     ondragover={onDragOver}
@@ -393,6 +405,7 @@
         <span class="twisty">{#if open}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}</span>
         {#if open}<FolderOpen size={15} class="ico" />{:else}<Folder size={15} class="ico" />{/if}
         <span class="label">{#each parts as p}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}</span>
+        {#if arch && depth === 0 && parent}<span class="from">{parent}</span>{/if}
       </div>
     {:else}
       <div class="name" bind:this={nameEl} role="treeitem" tabindex={treeKb.stop === node.path ? 0 : -1} aria-level={depth + 1} aria-selected={selActive ? picked : ctl.isActive(node)} aria-current={ctl.isActive(node) ? 'page' : undefined}
@@ -402,13 +415,14 @@
         <span class="twisty"></span>
         <FileText size={15} class="ico" />
         <span class="label">{#each parts as p}{#if p.hit}<mark>{p.t}</mark>{:else}{p.t}{/if}{/each}</span>
+        {#if arch && depth === 0 && parent}<span class="from">{parent}</span>{/if}
         {#if ctl.isDirty(node)}<span class="dot" use:tip={'저장 안 됨'}>●</span>{/if}
       </div>
     {/if}
     {#if !renaming}
       <!-- 행 단추는 Tab 정지점에서 뺀다(트리는 정지점 하나, 키보드는 F2·Delete·메뉴 키). 모바일(≤720px)에서는 항상 보인다 -->
       <span class="ops">
-        {#if node.type === 'dir'}
+        {#if node.type === 'dir' && !arch}
           <button tabindex="-1" use:tip={'새 문서'} aria-label="새 문서" onclick={() => ctl.createDoc(node.path)}><FilePlus size={14} /></button>
           <button tabindex="-1" use:tip={'새 폴더'} aria-label="새 폴더" onclick={() => ctl.createFolder(node.path)}><FolderPlus size={14} /></button>
         {/if}
@@ -419,7 +433,7 @@
   {#if node.type === 'dir' && open && node.children?.length}
     <ul class="kids" role="group" style:--d={depth} transition:slideFx>
       {#each node.children as child, i (child.path)}
-        <TreeNode node={child} depth={depth + 1} {filter} {drag} {siblings} {fx} last={i === node.children.length - 1} />
+        <TreeNode node={child} depth={depth + 1} {filter} {drag} {siblings} {fx} {arch} last={i === node.children.length - 1} />
       {/each}
     </ul>
   {/if}
@@ -431,6 +445,13 @@
    * 상자는 행의 ::before/::after 라 슬롯 위에 놓아도 같은 행이 이벤트를 받는다 */
   :global(.tree.dnd) .row { transition: margin 170ms var(--ease-out, cubic-bezier(0.2, 0.8, 0.2, 1)); }
   .row:global(.slot-before) { margin-top: var(--row-h, 28px); }
+  /* 폴더 안쪽 슬롯(놓으면 폴더 맨 끝에 들어간다): 자식 들여쓰기 위치에서 시작한다 */
+  .row:global(.slot-after[style*="--slot-left"])::after { left: var(--slot-left); }
+  /* 끌어 넣을 폴더: 행을 진하게, 폴더 범위(자식 영역)에 옅은 색을 입혀 목록이 길어도 어느 폴더인지 알아본다 */
+  li:global(.drop-target) > .row, li:global(.drop-target) > .row.stick { background: var(--accent-soft); }
+  li:global(.drop-target) > .row .label { font-weight: 600; color: var(--primary); }
+  li:global(.drop-target) > .kids { background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 0 8px 8px; }
+  .from { flex: none; margin-left: 6px; max-width: 8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
   .row:global(.slot-after) { margin-bottom: var(--row-h, 28px); }
   .row:global(.slot-before)::before, .row:global(.slot-after)::after {
     content: ''; position: absolute; left: 0; right: 0; height: var(--row-h, 28px); box-sizing: border-box;

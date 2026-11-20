@@ -21,6 +21,7 @@ function loadSettings() {
     animations: true, // 패널·툴팁·모달·팝오버의 나타남/사라짐과 flash(빌드 옵션 __ANIM__ 이 꺼져 있으면 무시)
     snippetColors: false, // 글감 색 지정·색 필터 같은 '고급' 기능을 쓸지(기본 꺼짐: 화면을 어지럽히지 않는다)
     commentView: false, // 읽기 모드에서 본문에 코멘트 번호 배지와 문서 끝 '코멘트' 절을 보일지(편집 모드에서는 항상 꺼진 것으로 취급)
+    trashDays: 30, // 단일·정적 빌드의 휴지통 보관 기간(일). 0 이면 자동으로 지우지 않는다(서버 모드는 서버가 30일로 비운다)
     rightHover: false, // 오른쪽 가장자리에 마우스를 대면 글감·목차·코멘트 패널을 팝오버로 띄울지(기본 꺼짐: 옆에 자료 창을 두고 쓸 때 거슬린다)
     version: SETTINGS_VERSION,
   };

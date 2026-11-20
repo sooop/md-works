@@ -1,14 +1,17 @@
 <script lang="ts">
   import { tip } from '../tooltip.svelte';
   import { tick } from 'svelte';
+  import { openContextMenu, longPress, type CtxItem } from '../contextmenu.svelte';
 
   interface Props {
     title: string;
     editable: boolean;
     dirty?: boolean;
     onRename: (name: string) => void | Promise<void>;
+    /** 제목의 우클릭(길게 누르기) 메뉴 항목 */
+    menu?: () => CtxItem[];
   }
-  let { title, editable, dirty = false, onRename }: Props = $props();
+  let { title, editable, dirty = false, onRename, menu }: Props = $props();
 
   let editing = $state(false);
   let value = $state('');
@@ -17,7 +20,8 @@
   // 키보드(Enter·Esc)로 끝냈을 때만 제목으로 포커스를 돌려준다(바깥을 눌러 끝났으면 그 클릭의 포커스를 존중)
   let backToHeading = false;
 
-  async function start() {
+  /** 이름 변경을 시작한다(우클릭 메뉴의 '이름 변경'이 부른다) */
+  export async function start() {
     if (!editable) return;
     value = title;
     editing = true;
@@ -58,7 +62,7 @@
   <input class="doc-title-input" bind:this={input} bind:value onkeydown={onKey} onblur={commit} spellcheck="false" aria-label="문서 이름" />
 {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-  <h1 class="doc-title" bind:this={heading} tabindex={editable ? 0 : undefined} ondblclick={start} onkeydown={onTitleKey} use:tip={editable ? '더블 클릭 또는 Enter·F2: 이름 변경' : undefined}>
+  <h1 class="doc-title" bind:this={heading} tabindex={editable ? 0 : undefined} ondblclick={start} onkeydown={onTitleKey} oncontextmenu={(e) => menu && openContextMenu(e, menu())} use:longPress={() => menu?.() ?? []} use:tip={editable ? '더블 클릭 또는 Enter·F2: 이름 변경' : undefined}>
     {title}
     {#if dirty}<span class="dot" use:tip={'저장 안 됨'}>●</span>{/if}
   </h1>

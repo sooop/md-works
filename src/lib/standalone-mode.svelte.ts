@@ -18,7 +18,7 @@ import type { ReplaceHost } from './search/replaceAll';
 import { createDocDb, type DocRec, type ImgRec, type SaveOutcome } from './works/docDb';
 import { isTrashed, liveDocs, trashItems } from './works/trashLogic';
 import { cleanupPurged } from './works/trashOps';
-import { TRASH_MS, type TrashCtl, type TrashItem } from './trash';
+import { trashMs, type TrashCtl, type TrashItem } from './trash';
 import type { BulkResult } from './components/treeCtl';
 import { exportSelection, type FolderExportKind } from './folderExportUi';
 import { mergeRecs, planRemoteDoc } from './works/remoteDoc';
@@ -892,10 +892,12 @@ async function purgeTrashIds(ids: string[]) {
   void gcImages(); // 휴지통 글만 참조하던 이미지(와 그 이력)를 치운다
 }
 
-/** 30일이 지난 휴지통 항목을 완전히 지운다(앱 시작 때·휴지통을 열 때). now: 시험용 */
+/** 설정한 보관 기간(기본 30일)이 지난 휴지통 항목을 완전히 지운다(앱 시작 때·휴지통을 열 때). 기간이 0 이면 지우지 않는다. now: 시험용 */
 export async function expireTrash(now = Date.now()) {
+  const maxAge = trashMs(settings.trashDays);
+  if (!Number.isFinite(maxAge)) return;
   try {
-    const ids = await db.expiredTrash(now, TRASH_MS);
+    const ids = await db.expiredTrash(now, maxAge);
     if (ids.length) await purgeTrashIds(ids);
   } catch { /* 다음 기회에 다시 비운다 */ }
 }

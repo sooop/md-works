@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTree, sortTree, reorder, renameInOrders, withParents, splitPath, type FlatDoc } from '../src/lib/docTree';
+import { buildTree, sortTree, reorder, renameInOrders, withParents, splitPath, splitArchived, renameArchived, type FlatDoc } from '../src/lib/docTree';
 
 const docs: FlatDoc[] = [
   { id: 'a', name: '가.md', folder: '', updated: 10 },
@@ -73,5 +73,40 @@ describe('ordersOf', () => {
   it('정렬된 트리의 보이는 순서를 폴더별로 옮긴다', () => {
     const t = sortTree(buildTree(docs, []), 'mtime', {});
     expect(ordersOf(t)).toEqual({ '': ['주제', '라.md', '가.md'], '주제': ['하위', '나.md'], '주제/하위': ['다.md'] });
+  });
+});
+
+describe('splitArchived', () => {
+  const tree = buildTree(docs, ['빈']);
+  it('보관이 없으면 같은 트리를 그대로 돌려준다', () => {
+    const r = splitArchived(tree, new Set());
+    expect(r.active).toBe(tree);
+    expect(r.archived).toEqual([]);
+  });
+  it('보관한 폴더는 하위째 떼어 낸다', () => {
+    const r = splitArchived(tree, new Set(['주제']));
+    expect(r.active.map((n) => n.name)).toEqual(expect.not.arrayContaining(['주제']));
+    expect(r.archived.map((n) => n.path)).toEqual(['주제']);
+    expect(r.archived[0].children?.length).toBe(2);
+  });
+  it('안쪽 항목만 보관하면 상위 폴더는 남고 그 항목만 빠진다', () => {
+    const r = splitArchived(tree, new Set(['주제/하위']));
+    const dir = r.active.find((n) => n.path === '주제')!;
+    expect(dir.children?.map((n) => n.path)).toEqual(['b']);
+    expect(r.archived.map((n) => n.path)).toEqual(['주제/하위']);
+  });
+  it('글(키)도 보관할 수 있다', () => {
+    const r = splitArchived(tree, new Set(['a']));
+    expect(r.archived.map((n) => n.path)).toEqual(['a']);
+    expect(r.active.some((n) => n.path === 'a')).toBe(false);
+  });
+});
+
+describe('renameArchived', () => {
+  it('폴더 이름이 바뀌면 하위 경로도 따라간다', () => {
+    expect(renameArchived(['주제', '주제/하위', '기타'], '주제', '새')).toEqual(['새', '새/하위', '기타']);
+  });
+  it('이름이 앞부분만 같은 항목은 건드리지 않는다', () => {
+    expect(renameArchived(['주제2'], '주제', '새')).toEqual(['주제2']);
   });
 });

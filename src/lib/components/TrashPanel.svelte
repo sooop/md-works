@@ -17,8 +17,10 @@
     ctl: TrashCtl;
     /** '← 파일 목록' */
     onBack: () => void;
+    /** 자동 삭제까지의 보관 기간(일, 0 = 자동 삭제 안 함). 기본 30일(서버 모드) */
+    days?: number;
   }
-  let { ctl, onBack }: Props = $props();
+  let { ctl, onBack, days = TRASH_DAYS }: Props = $props();
 
   let items = $state<TrashItem[]>([]);
   let loaded = $state(false);
@@ -136,7 +138,7 @@
     <span class="spacer"></span>
     <button class="tp-empty" disabled={!items.length || busy} onclick={() => void emptyAll()} use:tip={{ title: '휴지통 비우기', lines: ['모든 항목을 완전히 삭제합니다'] }}>비우기</button>
   </div>
-  <p class="tp-note">삭제한 글은 {TRASH_DAYS}일 동안 보관한 뒤 자동으로 지웁니다.</p>
+  <p class="tp-note">{days > 0 ? `삭제한 글은 ${days}일 동안 보관한 뒤 자동으로 지웁니다.` : '삭제한 글은 직접 비우기 전까지 보관합니다.'}</p>
 
   {#if picked.length}
     <div class="selbar" role="toolbar" aria-label="선택한 항목 일괄 작업">
@@ -158,7 +160,7 @@
       <button onclick={() => void load()}>다시 시도</button>
     </div>
   {:else if !items.length}
-    <p class="tp-empty-msg">휴지통이 비어 있습니다. 삭제한 글과 폴더는 여기에 {TRASH_DAYS}일 동안 보관됩니다.</p>
+    <p class="tp-empty-msg">휴지통이 비어 있습니다. 삭제한 글과 폴더는 여기에 {days > 0 ? `${days}일 동안 ` : ''}보관됩니다.</p>
   {:else}
     <ul class="tp-list" aria-label="휴지통 항목">
       {#each items as it (it.id)}
@@ -169,7 +171,7 @@
           <div class="tp-body">
             <span class="tp-name" title={trashLabel(it)}>{trashLabel(it)}</span>
             <span class="tp-meta">{folder ? folder : '최상위'}{#if it.type === 'dir'} · 글 {it.docs}개{/if}</span>
-            <span class="tp-meta">{trashWhen(it.deletedAt, now)}</span>
+            <span class="tp-meta">{trashWhen(it.deletedAt, now, days)}</span>
           </div>
           <span class="tp-ops">
             <button class="icon-btn" disabled={busy} aria-label={`${trashLabel(it)} 복구`} use:tip={{ title: '복구', lines: ['원래 위치로 되돌립니다'] }} onclick={() => void restore([it])}><Undo2 size={16} /></button>

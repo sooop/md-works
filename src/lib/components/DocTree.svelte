@@ -9,6 +9,9 @@
   import FileArchive from '@lucide/svelte/icons/file-archive';
   import FileBraces from '@lucide/svelte/icons/file-braces';
   import FileText from '@lucide/svelte/icons/file-text';
+  import ArchiveIcon from '@lucide/svelte/icons/archive';
+  import ChevronDown from '@lucide/svelte/icons/chevron-down';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import TreeNodeView, { type TreeFx } from './TreeNode.svelte';
   import Pop from './Pop.svelte';
   import MovePicker from './MovePicker.svelte';
@@ -18,8 +21,8 @@
   import { stripExt } from '../utils';
   import { renamedPaths as matchRenames, type TreeInfo } from '../treeRename';
   import { toast, errMsg } from '../store.svelte';
-  import { sortTree, type DocNode } from '../docTree';
-  import { treeUi, treeNav, treeKb, onActiveChange, isCollapsed, toggleFolder, expandFolder } from '../docTree.svelte';
+  import { sortTree, splitArchived, type DocNode } from '../docTree';
+  import { treeUi, treeNav, treeKb, onActiveChange, isCollapsed, toggleFolder, expandFolder, setArchived, setArchOpen } from '../docTree.svelte';
   import { tsel, setVisible, prune, reset as resetSel, clear as clearSel, setMode, selectAll, extendTo, moveAnchor } from '../treeSelect.svelte';
   import { pickedRoots, movableTo, dirOf } from '../treeSelect';
   import { flattenVisible, navigate, moveTargetsMany, indexOfPath, NAV_KEYS } from '../treeKeys';
@@ -47,21 +50,53 @@
   let gapRow: HTMLElement | null = null;
   let gapPos: DropPos = '';
   let gapTimer: ReturnType<typeof setTimeout> | undefined;
-  function showGap(row: HTMLElement | null, pos: DropPos) {
-    const want: DropPos = row && (pos === 'before' || pos === 'after') ? pos : '';
-    if (row === gapRow && want === gapPos) return;
+  /** 폴더 안쪽 슬롯이 열려 있는 대상 폴더의 <li>(범위 강조도 이 요소에 건다) */
+  let intoLi: HTMLElement | null = null;
+  const IND = 14; // 들여쓰기 한 단계(TreeNode 의 padding-left 와 같다)
+  function clearInto() {
+    intoLi?.classList.remove('drop-target');
+    intoLi = null;
+  }
+  function showGap(row: HTMLElement | null, pos: DropPos, into: HTMLElement | null = null) {
+    // 폴더 한가운데에 대면 그 폴더를 펼치고, 폴더 맨 끝(마지막 자식 아래, 비었으면 폴더 행 아래)에 들여쓴 슬롯을 연다.
+    // 마우스가 슬롯 위로 내려와도 (마지막 자식의 'after' 와 같은 자리라) 슬롯과 강조를 그대로 둔다
+    if (!into && intoLi && row && row === gapRow && pos === 'after') return;
+    let target = row;
+    let want: DropPos = row && (pos === 'before' || pos === 'after') ? pos : '';
+    let slotLeft = '';
+    if (into) {
+      const li = into.closest('li');
+      const open = into.querySelector('[aria-expanded]')?.getAttribute('aria-expanded') === 'true';
+      if (li !== intoLi) { clearInto(); intoLi = li; li?.classList.add('drop-target'); }
+      if (open && li) {
+        const rows = li.querySelectorAll<HTMLElement>('.row');
+        target = rows[rows.length - 1];
+        want = 'after';
+        slotLeft = `${8 + (Number(into.style.getPropertyValue('--d')) + 1) * IND}px`;
+      } else { target = null; want = ''; }
+    } else if (intoLi) clearInto();
+    if (target === gapRow && want === gapPos) { if (slotLeft && target) target.style.setProperty('--slot-left', slotLeft); return; }
     clearTimeout(gapTimer);
     gapRow?.classList.remove('slot-before', 'slot-after');
-    gapRow = want ? row : null;
+    gapRow?.style.removeProperty('--slot-left');
+    gapRow = want ? target : null;
     gapPos = want;
     const r = gapRow;
     if (!r) return;
-    gapTimer = setTimeout(() => r.classList.add(want === 'before' ? 'slot-before' : 'slot-after'), SLOT_DELAY);
+    if (slotLeft) r.style.setProperty('--slot-left', slotLeft);
+    gapTimer = setTimeout(() => r.classList.add(want === 'before' ? 'slot-before' : 'slot-after'), into ? 0 : SLOT_DELAY);
   }
+  dndUi.slotRect = () => {
+    if (!intoLi || !gapRow || gapPos !== 'after' || !gapRow.classList.contains('slot-after')) return null;
+    const r = gapRow.getBoundingClientRect();
+    const left = parseFloat(gapRow.style.getPropertyValue('--slot-left')) || 0;
+    return { left: r.left + left, top: r.bottom, width: r.width - left, height: r.height };
+  };
   dndUi.indicate = (row: HTMLElement | null, pos: DropPos) => {
     if (!indEl || !navEl) return;
     const slot = animOn() && !!row && (pos === 'before' || pos === 'after');
-    showGap(slot ? row : null, slot ? pos : '');
+    const into = animOn() && !!row && pos === 'into' ? row : null;
+    showGap(slot ? row : null, slot ? pos : '', into);
     if (!row || !pos || slot) { indEl.style.display = 'none'; return; }
     const n = navEl.getBoundingClientRect();
     const r = row.getBoundingClientRect();
@@ -80,7 +115,10 @@
     }
   };
   // 항상 직접 정렬: 저장된 순서가 있는 항목은 그 순서대로, 없는 항목(처음·새로 생긴 것)은 폴더 먼저·이름순으로 뒤에 붙는다
-  const sorted = $derived(sortTree(nodes, 'manual', treeUi.orders));
+  // 보관한 항목은 일반 트리에서 빼고 맨 아래 '보관됨' 구역에 모아 보인다(파일 위치는 그대로)
+  const split = $derived(splitArchived(nodes, new Set(treeUi.archived)));
+  const sorted = $derived(sortTree(split.active, 'manual', treeUi.orders));
+  const archSorted = $derived(sortTree(split.archived, 'manual', treeUi.orders));
 
   /** 파일명 검색: 폴더 경로까지 이어 붙인 이름이 일치하면 남긴다(폴더는 일치하는 하위 항목이 있을 때만) */
   function filterNodes(list: DocNode[], q: string, prefix = ''): DocNode[] {
@@ -108,6 +146,7 @@
   $effect(() => { const f = filter; if (f !== untrack(() => typed) && filterTimer === undefined) typed = f; });
   onDestroy(() => clearTimeout(filterTimer));
   const view = $derived(filter.trim() ? filterNodes(sorted, filter) : sorted);
+  const archView = $derived(filter.trim() ? filterNodes(archSorted, filter) : archSorted);
 
   // 삽입·삭제 효과용: 접어 둔 폴더 안까지 포함한 전체 경로 집합(nodes 기준이라 필터·접기에는 변하지 않는다)
   const collect = (list: DocNode[], out = new Set<string>()): Set<string> => { for (const n of list) { out.add(n.path); if (n.children) collect(n.children, out); } return out; };
@@ -183,7 +222,15 @@
   // 파일명 검색 중에는 일치 항목이 보이도록 모든 폴더가 펼쳐져 있다(TreeNode 의 open 과 같은 규칙) — 그때는 접고 펼치지 않는다
   const filtering = $derived(!!filter.trim());
   const isOpen = (n: DocNode) => filtering || !isCollapsed(n.path);
-  const flat = $derived(flattenVisible(view, isOpen));
+  /** '보관됨' 구역은 파일명 검색 중에 일치 항목이 있으면 저절로 열린다 */
+  const archShown = $derived(archView.length > 0 && (treeUi.archOpen || filtering));
+  const flat = $derived([...flattenVisible(view, isOpen), ...(archShown ? flattenVisible(archView, isOpen) : [])]);
+  // 보관된 폴더 안의 글이 열리면(검색·링크 등) 그 글이 보이도록 구역을 연다. 사용자가 닫은 뒤에는 건드리지 않는다
+  $effect(() => {
+    const p = ctl.activePath();
+    void split.archived.length;
+    if (p) untrack(() => { if (!treeUi.archOpen && collect(split.archived).has(p)) setArchOpen(true); });
+  });
 
   // roving tabindex: 트리 전체에서 Tab 정지점은 하나. 마지막으로 포커스한 항목 → (사라졌으면 그 자리 근처) → 열린 글 → 첫 항목
   let lastIdx = 0;
@@ -275,7 +322,7 @@
   });
   onDestroy(resetSel);
   /** 일괄 동작의 대상: 선택된 항목을 트리 순서로, 폴더와 그 안의 항목을 함께 골랐으면 상위 폴더만 */
-  const pickedNodes = $derived(pickedRoots(sorted, tsel.picked));
+  const pickedNodes = $derived(pickedRoots([...sorted, ...archSorted], tsel.picked));
   const dlRows = [
     { id: 'zip', icon: FileArchive, title: 'MD 압축(zip)', desc: '글(.md)과 이미지를 폴더 구조 그대로 zip 으로' },
     { id: 'json', icon: FileBraces, title: '백업 JSON', desc: '글·이미지·코멘트를 JSON 하나로(복원용)' },
@@ -326,6 +373,7 @@
   selUi.moveTo = (at, from) => { if (pickedNodes.length) mover = { nodes: pickedNodes, x: at.x, y: at.y, from: from ?? null }; };
   selUi.download = downloadPicked;
   selUi.remove = removePicked;
+  selUi.archive = (on) => { const paths = pickedNodes.map((n) => n.path); if (paths.length) { setArchived(paths, on); clearSel(); } };
 
   // Esc: 선택 모드 종료, 그다음엔 선택 해제 (이름·검색 입력 중일 때는 건드리지 않는다)
   function onSelEsc(e: KeyboardEvent) {
@@ -348,6 +396,7 @@
   // 빈 곳(행이 아닌 목록 바탕)에 놓으면 최상위로 옮긴다
   const draggedNodes = (): DocNode[] => (drag.nodes?.length ? drag.nodes : drag.node ? [drag.node] : []);
   function onRootOver(e: DragEvent) {
+    if ((e.target as HTMLElement).closest('.archive')) return; // 보관됨 구역에는 놓을 수 없다(최상위로 옮기지 않는다)
     const srcs = draggedNodes();
     if (!srcs.length || srcs.every((s) => dirOf(s) === '')) return;
     e.preventDefault();
@@ -400,6 +449,7 @@
     {#if ctl.removeMany}
       <button class="danger" aria-label="선택한 항목 삭제" use:tip={{ title: '휴지통으로 이동', lines: ['삭제 직후 되돌릴 수 있고, 휴지통에서 복구합니다'] }} onclick={() => void removePicked()}><Trash2 size={14} /> 삭제</button>
     {/if}
+    <button aria-label="선택한 항목 보관" use:tip={{ title: '보관', lines: ['목록 맨 아래 보관됨 구역으로 보냅니다(파일은 그대로)'] }} onclick={() => selUi.archive(true)}><ArchiveIcon size={14} /> 보관</button>
     <button class="icon-btn" aria-label="선택 해제" use:tip={'선택 해제'} onclick={clearSel}><X size={15} /></button>
   </div>
 {/if}
@@ -418,6 +468,23 @@
   {:else}
     <p class="empty">{emptyText}</p>
   {/if}
+  {#if archView.length}
+    <section class="archive" aria-label="보관됨">
+      <button class="arch-head" aria-expanded={archShown} onclick={() => setArchOpen(!treeUi.archOpen)} use:tip={{ title: '보관됨', lines: ['보관한 폴더·글. 파일은 그대로 있고 검색에는 나옵니다'] }}>
+        {#if archShown}<ChevronDown size={14} />{:else}<ChevronRight size={14} />{/if}
+        <ArchiveIcon size={14} />
+        <span>보관됨</span>
+        <span class="n">{archView.length}</span>
+      </button>
+      {#if archShown}
+        <ul role="tree" aria-label="보관된 항목" transition:slideFx>
+          {#each archView as node (node.path)}
+            <TreeNodeView {node} {filter} {drag} {siblings} {fx} arch />
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
   {#if drag.node && drag.hint}
     <div class="drag-hint" role="status">{drag.hint}</div>
   {/if}
@@ -428,6 +495,11 @@
 
 <style>
   .selbar { margin-top: 6px; }
+  .archive { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 4px; }
+  .arch-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 8px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; text-align: left; border-radius: 6px; cursor: pointer; }
+  .arch-head:hover { background: var(--hover); color: var(--text); }
+  .arch-head .n { margin-left: auto; font-size: 11px; }
+  .archive ul { opacity: 0.8; }
   /* className 을 직접 바꾸므로 범위(scoped) 클래스가 붙지 않아 :global 로 쓴다 */
   :global(.drop-ind) { position: absolute; z-index: 3; pointer-events: none; }
   :global(.drop-ind.line) { background: var(--accent); border-radius: 2px; }

@@ -20,6 +20,7 @@
     settings, persistSettings, applyTheme,
     type Theme, type ImageMode,
   } from '../store.svelte';
+  import { TRASH_DAY_OPTIONS } from '../trash';
   import { design, setTypo, selectPreset } from '../design/state.svelte';
   import { TYPO_SPEC, DEFAULT_TYPOGRAPHY, type NumSpec } from '../design/schema';
   import { PRESETS } from '../design/presets';
@@ -49,7 +50,7 @@
   let searchEl = $state<HTMLInputElement>();
 
   // 검색에 걸릴 항목(분류 · 이름 · 설명에 들어 있는 낱말). 서버 전용 항목은 서버 모드에서만 센다.
-  const rows: { id: string; cat: Cat; text: string; server?: boolean }[] = [
+  const rows: { id: string; cat: Cat; text: string; server?: boolean; std?: boolean }[] = [
     { id: 'theme', cat: 'view', text: '테마 라이트 다크 시스템 밝기 색 화면' },
     { id: 'fontSize', cat: 'view', text: '글자 크기 폰트 서체 크기 본문' },
     { id: 'width', cat: 'view', text: '본문 폭 너비 넓이 가로 창 폭' },
@@ -60,6 +61,7 @@
     { id: 'image', cat: 'write', text: '이미지 삽입 방식 파일 assets base64 붙여넣기', server: true },
     { id: 'colors', cat: 'snippet', text: '글감 색 색상 라벨 필터 포스트잇' },
     { id: 'autosave', cat: 'save', text: '자동 저장 저장 입력 후', server: true },
+    { id: 'trash', cat: 'save', text: '휴지통 보관 기간 자동 삭제 일 완전 삭제', std: true },
     { id: 'backup', cat: 'save', text: '백업 가져오기 내보내기 번들 텔레그램 복원' },
     { id: 'preset', cat: 'design', text: '디자인 프리셋 팔레트 색상 테마 모음' },
     { id: 'editor', cat: 'design', text: '디자인 편집기 서체 간격 제목 인용 코드 표 색 직접 편집 불러오기 내보내기' },
@@ -67,7 +69,7 @@
   const needle = $derived(q.trim().toLowerCase());
   const matches = (id: string) => {
     const r = rows.find((x) => x.id === id);
-    if (!r || (r.server && !server)) return false;
+    if (!r || (r.server && !server) || (r.std && server)) return false;
     return !needle || `${cats.find((c) => c.id === r.cat)?.label} ${r.text}`.toLowerCase().includes(needle);
   };
   const catShown = (c: Cat) => (needle ? rows.some((r) => r.cat === c && matches(r.id)) : active === c);
@@ -87,6 +89,7 @@
 
   function setTheme(t: Theme) { settings.theme = t; applyTheme(); persistSettings(); }
   function setMode(m: ImageMode) { settings.imageMode = m; persistSettings(); }
+  function setTrashDays(d: number) { settings.trashDays = d; persistSettings(); }
   function setAutosave(v: boolean) { settings.autosave = v; persistSettings(); }
   function setTableFmt(f: 'tsv' | 'csv') { settings.tableCopyFormat = f; persistSettings(); }
   function setColors(v: boolean) { settings.snippetColors = v; persistSettings(); }
@@ -256,6 +259,18 @@
               {/if}
               {#if !server && !needle}
                 <div class="srow"><div class="s-text"><b>저장 위치</b><small>문서는 입력할 때마다 이 브라우저(IndexedDB)에 자동으로 저장됩니다. 다른 기기로 옮기려면 백업 파일을 내보내세요.</small></div></div>
+              {/if}
+              {#if !server && matches('trash')}
+                <div class="srow col">
+                  <div class="s-text"><b>휴지통 보관 기간</b><small>삭제한 글·폴더를 이 기간 동안 휴지통에 두었다가 자동으로 완전 삭제합니다. 앱을 열 때와 휴지통을 열 때 정리합니다.</small></div>
+                  <div class="cards" role="radiogroup" aria-label="휴지통 보관 기간">
+                    {#each TRASH_DAY_OPTIONS as d (d)}
+                      <button role="radio" aria-checked={settings.trashDays === d} class="card" class:on={settings.trashDays === d} onclick={() => setTrashDays(d)}>
+                        <span>{d > 0 ? `${d}일` : '자동 삭제 안 함'}</span>{#if settings.trashDays === d}<Check size={14} class="ck" />{/if}
+                      </button>
+                    {/each}
+                  </div>
+                </div>
               {/if}
               {#if matches('backup')}
                 <div class="srow">

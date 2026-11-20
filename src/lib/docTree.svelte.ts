@@ -1,6 +1,7 @@
 // 글 목록 트리의 화면 상태: 접힌 폴더, 폴더별 직접 순서(정렬은 항상 직접 정렬이고, 순서가 없는 항목만 폴더 먼저·이름순이다). 이 브라우저에만 저장한다(번들에는 싣지 않는다).
 // 서버 모드와 단일 모드는 같은 브라우저에서 번갈아 쓸 수 있어 저장 키를 모드별로 나눈다.
-import { renameInOrders, reorder, reorderMany, withParents, type OrderMap } from './docTree';
+import { toast } from './store.svelte';
+import { renameArchived, renameInOrders, reorder, reorderMany, withParents, type OrderMap } from './docTree';
 
 let scope = 'standalone';
 const key = (k: string) => `works.tree.${scope}.${k}`;
@@ -9,13 +10,15 @@ const read = <T>(k: string, fallback: T): T => {
 };
 const write = (k: string, v: unknown) => { try { localStorage.setItem(key(k), JSON.stringify(v)); } catch { /* 무시 */ } };
 
-export const treeUi = $state<{ collapsed: string[]; orders: OrderMap }>({ collapsed: [], orders: {} });
+export const treeUi = $state<{ collapsed: string[]; orders: OrderMap; archived: string[]; archOpen: boolean }>({ collapsed: [], orders: {}, archived: [], archOpen: false });
 
 /** 모드가 정해지면 한 번 부른다: 그 모드의 저장값을 읽는다 */
 export function initTreeUi(mode: 'server' | 'standalone') {
   scope = mode;
   treeUi.collapsed = read<string[]>('collapsed', []);
   treeUi.orders = read<OrderMap>('orders', {});
+  treeUi.archived = read<string[]>('archived', []);
+  treeUi.archOpen = read<boolean>('archOpen', false);
 }
 
 /** 폴더별 직접 순서 값을 통째로 바꾼다 */
@@ -75,7 +78,27 @@ export function followRename(from: string, to: string) {
   write('orders', treeUi.orders);
   treeUi.collapsed = treeUi.collapsed.map((p) => (p === from || p.startsWith(from + '/') ? to + p.slice(from.length) : p));
   write('collapsed', treeUi.collapsed);
+  if (treeUi.archived.some((p) => p === from || p.startsWith(from + '/'))) { treeUi.archived = renameArchived(treeUi.archived, from, to); write('archived', treeUi.archived); }
 }
+
+// ---- 보관 ---- 보관은 이 브라우저의 화면 표식이다(파일은 그대로, 번들·동기화에 싣지 않는다). 목록 맨 아래 '보관됨' 구역에 모아 보인다
+export const isArchived = (path: string): boolean => treeUi.archived.includes(path);
+export function archivePaths(paths: string[]) {
+  treeUi.archived = [...new Set([...treeUi.archived, ...paths])];
+  write('archived', treeUi.archived);
+}
+export function unarchivePaths(paths: string[]) {
+  const drop = new Set(paths);
+  treeUi.archived = treeUi.archived.filter((p) => !drop.has(p));
+  write('archived', treeUi.archived);
+}
+/** 보관하거나(on) 해제한다. 알림에는 되돌리기를 달아 둔다(트리에서 행이 사라지므로 어디로 갔는지 알려야 한다) */
+export function setArchived(paths: string[], on: boolean) {
+  if (on) archivePaths(paths); else unarchivePaths(paths);
+  const n = paths.length > 1 ? `${paths.length}개를 ` : '';
+  toast(on ? `${n}보관했습니다. 목록 맨 아래 '보관됨'에서 볼 수 있습니다` : `${n}보관을 해제했습니다`, 'info', { action: { label: '되돌리기', run: () => (on ? unarchivePaths(paths) : archivePaths(paths)) } });
+}
+export function setArchOpen(open: boolean) { treeUi.archOpen = open; write('archOpen', open); }
 
 /** 키보드 조작: 트리 전체에서 Tab 정지점은 하나(roving tabindex). last = 마지막으로 포커스된 항목, stop = 지금 tabindex 0 인 항목(DocTree 가 계산해 채운다) */
 export const treeKb = $state<{ last: string; stop: string }>({ last: '', stop: '' });

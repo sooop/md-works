@@ -9,7 +9,7 @@ import { planRemoteDoc } from '../../src/lib/works/remoteDoc';
 import { createStandaloneHost } from '../../src/lib/bundle/hosts/standalone';
 import { applyBundleWith, buildBundleWith } from '../../src/lib/bundle/core';
 import { listTombstones, recordDocGone } from '../../src/lib/bundle/tombstones';
-import { agoLabel, daysLeft, restoreMessage, trashWhen, TRASH_MS } from '../../src/lib/trash';
+import { agoLabel, daysLeft, restoreMessage, trashMs, trashWhen, TRASH_MS } from '../../src/lib/trash';
 import type { Snippet } from '../../src/lib/works/types';
 import { unzipSync, strFromU8 } from 'fflate';
 
@@ -321,5 +321,18 @@ describe('번들', () => {
     expect(kept?.deletedAt).toBe(6000);
     expect(kept?.content).toBe('옛 내용');
     expect((await b.db.getAll())).toHaveLength(1);
+  });
+});
+
+describe('보관 기간 설정', () => {
+  const DAYS = 24 * 60 * 60 * 1000;
+  it('기간을 바꾸면 남은 날수와 문구가 따라간다', () => {
+    expect(daysLeft(0, 3 * DAYS, 7)).toBe(4);
+    expect(trashWhen(0, 3 * DAYS, 7)).toBe('3일 전 삭제 · 4일 뒤 자동 삭제');
+  });
+  it('0 이면 자동 삭제 안내를 붙이지 않고 기간이 무한이다', () => {
+    expect(trashWhen(0, 3 * DAYS, 0)).toBe('3일 전 삭제');
+    expect(trashMs(0)).toBe(Infinity);
+    expect(trashMs(14)).toBe(14 * DAYS);
   });
 });

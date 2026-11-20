@@ -47,11 +47,13 @@ export const dndUi: {
   indicate: (row: HTMLElement | null, pos: DropPos) => void;
   /** 끌기 시작 때 만든 고스트 복제본과, 마우스가 행 안에서 잡은 위치(놓을 때 이 고스트가 자리로 날아간다) */
   ghost: { el: HTMLElement; dx: number; dy: number; width: number; height: number } | null;
+  /** 폴더 안쪽에 열어 둔 슬롯(놓으면 폴더 맨 끝에 들어가는 자리)의 화면 위치. 없으면 null */
+  slotRect: () => { left: number; top: number; width: number; height: number } | null;
   /** 놓은 직후 트리가 갱신되는 동안 true: 옮기기를 삭제·삽입 효과(빨강·초록 flash)로 보이지 않게 한다 */
   moving: boolean;
   /** 끌던 항목이 접혀 있던 자리를 애니메이션 없이 곧바로 되돌린다(놓은 자리가 이미 펼쳐져 있어 주변이 다시 움직이지 않게) */
   restoreSource: (() => void) | null;
-} = { pos: '', indicate: () => {}, ghost: null, moving: false, restoreSource: null };
+} = { pos: '', indicate: () => {}, ghost: null, slotRect: () => null, moving: false, restoreSource: null };
 
 /**
  * 키보드·메뉴 조작 연결부: 행(TreeNode)이 트리(DocTree)에 부탁하는 일. DocTree 가 채워 넣는다.
@@ -81,4 +83,6 @@ export const selUi: {
   download: (format: string) => Promise<void>;
   /** 확인창을 거쳐 선택을 지운다 */
   remove: () => Promise<void>;
-} = { group: (n) => [n], moveNodes: async () => {}, moveTo: () => {}, download: async () => {}, remove: async () => {} };
+  /** 선택을 '보관됨' 구역으로 보내거나(true) 되돌린다(false) */
+  archive: (on: boolean) => void;
+} = { group: (n) => [n], moveNodes: async () => {}, moveTo: () => {}, download: async () => {}, remove: async () => {}, archive: () => {} };

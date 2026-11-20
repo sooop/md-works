@@ -39,10 +39,14 @@ export interface TrashCtl {
 export const TRASH_DAYS = 30;
 const DAY = 24 * 60 * 60 * 1000;
 export const TRASH_MS = TRASH_DAYS * DAY;
+/** 설정에서 고를 수 있는 보관 기간(일). 0 = 자동으로 지우지 않는다 */
+export const TRASH_DAY_OPTIONS = [7, 14, 30, 90, 0] as const;
+/** 보관 기간(일)을 밀리초로. 0 이하(자동 삭제 안 함)는 Infinity */
+export const trashMs = (days: number): number => (days > 0 ? days * DAY : Infinity);
 
-/** 자동 삭제까지 남은 날수(올림, 0 이상) */
-export function daysLeft(deletedAt: number, now: number): number {
-  return Math.max(0, Math.ceil((deletedAt + TRASH_MS - now) / DAY));
+/** 자동 삭제까지 남은 날수(올림, 0 이상). days 는 보관 기간(기본 30일) */
+export function daysLeft(deletedAt: number, now: number, days = TRASH_DAYS): number {
+  return Math.max(0, Math.ceil((deletedAt + trashMs(days) - now) / DAY));
 }
 
 /** 삭제 시각의 상대 표기: '방금' · 'N분 전' · 'N시간 전' · 'N일 전' */
@@ -55,8 +59,9 @@ export function agoLabel(deletedAt: number, now: number): string {
 }
 
 /** '3일 전 삭제 · 27일 뒤 자동 삭제' 처럼 항목 한 줄에 보일 문구 */
-export function trashWhen(deletedAt: number, now: number): string {
-  const left = daysLeft(deletedAt, now);
+export function trashWhen(deletedAt: number, now: number, days = TRASH_DAYS): string {
+  if (days <= 0) return `${agoLabel(deletedAt, now)} 삭제`;
+  const left = daysLeft(deletedAt, now, days);
   return `${agoLabel(deletedAt, now)} 삭제 · ${left <= 0 ? '곧 자동 삭제' : `${left}일 뒤 자동 삭제`}`;
 }
 

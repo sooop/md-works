@@ -138,3 +138,27 @@ export function ordersOf(nodes: DocNode[], dir = '', out: OrderMap = {}): OrderM
   for (const n of nodes) if (n.type === 'dir') ordersOf(n.children ?? [], n.path, out);
   return out;
 }
+
+/**
+ * 보관된 항목(폴더·글)을 트리에서 떼어 낸다. active: 보관 항목이 빠진 트리, archived: 보관된 가장 바깥 항목들(하위는 그대로 달려 있다).
+ * 보관은 표시용 표식이라 파일 위치는 바뀌지 않는다
+ */
+export function splitArchived(nodes: DocNode[], archived: ReadonlySet<string>): { active: DocNode[]; archived: DocNode[] } {
+  if (!archived.size) return { active: nodes, archived: [] };
+  const active: DocNode[] = [];
+  const arch: DocNode[] = [];
+  for (const n of nodes) {
+    if (archived.has(n.path)) { arch.push(n); continue; }
+    if (n.type === 'dir' && n.children?.length) {
+      const s = splitArchived(n.children, archived);
+      arch.push(...s.archived);
+      active.push(s.active.length === n.children.length && !s.archived.length ? n : { ...n, children: s.active });
+    } else active.push(n);
+  }
+  return { active, archived: arch };
+}
+
+/** 보관 경로 목록을 이름 변경·이동(from → to)에 맞춰 바꾼다(하위 경로 포함) */
+export function renameArchived(list: string[], from: string, to: string): string[] {
+  return list.map((p) => (p === from || p.startsWith(from + '/') ? to + p.slice(from.length) : p));
+}
