@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tip } from '../tooltip.svelte';
   import { panelFx } from '../motion';
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import ChevronUp from '@lucide/svelte/icons/chevron-up';
   import ChevronDown from '@lucide/svelte/icons/chevron-down';
   import X from '@lucide/svelte/icons/x';
@@ -41,11 +41,11 @@
 
   $effect(() => {
     ui.findFocus;
-    // Ctrl+H 로 열면 바꿀 말 입력창에서 시작한다(찾을 말이 이미 있을 때)
-    void tick().then(() => {
+    // findFocus 만 의존한다. 검색어·입력창 상태를 추적하면 타이핑 중 effect 가 다시 돌아 select() 로 입력이 덮어써진다
+    void tick().then(() => untrack(() => {
       const el = ui.replaceOpen && finder.query && replInput ? replInput : input;
       el?.focus(); el?.select();
-    });
+    }));
   });
 
   function close() {
